@@ -652,6 +652,10 @@ int ro_read_quux15(struct readout *r, struct cadr_image *img)
 	x->bd_da = (uint32_t)dv[IMG_DV15_BD_DA];
 	x->bd_lma = (uint32_t)dv[IMG_DV15_BD_LMA];
 	x->bd_flags = (uint32_t)dv[IMG_DV15_BD_FLAGS];
+	// <4> a transfer in flight, its walk running or its words on the
+	// port; <5> a pack on unit 0 (`quux15_devices.sv`'s word 15).
+	q->walking = (int)((x->bd_flags >> 4) & 1u);
+	q->present = (int)((x->bd_flags >> 5) & 1u);
 	x->bd_done = dv[IMG_DV15_BD_DONE];
 	x->bd_now = dv[IMG_DV15_BD_NOW];
 	q->bow = (int)(dv[IMG_DV15_BOW] & 1u);

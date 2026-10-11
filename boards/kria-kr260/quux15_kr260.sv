@@ -32,10 +32,18 @@
 //     other address on both master ports is answered with a constant
 //     (`cadr_gp0_default.sv`), since a read nothing answers hangs both Arm
 //     cores.
-//   - **NOT ON THIS BOARD YET**: the file device's page, the display output,
-//     the disk packs and the I/O cables, which the programs that serve them
-//     bring; the debug cable, which QUUX never has (contract Q5), PMOD1's
-//     pads left undriven.
+//   - **THE DISK PACKS ON `M_AXI_HPM0_FPD` AND `S_AXI_HP2_FPD`**, as
+//     `cadr_kr260.sv` has them: block-disk's block store (the core's
+//     `quux15_block_walk.sv`) served by `cadr_disk_pack.sv`, its registers at
+//     0xA000_0000 through `cadr_gp0_split.sv`, its bursts on HP2 through
+//     `cadr_axi_burst128.sv`, its interrupt on `pl_ps_irq0`<0>, and
+//     `cadr-disk-packs --machine quux` the drive.  The split's other pages
+//     (the network's, the serial line's, the input's and the file device's)
+//     are answered with a constant until their steps bring them.
+//   - **NOT ON THIS BOARD YET**: the file device's page, the display output
+//     and the I/O cables, which the programs that serve them bring; the
+//     debug cable, which QUUX never has (contract Q5), PMOD1's pads left
+//     undriven.
 //   - **TWO LAMPS**: UF1 a count of committed microcycles, so it flickers
 //     while the machine runs and freezes when it stops; UF2 lit at an error
 //     halt.  **THE FAN IS DRIVEN ON**, `fan_en_b` low, as every KR260
@@ -142,6 +150,16 @@ module quux15_kr260 #(
   logic [13:0] rm_addr;
   logic [31:0] rtc_start;
 
+  // Block-disk's seam to the pack side (`cadr_disk_pack.sv`).
+  logic        store_we, store_miss, req_valid, req_post, ch_waiting, store_deny;
+  logic        ch_wrote, ch_hit, ch_active, store_busy, obs_transfer;
+  logic [4:0]  store_slot, ch_slot, store_busy_slot;
+  logic [8:0]  store_addr;
+  logic [31:0] store_wdata, store_rdata;
+  logic [30:0] req_tag;
+  logic [7:0]  drive_present, drive_read_only;
+  logic        drive_timed;
+
   // The machine's 64-bit AXI master.
   logic [3:0]  qm_awid;
   logic [31:0] qm_awaddr, qm_araddr;
@@ -186,7 +204,14 @@ module quux15_kr260 #(
       .spy_raddr(spy_raddr), .spy_rdata(spy_rdata),
       .ro_sel(5'd0), .ro_word(ro_word),
       .rm_en(rm_en), .rm_snap(rm_snap), .rm_sel(rm_sel), .rm_addr(rm_addr), .rm_word(rm_word),
-      .obs_committed(obs_committed), .obs_clocks(obs_clocks)
+      .obs_committed(obs_committed), .obs_clocks(obs_clocks),
+      .drive_present(drive_present[0]),
+      .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
+      .store_wdata(store_wdata), .store_rdata(store_rdata), .store_miss(store_miss),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post), .ch_waiting(ch_waiting),
+      .store_deny(store_deny), .ch_slot(ch_slot), .ch_wrote(ch_wrote), .ch_hit(ch_hit),
+      .ch_active(ch_active), .store_busy(store_busy), .store_busy_slot(store_busy_slot),
+      .obs_transfer(obs_transfer)
   );
 
   // ------------------------------------------------------- main memory, HP0
@@ -273,21 +298,255 @@ module quux15_kr260 #(
   logic         hpm1_bvalid, hpm1_bready, hpm1_arvalid, hpm1_arready;
   logic         hpm1_rlast, hpm1_rvalid, hpm1_rready;
 
-  // HPM0: nothing of this machine's yet, every address answered.
+  // HPM0: `cadr_gp0_split.sv`'s pages at 0xA000_0000, as `cadr_kr260.sv`
+  // has them: the disk packs' registers, and the pages of the network, the
+  // serial line, the input and the file device, answered with a constant
+  // until their steps bring them; and every other address.
   logic [31:0] gp0_rdata, gp0_wdata;
   logic [3:0]  gp0_wstrb;
   cadr_axi_lanes128 u_hpm0_lanes (
       .s_wdata(hpm0_wdata), .s_wstrb(hpm0_wstrb), .s_rdata(hpm0_rdata),
       .m_wdata(gp0_wdata), .m_wstrb(gp0_wstrb), .m_rdata(gp0_rdata)
   );
-  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_rest (
-      .clk(clk), .rst(axi_rst),
-      .s_awvalid(hpm0_awvalid), .s_awid(hpm0_awid), .s_awready(hpm0_awready),
-      .s_wlast(hpm0_wlast), .s_wvalid(hpm0_wvalid), .s_wready(hpm0_wready),
+  // The splitter and the faces take the port's reset alone, the faces the
+  // fabric's at `fabric_rst`, as `cadr_kr260.sv`'s.
+  logic gp0_rst_s;
+  always_ff @(posedge clk) gp0_rst_s <= !port_rst_sync[2];
+
+  logic [31:0] gp0p_awaddr, gp0p_araddr;
+  logic [31:0] gp0p_wdata, gp0p_rdata;
+  logic [7:0]  gp0p_awlen, gp0p_arlen;
+  logic [3:0]  gp0p_wstrb;
+  logic [15:0] gp0p_awid, gp0p_arid, gp0p_bid, gp0p_rid;
+  logic        gp0p_awvalid, gp0p_awready, gp0p_wlast, gp0p_wvalid, gp0p_wready;
+  logic        gp0p_bvalid, gp0p_bready, gp0p_arvalid, gp0p_arready;
+  logic        gp0p_rlast, gp0p_rvalid, gp0p_rready;
+  logic [1:0]  gp0p_bresp, gp0p_rresp;
+  logic [11:0] gp0c_awaddr, gp0c_araddr;
+  logic [31:0] gp0c_wdata, gp0c_rdata;
+  logic [7:0]  gp0c_awlen, gp0c_arlen;
+  logic [3:0]  gp0c_wstrb;
+  logic [15:0] gp0c_awid, gp0c_arid, gp0c_bid, gp0c_rid;
+  logic        gp0c_awvalid, gp0c_awready, gp0c_wlast, gp0c_wvalid, gp0c_wready;
+  logic        gp0c_bvalid, gp0c_bready, gp0c_arvalid, gp0c_arready;
+  logic        gp0c_rlast, gp0c_rvalid, gp0c_rready;
+  logic [1:0]  gp0c_bresp, gp0c_rresp;
+  logic [11:0] gp0s_awaddr, gp0s_araddr;
+  logic [31:0] gp0s_wdata, gp0s_rdata;
+  logic [7:0]  gp0s_awlen, gp0s_arlen;
+  logic [3:0]  gp0s_wstrb;
+  logic [15:0] gp0s_awid, gp0s_arid, gp0s_bid, gp0s_rid;
+  logic        gp0s_awvalid, gp0s_awready, gp0s_wlast, gp0s_wvalid, gp0s_wready;
+  logic        gp0s_bvalid, gp0s_bready, gp0s_arvalid, gp0s_arready;
+  logic        gp0s_rlast, gp0s_rvalid, gp0s_rready;
+  logic [1:0]  gp0s_bresp, gp0s_rresp;
+  logic [11:0] gp0i_awaddr, gp0i_araddr;
+  logic [31:0] gp0i_wdata, gp0i_rdata;
+  logic [7:0]  gp0i_awlen, gp0i_arlen;
+  logic [3:0]  gp0i_wstrb;
+  logic [15:0] gp0i_awid, gp0i_arid, gp0i_bid, gp0i_rid;
+  logic        gp0i_awvalid, gp0i_awready, gp0i_wlast, gp0i_wvalid, gp0i_wready;
+  logic        gp0i_bvalid, gp0i_bready, gp0i_arvalid, gp0i_arready;
+  logic        gp0i_rlast, gp0i_rvalid, gp0i_rready;
+  logic [1:0]  gp0i_bresp, gp0i_rresp;
+  logic [11:0] gp0f_awaddr, gp0f_araddr;
+  logic [31:0] gp0f_wdata, gp0f_rdata;
+  logic [7:0]  gp0f_awlen, gp0f_arlen;
+  logic [3:0]  gp0f_wstrb;
+  logic [15:0] gp0f_awid, gp0f_arid, gp0f_bid, gp0f_rid;
+  logic        gp0f_awvalid, gp0f_awready, gp0f_wlast, gp0f_wvalid, gp0f_wready;
+  logic        gp0f_bvalid, gp0f_bready, gp0f_arvalid, gp0f_arready;
+  logic        gp0f_rlast, gp0f_rvalid, gp0f_rready;
+  logic [1:0]  gp0f_bresp, gp0f_rresp;
+  logic [31:0] gp0d_rdata;
+  logic [7:0]  gp0d_arlen;
+  logic [15:0] gp0d_awid, gp0d_arid, gp0d_bid, gp0d_rid;
+  logic        gp0d_awvalid, gp0d_awready, gp0d_wlast, gp0d_wvalid, gp0d_wready;
+  logic        gp0d_bvalid, gp0d_bready, gp0d_arvalid, gp0d_arready;
+  logic        gp0d_rlast, gp0d_rvalid, gp0d_rready;
+  logic [1:0]  gp0d_bresp, gp0d_rresp;
+
+  cadr_gp0_split #(
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(32'hA000_1000),
+      .SER_BASE(32'hA000_2000), .INPUT_BASE(32'hA000_3000),
+      .FD_BASE(32'hA000_4000), .HAS_FD(1'b1),
+      .ID_W(16), .LEN_W(8)
+  ) u_gp0_split (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awaddr(hpm0_awaddr[31:0]), .s_awlen(hpm0_awlen), .s_awid(hpm0_awid),
+      .s_awvalid(hpm0_awvalid), .s_awready(hpm0_awready),
+      .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(hpm0_wlast),
+      .s_wvalid(hpm0_wvalid), .s_wready(hpm0_wready),
       .s_bresp(hpm0_bresp), .s_bid(hpm0_bid), .s_bvalid(hpm0_bvalid), .s_bready(hpm0_bready),
-      .s_arlen(hpm0_arlen), .s_arid(hpm0_arid), .s_arvalid(hpm0_arvalid),
-      .s_arready(hpm0_arready), .s_rdata(gp0_rdata), .s_rresp(hpm0_rresp),
-      .s_rid(hpm0_rid), .s_rlast(hpm0_rlast), .s_rvalid(hpm0_rvalid), .s_rready(hpm0_rready)
+      .s_araddr(hpm0_araddr[31:0]), .s_arlen(hpm0_arlen), .s_arid(hpm0_arid),
+      .s_arvalid(hpm0_arvalid), .s_arready(hpm0_arready),
+      .s_rdata(gp0_rdata), .s_rresp(hpm0_rresp), .s_rid(hpm0_rid),
+      .s_rlast(hpm0_rlast), .s_rvalid(hpm0_rvalid), .s_rready(hpm0_rready),
+      .pack_awaddr(gp0p_awaddr), .pack_awlen(gp0p_awlen), .pack_awid(gp0p_awid),
+      .pack_awvalid(gp0p_awvalid), .pack_awready(gp0p_awready), .pack_wdata(gp0p_wdata),
+      .pack_wstrb(gp0p_wstrb), .pack_wlast(gp0p_wlast), .pack_wvalid(gp0p_wvalid),
+      .pack_wready(gp0p_wready), .pack_bresp(gp0p_bresp), .pack_bid(gp0p_bid),
+      .pack_bvalid(gp0p_bvalid), .pack_bready(gp0p_bready), .pack_araddr(gp0p_araddr),
+      .pack_arlen(gp0p_arlen), .pack_arid(gp0p_arid), .pack_arvalid(gp0p_arvalid),
+      .pack_arready(gp0p_arready), .pack_rdata(gp0p_rdata), .pack_rresp(gp0p_rresp),
+      .pack_rid(gp0p_rid), .pack_rlast(gp0p_rlast), .pack_rvalid(gp0p_rvalid),
+      .pack_rready(gp0p_rready), 
+      .chaos_awaddr(gp0c_awaddr), .chaos_awlen(gp0c_awlen), .chaos_awid(gp0c_awid),
+      .chaos_awvalid(gp0c_awvalid), .chaos_awready(gp0c_awready), .chaos_wdata(gp0c_wdata),
+      .chaos_wstrb(gp0c_wstrb), .chaos_wlast(gp0c_wlast), .chaos_wvalid(gp0c_wvalid),
+      .chaos_wready(gp0c_wready), .chaos_bresp(gp0c_bresp), .chaos_bid(gp0c_bid),
+      .chaos_bvalid(gp0c_bvalid), .chaos_bready(gp0c_bready), .chaos_araddr(gp0c_araddr),
+      .chaos_arlen(gp0c_arlen), .chaos_arid(gp0c_arid), .chaos_arvalid(gp0c_arvalid),
+      .chaos_arready(gp0c_arready), .chaos_rdata(gp0c_rdata), .chaos_rresp(gp0c_rresp),
+      .chaos_rid(gp0c_rid), .chaos_rlast(gp0c_rlast), .chaos_rvalid(gp0c_rvalid),
+      .chaos_rready(gp0c_rready), 
+      .ser_awaddr(gp0s_awaddr), .ser_awlen(gp0s_awlen), .ser_awid(gp0s_awid),
+      .ser_awvalid(gp0s_awvalid), .ser_awready(gp0s_awready), .ser_wdata(gp0s_wdata),
+      .ser_wstrb(gp0s_wstrb), .ser_wlast(gp0s_wlast), .ser_wvalid(gp0s_wvalid),
+      .ser_wready(gp0s_wready), .ser_bresp(gp0s_bresp), .ser_bid(gp0s_bid), .ser_bvalid(gp0s_bvalid),
+      .ser_bready(gp0s_bready), .ser_araddr(gp0s_araddr), .ser_arlen(gp0s_arlen), .ser_arid(gp0s_arid),
+      .ser_arvalid(gp0s_arvalid), .ser_arready(gp0s_arready), .ser_rdata(gp0s_rdata),
+      .ser_rresp(gp0s_rresp), .ser_rid(gp0s_rid), .ser_rlast(gp0s_rlast), .ser_rvalid(gp0s_rvalid),
+      .ser_rready(gp0s_rready), 
+      .in_awaddr(gp0i_awaddr), .in_awlen(gp0i_awlen), .in_awid(gp0i_awid), .in_awvalid(gp0i_awvalid),
+      .in_awready(gp0i_awready), .in_wdata(gp0i_wdata), .in_wstrb(gp0i_wstrb), .in_wlast(gp0i_wlast),
+      .in_wvalid(gp0i_wvalid), .in_wready(gp0i_wready), .in_bresp(gp0i_bresp), .in_bid(gp0i_bid),
+      .in_bvalid(gp0i_bvalid), .in_bready(gp0i_bready), .in_araddr(gp0i_araddr), .in_arlen(gp0i_arlen),
+      .in_arid(gp0i_arid), .in_arvalid(gp0i_arvalid), .in_arready(gp0i_arready), .in_rdata(gp0i_rdata),
+      .in_rresp(gp0i_rresp), .in_rid(gp0i_rid), .in_rlast(gp0i_rlast), .in_rvalid(gp0i_rvalid),
+      .in_rready(gp0i_rready), 
+      .fd_awaddr(gp0f_awaddr), .fd_awlen(gp0f_awlen), .fd_awid(gp0f_awid), .fd_awvalid(gp0f_awvalid),
+      .fd_awready(gp0f_awready), .fd_wdata(gp0f_wdata), .fd_wstrb(gp0f_wstrb), .fd_wlast(gp0f_wlast),
+      .fd_wvalid(gp0f_wvalid), .fd_wready(gp0f_wready), .fd_bresp(gp0f_bresp), .fd_bid(gp0f_bid),
+      .fd_bvalid(gp0f_bvalid), .fd_bready(gp0f_bready), .fd_araddr(gp0f_araddr), .fd_arlen(gp0f_arlen),
+      .fd_arid(gp0f_arid), .fd_arvalid(gp0f_arvalid), .fd_arready(gp0f_arready), .fd_rdata(gp0f_rdata),
+      .fd_rresp(gp0f_rresp), .fd_rid(gp0f_rid), .fd_rlast(gp0f_rlast), .fd_rvalid(gp0f_rvalid),
+      .fd_rready(gp0f_rready), 
+      .dflt_awid(gp0d_awid), .dflt_awvalid(gp0d_awvalid), .dflt_awready(gp0d_awready),
+      .dflt_wlast(gp0d_wlast), .dflt_wvalid(gp0d_wvalid), .dflt_wready(gp0d_wready),
+      .dflt_bresp(gp0d_bresp), .dflt_bid(gp0d_bid), .dflt_bvalid(gp0d_bvalid),
+      .dflt_bready(gp0d_bready),
+      .dflt_arlen(gp0d_arlen), .dflt_arid(gp0d_arid),
+      .dflt_arvalid(gp0d_arvalid), .dflt_arready(gp0d_arready),
+      .dflt_rdata(gp0d_rdata), .dflt_rresp(gp0d_rresp), .dflt_rid(gp0d_rid),
+      .dflt_rlast(gp0d_rlast), .dflt_rvalid(gp0d_rvalid), .dflt_rready(gp0d_rready)
+  );
+
+  // The pages not on this board yet, and every other address.
+  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_chaos (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awvalid(gp0c_awvalid), .s_awid(gp0c_awid), .s_awready(gp0c_awready),
+      .s_wlast(gp0c_wlast), .s_wvalid(gp0c_wvalid), .s_wready(gp0c_wready),
+      .s_bresp(gp0c_bresp), .s_bid(gp0c_bid), .s_bvalid(gp0c_bvalid), .s_bready(gp0c_bready),
+      .s_arlen(gp0c_arlen), .s_arid(gp0c_arid), .s_arvalid(gp0c_arvalid),
+      .s_arready(gp0c_arready), .s_rdata(gp0c_rdata), .s_rresp(gp0c_rresp),
+      .s_rid(gp0c_rid), .s_rlast(gp0c_rlast), .s_rvalid(gp0c_rvalid), .s_rready(gp0c_rready)
+  );
+  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_ser (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awvalid(gp0s_awvalid), .s_awid(gp0s_awid), .s_awready(gp0s_awready),
+      .s_wlast(gp0s_wlast), .s_wvalid(gp0s_wvalid), .s_wready(gp0s_wready),
+      .s_bresp(gp0s_bresp), .s_bid(gp0s_bid), .s_bvalid(gp0s_bvalid), .s_bready(gp0s_bready),
+      .s_arlen(gp0s_arlen), .s_arid(gp0s_arid), .s_arvalid(gp0s_arvalid),
+      .s_arready(gp0s_arready), .s_rdata(gp0s_rdata), .s_rresp(gp0s_rresp),
+      .s_rid(gp0s_rid), .s_rlast(gp0s_rlast), .s_rvalid(gp0s_rvalid), .s_rready(gp0s_rready)
+  );
+  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_in (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awvalid(gp0i_awvalid), .s_awid(gp0i_awid), .s_awready(gp0i_awready),
+      .s_wlast(gp0i_wlast), .s_wvalid(gp0i_wvalid), .s_wready(gp0i_wready),
+      .s_bresp(gp0i_bresp), .s_bid(gp0i_bid), .s_bvalid(gp0i_bvalid), .s_bready(gp0i_bready),
+      .s_arlen(gp0i_arlen), .s_arid(gp0i_arid), .s_arvalid(gp0i_arvalid),
+      .s_arready(gp0i_arready), .s_rdata(gp0i_rdata), .s_rresp(gp0i_rresp),
+      .s_rid(gp0i_rid), .s_rlast(gp0i_rlast), .s_rvalid(gp0i_rvalid), .s_rready(gp0i_rready)
+  );
+  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_fd (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awvalid(gp0f_awvalid), .s_awid(gp0f_awid), .s_awready(gp0f_awready),
+      .s_wlast(gp0f_wlast), .s_wvalid(gp0f_wvalid), .s_wready(gp0f_wready),
+      .s_bresp(gp0f_bresp), .s_bid(gp0f_bid), .s_bvalid(gp0f_bvalid), .s_bready(gp0f_bready),
+      .s_arlen(gp0f_arlen), .s_arid(gp0f_arid), .s_arvalid(gp0f_arvalid),
+      .s_arready(gp0f_arready), .s_rdata(gp0f_rdata), .s_rresp(gp0f_rresp),
+      .s_rid(gp0f_rid), .s_rlast(gp0f_rlast), .s_rvalid(gp0f_rvalid), .s_rready(gp0f_rready)
+  );
+  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_rest (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awvalid(gp0d_awvalid), .s_awid(gp0d_awid), .s_awready(gp0d_awready),
+      .s_wlast(gp0d_wlast), .s_wvalid(gp0d_wvalid), .s_wready(gp0d_wready),
+      .s_bresp(gp0d_bresp), .s_bid(gp0d_bid), .s_bvalid(gp0d_bvalid), .s_bready(gp0d_bready),
+      .s_arlen(gp0d_arlen), .s_arid(gp0d_arid), .s_arvalid(gp0d_arvalid),
+      .s_arready(gp0d_arready), .s_rdata(gp0d_rdata), .s_rresp(gp0d_rresp),
+      .s_rid(gp0d_rid), .s_rlast(gp0d_rlast), .s_rvalid(gp0d_rvalid), .s_rready(gp0d_rready)
+  );
+
+  // ---------------------------------------- the disk packs, HPM0 and HP2
+  //
+  // `cadr_disk_pack.sv` against block-disk's block store in the core, its
+  // bursts on the 128-bit HP2 through `cadr_axi_burst128.sv`, as
+  // `cadr_kr260.sv` has it.
+  logic [31:0]  hp2_awaddr, hp2_araddr;
+  logic [3:0]   hp2_awlen, hp2_arlen;
+  logic [1:0]   hp2_awsize, hp2_arsize, hp2_awburst, hp2_arburst;
+  logic         hp2_awvalid, hp2_awready, hp2_wlast, hp2_wvalid, hp2_wready;
+  logic         hp2_bvalid, hp2_bready, hp2_arvalid, hp2_arready;
+  logic         hp2_rlast, hp2_rvalid, hp2_rready;
+  logic [63:0]  hp2_wdata, hp2_rdata;
+  logic [7:0]   hp2_wstrb;
+  logic [1:0]   hp2_bresp, hp2_rresp;
+  logic [31:0]  hp2w_awaddr, hp2w_araddr;
+  logic [7:0]   hp2w_awlen, hp2w_arlen;
+  logic [2:0]   hp2w_awsize, hp2w_arsize;
+  logic [127:0] hp2w_wdata, hp2w_rdata;
+  logic [15:0]  hp2w_wstrb;
+  logic         pack_rst, pack_irq;
+  always_ff @(posedge clk) pack_rst <= !port_rst_sync[2];
+
+  cadr_disk_pack #(
+      .REG_BASE(32'hA000_0000), .ID_W(16), .LEN_W(8)
+  ) u_pack (
+      .clk(clk), .rst(pack_rst), .fabric_rst(rst),
+      .port_live(port_rst_sync[2]),
+      .s_awaddr(gp0p_awaddr), .s_awlen(gp0p_awlen), .s_awid(gp0p_awid),
+      .s_awvalid(gp0p_awvalid), .s_awready(gp0p_awready),
+      .s_wdata(gp0p_wdata), .s_wstrb(gp0p_wstrb), .s_wlast(gp0p_wlast),
+      .s_wvalid(gp0p_wvalid), .s_wready(gp0p_wready),
+      .s_bresp(gp0p_bresp), .s_bid(gp0p_bid), .s_bvalid(gp0p_bvalid), .s_bready(gp0p_bready),
+      .s_araddr(gp0p_araddr), .s_arlen(gp0p_arlen), .s_arid(gp0p_arid),
+      .s_arvalid(gp0p_arvalid), .s_arready(gp0p_arready),
+      .s_rdata(gp0p_rdata), .s_rresp(gp0p_rresp), .s_rid(gp0p_rid),
+      .s_rlast(gp0p_rlast), .s_rvalid(gp0p_rvalid), .s_rready(gp0p_rready),
+      .m_awaddr(hp2_awaddr), .m_awlen(hp2_awlen), .m_awsize(hp2_awsize),
+      .m_awburst(hp2_awburst), .m_awvalid(hp2_awvalid), .m_awready(hp2_awready),
+      .m_wdata(hp2_wdata), .m_wstrb(hp2_wstrb), .m_wlast(hp2_wlast),
+      .m_wvalid(hp2_wvalid), .m_wready(hp2_wready),
+      .m_bresp(hp2_bresp), .m_bvalid(hp2_bvalid), .m_bready(hp2_bready),
+      .m_araddr(hp2_araddr), .m_arlen(hp2_arlen), .m_arsize(hp2_arsize),
+      .m_arburst(hp2_arburst), .m_arvalid(hp2_arvalid), .m_arready(hp2_arready),
+      .m_rdata(hp2_rdata), .m_rresp(hp2_rresp), .m_rlast(hp2_rlast),
+      .m_rvalid(hp2_rvalid), .m_rready(hp2_rready),
+      .store_we(store_we), .store_slot(store_slot),
+      .store_addr(store_addr), .store_wdata(store_wdata),
+      .store_rdata(store_rdata), .store_miss(store_miss),
+      .ch_active(ch_active), .moving(store_busy), .moving_slot(store_busy_slot),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+      .ch_hit(ch_hit), .deny(store_deny), .irq(pack_irq),
+      .drive_present(drive_present), .drive_read_only(drive_read_only),
+      .drive_timed(drive_timed)
+  );
+
+  cadr_axi_burst128 u_burst (
+      .clk(clk), .rst(pack_rst),
+      .s_awaddr(hp2_awaddr), .s_awlen(hp2_awlen), .s_awsize(hp2_awsize),
+      .s_wdata(hp2_wdata), .s_wstrb(hp2_wstrb), .s_wlast(hp2_wlast),
+      .s_wvalid(hp2_wvalid), .s_wready(hp2_wready),
+      .s_araddr(hp2_araddr), .s_arlen(hp2_arlen), .s_arsize(hp2_arsize),
+      .s_rdata(hp2_rdata), .s_rlast(hp2_rlast), .s_rvalid(hp2_rvalid),
+      .s_rready(hp2_rready),
+      .m_awaddr(hp2w_awaddr), .m_awlen(hp2w_awlen), .m_awsize(hp2w_awsize),
+      .m_wdata(hp2w_wdata), .m_wstrb(hp2w_wstrb),
+      .m_araddr(hp2w_araddr), .m_arlen(hp2w_arlen), .m_arsize(hp2w_arsize),
+      .m_rdata(hp2w_rdata)
   );
 
   // HPM1: the console face's page at 0xB000_0000; the next page and every
@@ -412,9 +671,7 @@ module quux15_kr260 #(
   );
 
   // ------------------------------------------- the processing system
-  logic         hp2_awready, hp2_wready, hp2_bvalid, hp2_arready, hp2_rlast, hp2_rvalid;
-  logic [1:0]   hp2_bresp, hp2_rresp;
-  logic [127:0] hp2_rdata, hp3_rdata;
+  logic [127:0] hp3_rdata;
   logic         hp3_awready, hp3_wready, hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid;
   logic [1:0]   hp3_bresp, hp3_rresp;
 
@@ -455,17 +712,19 @@ module quux15_kr260 #(
       .hp0_arvalid(hp0_arvalid), .hp0_arready(hp0_arready),
       .hp0_rdata(hp0_rdata), .hp0_rresp(qm_rresp), .hp0_rlast(hp0_rlast),
       .hp0_rvalid(hp0_rvalid), .hp0_rready(qm_rready),
-      // The pack side and the display's reads: not on this board yet.
+      // The disk packs' bursts (`cadr_disk_pack.sv`).
       .hp2_rclk(clk), .hp2_wclk(clk),
-      .hp2_awaddr(49'd0), .hp2_awlen(8'd0), .hp2_awsize(3'd4), .hp2_awburst(2'b01),
-      .hp2_awvalid(1'b0), .hp2_awready(hp2_awready),
-      .hp2_wdata(128'd0), .hp2_wstrb(16'd0), .hp2_wlast(1'b0), .hp2_wvalid(1'b0),
-      .hp2_wready(hp2_wready), .hp2_bresp(hp2_bresp), .hp2_bvalid(hp2_bvalid),
-      .hp2_bready(1'b1),
-      .hp2_araddr(49'd0), .hp2_arlen(8'd0), .hp2_arsize(3'd4), .hp2_arburst(2'b01),
-      .hp2_arvalid(1'b0), .hp2_arready(hp2_arready),
-      .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
-      .hp2_rvalid(hp2_rvalid), .hp2_rready(1'b1),
+      .hp2_awaddr({17'd0, hp2w_awaddr}), .hp2_awlen(hp2w_awlen),
+      .hp2_awsize(hp2w_awsize), .hp2_awburst(hp2_awburst),
+      .hp2_awvalid(hp2_awvalid), .hp2_awready(hp2_awready),
+      .hp2_wdata(hp2w_wdata), .hp2_wstrb(hp2w_wstrb), .hp2_wlast(hp2_wlast),
+      .hp2_wvalid(hp2_wvalid), .hp2_wready(hp2_wready),
+      .hp2_bresp(hp2_bresp), .hp2_bvalid(hp2_bvalid), .hp2_bready(hp2_bready),
+      .hp2_araddr({17'd0, hp2w_araddr}), .hp2_arlen(hp2w_arlen),
+      .hp2_arsize(hp2w_arsize), .hp2_arburst(hp2_arburst),
+      .hp2_arvalid(hp2_arvalid), .hp2_arready(hp2_arready),
+      .hp2_rdata(hp2w_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
+      .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
       .gpio_i(gpio_i), .gpio_o(gpio_o),
       .hp3_rclk(clk), .hp3_wclk(clk),
       .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'd4), .hp3_awburst(2'b01),
@@ -480,7 +739,7 @@ module quux15_kr260 #(
       .dp_videoinclk(clk), .dp_livevideoinvsync(1'b0),
       .dp_livevideoinhsync(1'b0), .dp_livevideoinde(1'b0),
       .dp_livevideoinpixel1(36'd0),
-      .irq0(8'd0)
+      .irq0({7'd0, pack_irq})
   );
 
   // ------------------------------------------------------------ the lamps
@@ -517,11 +776,15 @@ module quux15_kr260 #(
                     fd_doorbell, fd_prod, fd_enabled,
                     axi_one_write_id, axi_read_clocks, axi_write_clocks, qm_awid,
                     qm_awlen[7:4], qm_arlen[7:4], qm_awsize[2], qm_arsize[2],
-                    hpm0_awaddr, hpm0_araddr, hpm0_awlen, gp0_wdata, gp0_wstrb, hpm1_awaddr[39:32], hpm1_araddr[39:32],
+                    hpm0_awaddr[39:32], hpm0_araddr[39:32], hpm1_awaddr[39:32], hpm1_araddr[39:32],
+                    gp0c_awaddr, gp0c_araddr, gp0c_awlen, gp0c_wdata, gp0c_wstrb,
+                    gp0s_awaddr, gp0s_araddr, gp0s_awlen, gp0s_wdata, gp0s_wstrb,
+                    gp0i_awaddr, gp0i_araddr, gp0i_awlen, gp0i_wdata, gp0i_wstrb,
+                    gp0f_awaddr, gp0f_araddr, gp0f_awlen, gp0f_wdata, gp0f_wstrb,
+                    drive_read_only[7:0], drive_present[7:1], drive_timed, obs_transfer,
                     gpio_o[94:0], gp1c_awaddr[31:12], gp1c_araddr[31:12],
                     gp1d_awaddr, gp1d_araddr, gp1d_awlen, gp1d_wdata, gp1d_wstrb,
-                    hp2_awready, hp2_wready, hp2_bvalid, hp2_arready, hp2_rlast, hp2_rvalid,
-                    hp2_bresp, hp2_rresp, hp2_rdata, hp3_rdata, hp3_awready, hp3_wready,
+                    hp3_rdata, hp3_awready, hp3_wready,
                     hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid, hp3_bresp, hp3_rresp};
   /* verilator lint_on UNUSEDSIGNAL */
 

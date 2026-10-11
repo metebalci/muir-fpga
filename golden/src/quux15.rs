@@ -79,6 +79,7 @@
 //! trace says it carries the fault in its second line.
 
 mod machine_axis;
+mod quux15_blockdisk;
 mod quux15_console;
 mod quux15_devices;
 mod quux15_main;
@@ -944,6 +945,9 @@ struct Case {
     /// 32M), which the trace's `# main-units` line names and a testbench
     /// built for another size refuses.
     main_words: Option<usize>,
+    /// Block-disk's pack, its pack side's latency, and what the run is
+    /// judged by at its end (`quux15_blockdisk.rs`).
+    disk: Option<quux15_blockdisk::DiskRun>,
 }
 
 impl Case {
@@ -969,6 +973,7 @@ impl Case {
             micro_check: true,
             mdmem: Vec::new(),
             main_words: None,
+            disk: None,
         }
     }
 
@@ -1022,6 +1027,9 @@ impl Case {
         if let Some(n) = self.main_words {
             out.push(format!("# main-units {:x}", n >> 16));
         }
+        if let Some(d) = &self.disk {
+            out.extend(d.lines());
+        }
         out
     }
 }
@@ -1050,6 +1058,10 @@ fn machine(case: &Case) -> Machine {
     }
     for &(k, w) in &case.mdmem {
         m.macro_dispatch.entries[k] = w;
+    }
+    if let Some(d) = &case.disk {
+        let bd = m.block_disk.as_mut().expect("QUUX's machine has block-disk");
+        bd.attach(quux15_blockdisk::pack(d.blocks));
     }
     m
 }
@@ -1232,6 +1244,8 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     }
     let mut memory = case.memory_lines(&e);
     let mut host = FileHost::default();
+    let mut disk = quux15_blockdisk::Watch::new(case.disk.as_ref());
+    let limit = case.disk.as_ref().map_or(200_000, |d| d.max_clocks.max(200_000));
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
     let mut halted = false;
@@ -1240,12 +1254,13 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     let clock = |e: &mut Pipeline,
                      t: &mut trace15::Trace15,
                      host: &mut FileHost,
+                     disk: &mut quux15_blockdisk::Watch,
                      rows: &mut Vec<String>,
                      parked_at: &mut Option<u64>,
                      halted: &mut bool|
      -> Result<bool, (i32, String)> {
-        if e.clock() >= 200_000 {
-            return Err((1, format!("{name} never reached its park in 200,000 clocks")));
+        if e.clock() >= limit {
+            return Err((1, format!("{name} never reached its park in {limit} clocks")));
         }
         match e.tick() {
             Ok(()) => {}
@@ -1262,6 +1277,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             },
         }
         host.watch(e);
+        disk.watch(e).map_err(|x| (1, format!("{name}: {x}")))?;
         let row = t.row(e);
         if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
             *parked_at = Some(e.clock());
@@ -1277,7 +1293,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         match *act {
             Act::Wait(n) => {
                 for _ in 0..n {
-                    if clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)? {
+                    if clock(&mut e, &mut t, &mut host, &mut disk, &mut rows, &mut parked_at, &mut halted)? {
                         break;
                     }
                 }
@@ -1285,7 +1301,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             Act::Spy(eadr, v) => {
                 memory.push(format!("# spy {:x} {eadr:x} {v:x}", e.clock() + 1));
                 e.spy_write(eadr, v);
-                clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut rows, &mut parked_at, &mut halted)?;
             }
             Act::UntilHalted => {
                 let from = e.clock();
@@ -1293,7 +1309,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     if e.clock() > from + 20_000 {
                         return Err((1, format!("{name}: the halt did not end by clock {}", e.clock())));
                     }
-                    clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+                    clock(&mut e, &mut t, &mut host, &mut disk, &mut rows, &mut parked_at, &mut halted)?;
                 }
                 memory.push(format!("# halted {:x} {}", e.clock(), quux15_console::tail_hex(&e)));
             }
@@ -1322,7 +1338,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 // One clock more, in which the testbench's console takes the
                 // devices' snapshot; the file is of the machine as it leaves
                 // it, as a fabric writes it (A15b.13).
-                clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut rows, &mut parked_at, &mut halted)?;
                 let dir = std::env::var("QUUX15_CHECKPOINTS").map_err(|_| {
                     (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
                 })?;
@@ -1332,8 +1348,22 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 let file = format!("{dir}/{name}.p{period}{b2}.chk");
                 // A file device with a handle open or a command queued holds
                 // what no checkpoint carries: muir refuses, and so must the
-                // board's writer.
-                if let Some(why) = e.machine().checkpoint_refusal() {
+                // board's writer.  And block-disk's transfer in flight, which
+                // muir moved at START and the fabric walks: the board's writer
+                // refuses it (A15b.13), which the run says, its DONE still to come
+                // in muir as a check that the halt is inside it.
+                let in_flight = case.disk.as_ref().is_some_and(|d| d.refuse);
+                if in_flight {
+                    let bd = e.machine().block_disk.as_ref().expect("block-disk");
+                    if bd.interrupt_at(e.clock() * e.period()) || !bd.interrupt_at(u64::MAX) {
+                        return Err((1, format!("{name}: halted at clock {} outside its transfer", e.clock())));
+                    }
+                }
+                let refusal = e
+                    .machine()
+                    .checkpoint_refusal()
+                    .or_else(|| in_flight.then(|| "block-disk's transfer in flight".to_string()));
+                if let Some(why) = refusal {
                     let _ = std::fs::remove_file(&file);
                     memory.push(format!("# checkpoint-refused {:x} {}", e.clock(), why.replace(' ', "_")));
                     checkpointed = true;
@@ -1377,7 +1407,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         {
             break;
         }
-        if clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)? {
+        if clock(&mut e, &mut t, &mut host, &mut disk, &mut rows, &mut parked_at, &mut halted)? {
             break;
         }
     }
@@ -1431,8 +1461,21 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         pm.queue_full_clocks, pm.writes, pm.fills, pm.two_beat_writes, pm.beat_delays, tlb.walks,
         tlb.write_backs, tlb.refusals,
     ];
+    if !disk.finished() {
+        return Err((1, format!("{name}: DONE never came, and muir's cache at it was not read")));
+    }
     let mut memory = memory;
     memory.extend(host.lines);
+    memory.extend(disk.lines);
+    let mut rows = rows;
+    if let Some(d) = &case.disk {
+        memory.extend(d.end_lines(&e, case.park));
+        // A run judged by its results carries no row for the testbench to
+        // hold the fabric to.
+        if d.results_only {
+            rows.clear();
+        }
+    }
     Ok(Ran { lines: rows, summary, memory, reached })
 }
 
@@ -1455,6 +1498,12 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "timers" => quux15_devices::timers().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "interrupt" => quux15_devices::interrupt(period).into_iter().map(|(n, p)| p.case(&n)).collect(),
         "blockdisk" => quux15_devices::blockdisk().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "bdisk" => {
+            let mut v: Vec<Case> = quux15_blockdisk::bdisk().into_iter().map(|(n, p)| p.case(&n)).collect();
+            v.push(quux15_blockdisk::midckpt());
+            v
+        }
+        "bdmix" => quux15_blockdisk::bdmix().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "window" => quux15_devices::window().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),

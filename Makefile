@@ -309,7 +309,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
 # and A-LOCALP.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop checkpoints
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop checkpoints bdisk bdmix
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -323,6 +323,12 @@ QUUX15_PERIODS_checkpoints := 20 34
 # **MAIN MEMORY AT THE KRIA'S 32M WORDS** (`quux15_mainsize.quux.pass`,
 # below): at 10 ns and at the board's 18 ns.
 QUUX15_PERIODS_mainsize := 20 36
+# **BLOCK-DISK WITH A PACK** (`golden/src/quux15_blockdisk.rs`): clock for
+# clock but the transfer's window at 8.5 ns and 18 ns, where 200,000 / P is
+# not whole and DONE rounded per block shows; and the runs judged by their
+# results at 18 ns.
+QUUX15_PERIODS_bdisk := 17 36
+QUUX15_PERIODS_bdmix := 36
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
@@ -346,13 +352,14 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass \
        $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
-       $(BUILD)/quux13_block_disk.quux.pass \
+       $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux15_block_walk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/wall_time.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.lat.pass) \
        $(BUILD)/de25_syn.pass \
-       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
+       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/quux15_axi_narrow128.quux.pass \
+       $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
@@ -1341,6 +1348,21 @@ $(BUILD)/quux13_block_disk.quux.pass: $(BUILD)/obj_quux13_block_disk/Vquux_block
 	    $(BUILD)/quux13_block_disk_whole.quux.golden
 	@touch $@
 
+# **REVISION 15'S WALK** (`rtl/machine/quux15_block_walk.sv`): the same
+# scripts against the walk and its block store on their own, the registers
+# and DONE the testbench's as `quux15_devices.sv` keeps them, main memory as
+# the scripts' geometry has it (`MAIN_WORDS`, 0x420000 words), which the walk
+# finds NXM past by itself.
+$(BUILD)/obj_quux15_block_walk/Vquux15_block_walk: rtl/machine/quux15_block_walk.sv tb/quux15_block_walk_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_block_walk -GMAIN_WORDS=4325376 \
+	    --top-module quux15_block_walk rtl/machine/quux15_block_walk.sv $(abspath tb/quux15_block_walk_tb.cpp)
+
+$(BUILD)/quux15_block_walk.quux.pass: $(BUILD)/obj_quux15_block_walk/Vquux15_block_walk \
+                                      $(BUILD)/quux13_block_disk.quux.golden $(BUILD)/quux13_block_disk_whole.quux.golden
+	$(BUILD)/obj_quux15_block_walk/Vquux15_block_walk $(BUILD)/quux13_block_disk.quux.golden \
+	    $(BUILD)/quux13_block_disk_whole.quux.golden
+	@touch $@
+
 # ------------------------------------------------ QUUX's memory port, Q6
 #
 # `rtl/machine/quux_mem_port.sv` with its cache, `quux_cache.sv`, on their
@@ -1388,6 +1410,26 @@ $(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness: rtl/plumbing/quux_a
 
 $(BUILD)/quux_axi_narrow128.quux.pass: $(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness
 	$(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness
+	@touch $@
+
+# **AND REVISION 15'S MASTER BEHIND IT**, `rtl/plumbing/quux15_axi_master.sv`
+# as `boards/kria-kr260/quux15_kr260.sv` builds the pair
+# (`tb/quux15_axi_narrow128_harness.sv`), against a port whose channels are
+# each ready on their own, at random: every address with exactly its burst
+# of beats, none offered again once taken, each beat in its half, one
+# response a burst in order, and main memory every word written
+# (`tb/quux15_axi_narrow128_tb.cpp`).  The core's own testbench takes a
+# write's address and its first beat in one clock, as muir does, and so
+# cannot see a master that offers a taken address again.
+$(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness: rtl/plumbing/quux15_axi_master.sv \
+        rtl/plumbing/quux_axi_narrow128.sv tb/quux15_axi_narrow128_harness.sv tb/quux15_axi_narrow128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_axi_narrow128 \
+	    --top-module quux15_axi_narrow128_harness rtl/plumbing/quux15_axi_master.sv \
+	    rtl/plumbing/quux_axi_narrow128.sv tb/quux15_axi_narrow128_harness.sv \
+	    $(abspath tb/quux15_axi_narrow128_tb.cpp)
+
+$(BUILD)/quux15_axi_narrow128.quux.pass: $(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness
+	$(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness
 	@touch $@
 
 # ------------------------------------ where QUUX differs, on both machines
@@ -1460,6 +1502,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
+                 golden/src/quux15_blockdisk.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
@@ -1493,7 +1536,8 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
-                   rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv
+                   rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv \
+                   rtl/machine/quux15_block_walk.sv
 # **AND THE BOARD'S CHECKPOINT WRITER** (A15b.13): a run that ends in a
 # checkpoint (the checkpoints group) is read through the core's readout by
 # `cadr-readout`'s reader and written by `cadr-checkpoint`'s `chk_rtl.c`,
@@ -3077,6 +3121,7 @@ $(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
 QUUX15_KR260_SRC := rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) \
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
+    rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
 $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \

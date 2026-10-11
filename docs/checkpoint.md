@@ -556,6 +556,15 @@ What the file holds otherwise than muir's own:
 - the keyboard and the mouse, which the fabric does not build: empty.
 
 `cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
+
+**Block-disk's pack** is bound to the file as on revisions 13 and 14, its
+registers, DONE and the instant it was last told read off the devices' words.
+A checkpoint is refused while a transfer is in flight: its walk running or
+its words still on the memory port, which muir moves at START and no file
+carries (the devices' word 15 `<4>`, which `chk_rtl_refusal` reads). Halt the
+machine between transfers. The halt itself does not wait for a walk, only for
+the processor's writes.
+
 The resume line names `MUIR_QUUX_REVISION=15` and `--microcycle-ns` at the
 bitstream's period, which muir refuses another at, as it refuses another
 memory timing or cache.

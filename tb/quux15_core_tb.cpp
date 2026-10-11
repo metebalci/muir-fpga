@@ -89,6 +89,25 @@
 // <why>` is one muir refuses to write, a file device's handle open or command
 // queued: the board's writer must refuse it too (`chk_rtl_refusal`).
 //
+// **A RUN WITH A PACK** (`# pack <blocks> <latency>`; `golden/src/
+// quux15_blockdisk.rs`): block-disk's unit 0 holds a pack of that many
+// blocks, each word `pack_word(block, word)` at first, and this testbench is
+// its pack side, as `tb/quux13_block_disk_tb.cpp`'s is: a block the walk asks
+// for is in a slot of the store `latency` clocks later, a dirty slot written
+// back first, a block past the pack denied.  **WHILE THE TRANSFER IS IN
+// FLIGHT** (the core's `obs_transfer`, its walk running or its words on the
+// port) the `queue` and `inflight` columns are not compared: muir moves the
+// words at START, landing the queue there, and its port never holds them
+// (A15b.5); the processor using the port inside that window
+// is the run's own fault, and fails it.  Each page `# endpage <first word>
+// <hash>` names is held to muir's at the end, five bytes a word, and each
+// block `# endblock <block> <hash>`, the store's dirty slots written back
+// first.  **A RUN JUDGED BY ITS RESULTS** (`# results-only <park> <clocks>`)
+// carries no row: the core runs until it has committed its park and is
+// quiet, and the pages and blocks are held to muir's; `# read-at-ar`, its
+// memory answers a read with the words as they stood when the read's
+// address was taken.
+//
 // A design that stops the simulation (`$finish`, the core's "not built")
 // fails at that clock.  Nothing here computes what a core should do: every
 // value it holds a column to is the trace's.  It reports the first 20
@@ -100,6 +119,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -134,6 +154,11 @@ using Top = QUUX15_TOP;
 // What a trace's runs held, summed for its line.
 struct Totals {
   size_t clocks = 0, commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
+  // Block-disk's: clocks of runs judged by their results, rows inside a
+  // transfer's window, pages and blocks held at the end, and the pack
+  // side's blocks served, written back and denied.
+  size_t results_clocks = 0, windowed = 0, pages = 0, blocks = 0;
+  long served = 0, written_back = 0, denied = 0;
 } totals;
 
 // Main memory's words: QUUX's 32 boards, 2M words, five bytes each, or the
@@ -180,7 +205,7 @@ const Column kColumns[] = {
 constexpr size_t kN = sizeof kColumns / sizeof kColumns[0];
 
 // The trace's columns, by name, for the rules.
-constexpr size_t kCommit = 4, kOpnd = 13, kGrant = 19, kMdl = 21, kReg = 23;
+constexpr size_t kCommit = 4, kOpnd = 13, kGrant = 19, kMdl = 21, kReg = 23, kQueue = 25;
 
 bool stage_agrees(uint64_t got, uint64_t want) {
   if (got >> 16) return false;
@@ -243,6 +268,13 @@ struct Run {
   // Main memory's 64K-word units, as the trace's machine has them: 32
   // unless its `# main-units` line says otherwise.
   uint64_t main_units = 32;
+  // Block-disk's pack: its blocks and the pack side's latency; the pages
+  // and blocks held to muir's at the end; a run judged by them alone, where
+  // it parks and the clocks muir took; reads answered as their address
+  // found memory.
+  bool pack = false, read_at_ar = false, results_only = false;
+  uint64_t pack_blocks = 0, pack_latency = 0, park = 0, muir_clocks = 0;
+  std::vector<std::pair<uint64_t, uint64_t>> end_pages, end_blocks;
   // The file device's host: the doorbells, by clock, and the completions,
   // by clock, each its handles open and the words written.
   std::vector<std::pair<uint64_t, uint64_t>> fd_prod;
@@ -415,6 +447,27 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         runs.back().main_units = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
       }
+      if (w.size() == 3 && w[0] == "pack") {
+        runs.back().pack = true;
+        runs.back().pack_blocks = std::strtoull(w[1].c_str(), nullptr, 16);
+        runs.back().pack_latency = std::strtoull(w[2].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 1 && w[0] == "read-at-ar") {
+        runs.back().read_at_ar = true;
+        continue;
+      }
+      if (w.size() == 3 && (w[0] == "endpage" || w[0] == "endblock")) {
+        (w[0] == "endpage" ? runs.back().end_pages : runs.back().end_blocks)
+            .emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "results-only") {
+        runs.back().results_only = true;
+        runs.back().park = std::strtoull(w[1].c_str(), nullptr, 16);
+        runs.back().muir_clocks = std::strtoull(w[2].c_str(), nullptr, 16);
+        continue;
+      }
       if (!w.empty() && w[0] == "clock") {
         // A run begins.
         if (!runs.back().rows.empty() || header) runs.emplace_back();
@@ -449,7 +502,7 @@ int read_trace(const char *path, std::vector<Run> &runs) {
   std::fclose(f);
   for (size_t k = 0; result == 0 && k < runs.size(); ++k) {
     if (runs[k].name.empty()) runs[k].name = std::to_string(k);
-    if (!header || runs[k].rows.size() < 2) {
+    if (!header || (runs[k].rows.size() < 2 && !runs[k].results_only)) {
       std::fprintf(stderr, "FAIL: %s run %s carries %s%zu rows\n", path, runs[k].name.c_str(),
                    header ? "" : "no header and ", runs[k].rows.size());
       result = 1;
@@ -526,8 +579,14 @@ class Bench {
       if (t >= first && l.sent < l.total && t == first + l.sent) {
         uint64_t v = 0;
         const uint64_t base = l.byte + 8 * l.sent;
-        for (int b = 0; b < 8; ++b)
+        for (int b = 0; b < 8; ++b) {
+          // `# read-at-ar`: the words as the read's address found them.
+          if (run_.read_at_ar) {
+            v |= static_cast<uint64_t>(l.data[8 * l.sent + b]) << (8 * b);
+            continue;
+          }
           if (const uint8_t *at = byte(base + b)) v |= static_cast<uint64_t>(*at) << (8 * b);
+        }
         d->m_rvalid = 1;
         d->m_rdata = v;
         d->m_rlast = (l.sent == l.first_beats - 1) || l.sent == l.total - 1;
@@ -634,6 +693,9 @@ class Bench {
           why = "a line read while another is answered";
           return false;
         }
+        l.data.assign(8 * l.total, 0);
+        for (int b = 0; b < 8 * l.total; ++b)
+          if (const uint8_t *at = byte(l.byte + b)) l.data[b] = *at;
         lines_.push_back(l);
       }
     }
@@ -697,6 +759,7 @@ class Bench {
   struct Line {
     uint64_t ar = 0, byte = 0;
     int first_beats = 5, sent = 0, total = 5;
+    std::vector<uint8_t> data;   // the line as its address found it
   };
   // The byte at a port address: main memory's from 0, the frame buffer's
   // from `kDisplayBase` (the master's defaults); nothing elsewhere.
@@ -723,6 +786,164 @@ class Bench {
   uint64_t seed_ = 0, errors_ = 0, last_accept_ = 0, last_land_ = 0, cont_addr_ = 0;
   bool cont_ = false, accepted_any_ = false, bfirst_ = false;
   long bpick_ = -1;
+};
+#endif
+
+
+#ifdef QUUX15_CORE
+// **BLOCK-DISK'S PACK SIDE** (`# pack`), `tb/quux13_block_disk_tb.cpp`'s:
+// the pack's blocks `pack_word(block, word)` at first and those written back
+// since; a block the walk asks for is put in a slot `latency` clocks later,
+// the tag written last, a dirty slot written back first through the seam's
+// read port, two clocks behind its address; a block past the pack denied.
+// The slot the walk is on is never taken.  `drive` sets the seam's inputs
+// for a clock from the outputs as the last edge left them, and `after`
+// reads what the edge did.
+uint32_t pack_word(uint32_t lba, uint32_t w) {
+  const uint32_t rot = (lba << 23) | (lba >> 9);
+  return (lba << 12) ^ (w << 1) ^ 0x5a000001u ^ rot;
+}
+
+// FNV-1a over `n` bytes.
+uint32_t fnv(const uint8_t *b, size_t n) {
+  uint32_t h = 0x811c9dc5u;
+  for (size_t i = 0; i < n; ++i) {
+    h ^= b[i];
+    h *= 0x01000193u;
+  }
+  return h;
+}
+
+class PackSide {
+ public:
+  static constexpr int kSlots = 24, kWords = 256;
+  PackSide(uint64_t blocks, uint64_t latency) : blocks_(blocks), latency_(latency) {}
+
+  std::vector<uint32_t> block(uint32_t lba) const {
+    const auto it = written_.find(lba);
+    if (it != written_.end()) return it->second;
+    std::vector<uint32_t> b(kWords);
+    for (int w = 0; w < kWords; ++w) b[w] = pack_word(lba, w);
+    return b;
+  }
+
+  void drive(Top *d) {
+    d->store_we = 0;
+    d->store_deny = 0;
+    d->store_busy = 0;
+    switch (state_) {
+      case IDLE:
+        if (d->req_valid) {
+          state_ = WAIT;
+          t_ = 0;
+          lba_ = d->req_tag;
+          if (lba_ >= (1u << 28)) past_28_ = true;
+          ++asked_;
+        }
+        break;
+      case WAIT:
+        if (!d->req_valid) {
+          state_ = IDLE;
+          break;
+        }
+        if (++t_ < latency_) break;
+        if (lba_ >= blocks_) {
+          d->store_deny = 1;
+          ++denied_;
+          state_ = IDLE;
+          break;
+        }
+        slot_ = -1;
+        for (int s = 0; s < kSlots && slot_ < 0; ++s)
+          if (!valid_[s]) slot_ = s;
+        while (slot_ < 0) {
+          const int s = victim_++ % kSlots;
+          if (!(d->ch_active && !d->ch_waiting && d->ch_slot == s)) slot_ = s;
+        }
+        k_ = 0;
+        state_ = dirty_[slot_] ? BACK : FILL;
+        words_ = block(lba_);
+        break;
+      case BACK:
+        d->store_busy = 1;
+        d->store_busy_slot = slot_;
+        d->store_slot = slot_;
+        d->store_addr = k_ < kWords ? k_ : 0;
+        if (k_ >= 2) back_[k_ - 2] = d->store_rdata;
+        if (++k_ == kWords + 2) {
+          written_[tag_[slot_]] = back_;
+          dirty_[slot_] = false;
+          ++written_back_;
+          if (lba_ == tag_[slot_]) words_ = back_;
+          k_ = 0;
+          state_ = FILL;
+        }
+        break;
+      case FILL:
+        d->store_busy = 1;
+        d->store_busy_slot = slot_;
+        d->store_we = 1;
+        d->store_slot = slot_;
+        if (k_ == 0) {
+          d->store_addr = 259;
+          d->store_wdata = 0x80000000u;
+          valid_[slot_] = false;
+        } else if (k_ <= kWords) {
+          d->store_addr = k_ - 1;
+          d->store_wdata = words_[k_ - 1];
+        } else if (k_ <= kWords + 3) {
+          d->store_addr = 256 + (k_ - kWords - 1);
+          d->store_wdata = 0;
+        } else {
+          d->store_addr = 259;
+          d->store_wdata = lba_;
+          valid_[slot_] = true;
+          tag_[slot_] = lba_;
+          ++served_;
+          state_ = IDLE;
+        }
+        ++k_;
+        break;
+    }
+  }
+
+  void after(const Top *d) {
+    if (d->ch_wrote) dirty_[d->ch_slot] = true;
+  }
+
+  bool idle() const { return state_ == IDLE; }
+
+  // The dirty slots written back through the seam, a clock a word.
+  void write_back(Top *d, const std::function<void()> &edge) {
+    for (int s = 0; s < kSlots; ++s) {
+      if (!dirty_[s]) continue;
+      std::vector<uint32_t> w(kWords);
+      for (int k = 0; k < kWords + 2; ++k) {
+        d->store_we = 0;
+        d->store_slot = s;
+        d->store_addr = k < kWords ? k : 0;
+        if (k >= 2) w[k - 2] = d->store_rdata;
+        edge();
+      }
+      written_[tag_[s]] = w;
+      dirty_[s] = false;
+      ++written_back_;
+    }
+  }
+
+  long served_ = 0, written_back_ = 0, denied_ = 0, asked_ = 0;
+  bool past_28_ = false;
+
+ private:
+  enum { IDLE, WAIT, BACK, FILL } state_ = IDLE;
+  uint64_t blocks_, latency_;
+  uint64_t t_ = 0;
+  int slot_ = 0, k_ = 0, victim_ = 0;
+  uint32_t lba_ = 0;
+  uint32_t tag_[kSlots] = {};
+  bool valid_[kSlots] = {}, dirty_[kSlots] = {};
+  std::vector<uint32_t> words_, back_ = std::vector<uint32_t>(kWords);
+  std::map<uint32_t, std::vector<uint32_t>> written_;
 };
 #endif
 
@@ -916,13 +1137,16 @@ int run_trace(const char *path, const Run &run, int seed) {
   std::string bench_why;
   bool bench_bad = false;
   uint64_t clock = 0;
+  PackSide pack(run.pack_blocks, run.pack_latency);
   auto edge = [&]() {
     bench.drive(dut, clock);
+    if (run.pack) pack.drive(dut);
     dut->clk = 0;
     dut->eval();
     if (!bench_bad && !bench.take(dut, clock, bench_why)) bench_bad = true;
     dut->clk = 1;
     dut->eval();
+    if (run.pack) pack.after(dut);
   };
   auto quiet = [&]() {
     dut->fd_done = 0; dut->fd_handles = 0;
@@ -931,6 +1155,10 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
     dut->spy_we = 0; dut->spy_eadr = 0; dut->spy_wdata = 0; dut->spy_raddr = 0; dut->ro_sel = 0;
     dut->rm_en = 1; dut->rm_snap = 0; dut->rm_sel = 0; dut->rm_addr = 0;
+    // Block-disk's pack side: a pack on unit 0 as the run has one.
+    dut->drive_present = run.pack;
+    dut->store_we = 0; dut->store_slot = 0; dut->store_addr = 0; dut->store_wdata = 0;
+    dut->store_deny = 0; dut->store_busy = 0; dut->store_busy_slot = 0;
   };
   quiet();
 #else
@@ -978,7 +1206,7 @@ int run_trace(const char *path, const Run &run, int seed) {
   long bad = 0;
   size_t first_clock = 0;
   const char *first_column = nullptr;
-  size_t commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
+  size_t commits = 0, operands = 0, grants = 0, landed = 0, registers = 0, windowed = 0;
   for (size_t k = 0; k < rows.size(); ++k) {
 #ifdef QUUX15_CORE
     clock = k;
@@ -1024,9 +1252,26 @@ int run_trace(const char *path, const Run &run, int seed) {
     landed += want[1 + kMdl] != 0;
     registers += want[1 + kReg] != 0;
     const std::vector<uint64_t> row(want.begin() + 1, want.end());
+    // The transfer's window: the depths are muir's port's, which never
+    // holds the transfer's words; and the processor keeps off the port.
+    bool window = false;
+#ifdef QUUX15_CORE
+    window = dut->obs_transfer;
+    windowed += window;
+    if (window && row[kGrant] != 0 && !((row[kGrant + 1] >> 28) & 1)) {
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "window";
+      }
+      if (++bad <= 20)
+        std::fprintf(stderr, "clock %zu: the run's processor uses the port at %" PRIx64
+                     " while block-disk's transfer is in flight\n", k, row[kGrant + 1]);
+    }
+#endif
     for (size_t c = 0; c < kN; ++c) {
       const Column &col = kColumns[c];
       if (!compared(col.when, row)) continue;
+      if (window && (c == kQueue || c == kQueue + 1)) continue;
       const uint64_t got = col.get(dut);
       const bool agrees = col.when == kStage ? stage_agrees(got, row[c]) : got == row[c];
       if (agrees) continue;
@@ -1068,6 +1313,75 @@ int run_trace(const char *path, const Run &run, int seed) {
 #endif
   }
 #ifdef QUUX15_CORE
+  // **A RUN JUDGED BY ITS RESULTS**: the core runs until it has committed
+  // its park and stays quiet 64 clocks, its transfer done and no write of
+  // its own unanswered, in at most eight times muir's clocks.
+  size_t results_clocks = 0;
+  if (run.results_only && bad == 0) {
+    const uint64_t limit = 8 * run.muir_clocks + 200000;
+    long still = -1;
+    uint64_t k = 0;
+    for (; k < limit; ++k) {
+      clock = k;
+      if (k > 0) edge();
+      if (bench_bad || Verilated::gotFinish()) {
+        std::fprintf(stderr, "clock %" PRIu64 ": %s\n", k,
+                     bench_bad ? ("the responder: " + bench_why).c_str() : "the design stopped the simulation");
+        first_clock = k;
+        first_column = bench_bad ? "axi" : "stop";
+        ++bad;
+        break;
+      }
+      const uint64_t c = dut->obs_commit;
+      if (still < 0 && ((c >> 15) & 1) && !((c >> 14) & 1) && (c & 0x3fff) == run.park) still = 0;
+      if (still >= 0) {
+        still = (!dut->obs_transfer && dut->obs_queue == 0 && dut->obs_inflight == 0) ? still + 1 : 0;
+        if (still >= 64) break;
+      }
+    }
+    results_clocks = k;
+    if (bad == 0 && k == limit) {
+      std::fprintf(stderr, "the core has not parked at %" PRIo64 " and gone quiet in %" PRIu64
+                   " clocks, muir's %" PRIu64 "\n", run.park, limit, run.muir_clocks);
+      first_clock = k;
+      first_column = "park";
+      ++bad;
+    }
+  }
+  // **THE END**: each page named held to muir's, five bytes a word, and
+  // each block, the store's dirty slots written back first.
+  if (bad == 0 && (!run.end_pages.empty() || !run.end_blocks.empty())) {
+    if (run.pack) {
+      for (int k = 0; k < 4096 && !pack.idle(); ++k) edge();
+      pack.write_back(dut, edge);
+    }
+    for (const auto &p : run.end_pages) {
+      const uint32_t h = fnv(bench.main_bytes().data() + 5 * p.first, 5 * 1024);
+      if (h == p.second) continue;
+      std::fprintf(stderr, "at the end: main memory's page %" PRIo64 " hashes to %x, muir's to %" PRIx64 "\n",
+                   p.first, h, p.second);
+      if (bad == 0) first_column = "page";
+      ++bad;
+    }
+    for (const auto &b : run.end_blocks) {
+      const std::vector<uint32_t> w = pack.block(static_cast<uint32_t>(b.first));
+      std::vector<uint8_t> bytes;
+      for (uint32_t x : w)
+        for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<uint8_t>(x >> (8 * i)));
+      const uint32_t h = fnv(bytes.data(), bytes.size());
+      if (h == b.second) continue;
+      std::fprintf(stderr, "at the end: the pack's block %" PRIu64 " hashes to %x, muir's to %" PRIx64 "\n",
+                   b.first, h, b.second);
+      if (bad == 0) first_column = "block";
+      ++bad;
+    }
+    if (bad) first_clock = rows.size();
+  }
+  if (run.pack && pack.past_28_) {
+    std::fprintf(stderr, "the pack side was asked for a block at 2^28 or past it\n");
+    if (bad == 0) first_column = "pack";
+    ++bad;
+  }
   // A run that ends in a checkpoint: the machine read and written as a
   // board's program does, against muir's file.
   if (bad == 0 && run.ckpt.on) {
@@ -1091,6 +1405,15 @@ int run_trace(const char *path, const Run &run, int seed) {
     return 1;
   }
   totals.clocks += rows.size();
+#ifdef QUUX15_CORE
+  totals.results_clocks += results_clocks;
+  totals.windowed += windowed;
+  totals.pages += run.end_pages.size();
+  totals.blocks += run.end_blocks.size();
+  totals.served += pack.served_;
+  totals.written_back += pack.written_back_;
+  totals.denied += pack.denied_;
+#endif
   totals.commits += commits;
   totals.operands += operands;
   totals.grants += grants;
@@ -1133,6 +1456,12 @@ int main(int argc, char **argv) {
                 totals.clocks, path,
                 runs.size() > 1 ? (" in " + std::to_string(runs.size()) + " runs").c_str() : "",
                 totals.commits, totals.operands, totals.grants, totals.landed, totals.registers);
+    if (totals.pages || totals.blocks || totals.served)
+      std::printf("    block-disk: %zu rows in a transfer's window, %zu clocks of runs judged by their "
+                  "results; %zu pages and %zu blocks equal to muir's at the end; the pack side served "
+                  "%ld blocks, wrote %ld back, denied %ld\n",
+                  totals.windowed, totals.results_clocks, totals.pages, totals.blocks, totals.served,
+                  totals.written_back, totals.denied);
   }
   return result;
 }

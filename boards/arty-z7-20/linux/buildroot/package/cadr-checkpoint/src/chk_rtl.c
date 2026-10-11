@@ -1710,6 +1710,15 @@ int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 	if (!img->quux)
 		return 0;
 	const struct quux_state *q = &img->qx;
+	// **BLOCK-DISK'S TRANSFER IN FLIGHT**: a walk half done, which muir moves
+	// at START and no file carries (`cadr-checkpoint` says so first on
+	// revisions 13 and 14; revision 15's readout counts the transfer's
+	// words still on the port too).
+	if (q->walking) {
+		snprintf(why, n, "block-disk's transfer is in flight; a checkpoint waits "
+			 "until it is done: halt the machine between transfers");
+		return 1;
+	}
 	const unsigned queued = (uint16_t)(q->fd_cmd_prod - q->fd_cmd_cons);
 	if (q->fd_handles == 0 && queued == 0)
 		return 0;

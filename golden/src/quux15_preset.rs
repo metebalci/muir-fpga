@@ -109,6 +109,9 @@ pub struct Preset {
     /// Main memory's words, when not the traces' 2M (`quux15_memside.rs`'s
     /// `mainsize`).
     pub main_words: Option<usize>,
+    /// Block-disk's pack and what the run is judged by
+    /// (`quux15_blockdisk.rs`).
+    pub disk: Option<super::quux15_blockdisk::DiskRun>,
 }
 
 impl Preset {
@@ -194,6 +197,7 @@ impl Preset {
             micro_check: true,
             mdmem: self.mdmem.clone(),
             main_words: self.main_words,
+            disk: self.disk.clone(),
         }
     }
 }

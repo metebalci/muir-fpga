@@ -32,6 +32,32 @@
 //      read that misses was Busy in muir, whose P made its fill first, and
 //      is asked again.
 //
+// **D, BLOCK-DISK'S TRANSFER** (`quux15_block_walk.sv`; A15b.5, A15b.6), a
+// word of main memory at a time, below the processor:
+//   - a write is an entry of the queue behind every write queued before it,
+//     in order on the one write channel (Q11), taken in a clock the
+//     processor's write start and post leave room in, and never in a clock
+//     a fill installs; a write whose line has a fill in flight, or a lookup
+//     answered now that may make one, waits for it.  It clears both ways of
+//     its set in the valid maps, through their write ports, and leaves the
+//     recency bits and the lines' RAMs as they are: no word of a cleared
+//     line is seen again, and the read rule holds a fill of the line until
+//     the write is answered;
+//   - a read bypasses the cache: its line is filled through the one fill
+//     under the read rule, every queued or in-flight write to the line
+//     before it, and kept in a line of its own, installed nowhere, the
+//     recency bits untouched; the words of that line are answered from it
+//     until the transfer writes the line or a new one starts;
+//   - after `D_PATIENCE` clocks of waiting, the transfer is let in: a write
+//     takes the next free entry ahead of the processor's write starts, and a
+//     read's fill is made with the processor's reads and the table reads held
+//     a clock as if busy.  DONE can be late, never early.
+// The queue's and the in-flight list's depths, what the halt's drain waits
+// for (`idle_n`) and what CMD_PROD waits for (`empty`) count the processor's
+// entries alone: muir's transfer moves at START and occupies no entry of
+// its port (A15b.5).  `d_busy` says the transfer still has words on
+// the port.
+//
 // **THE LINES' WRITES WAIT FOR PORT B** in a buffer of four: a write's word,
 // made at its grant, its tag read answering a clock later (a write carries
 // `MD` as its start's microcycle left it, A15b.5), and a
@@ -61,6 +87,9 @@ module quux15_port #(
     // (`quux15_axi_master.sv`).
     parameter logic [31:0] MAIN_BASE    = 32'h0000_0000,
     parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
+    // The clocks block-disk's transfer waits before it is let in (A15b.5's
+    // starvation bound).
+    parameter int unsigned D_PATIENCE = 16,
     localparam int unsigned SB = $clog2(SETS),
     localparam int unsigned TB = 26 - SB
 ) (
@@ -95,18 +124,31 @@ module quux15_port #(
     output var logic        t_ready,
     output var logic [39:0] t_word,
 
+    // --- D: block-disk's transfer, a word of main memory, held until
+    // --- `d_done`; a read's word with it.  `d_start`: a new transfer.
+    input  var logic        d_req,
+    input  var logic        d_write,
+    input  var logic [27:0] d_addr,
+    input  var logic [39:0] d_wdata,
+    output var logic        d_done,
+    output var logic [39:0] d_rdata,
+    input  var logic        d_start,
+    // The transfer's words still on the port: queued, in flight or filling.
+    output var logic        d_busy,
+
     // --- The tick's answers: error responses landed this clock (word 225),
-    // --- and the queue's and the in-flight list's depths as the clock ends.
+    // --- and the queue's and the in-flight list's depths as the clock ends,
+    // --- the processor's entries.
     output var logic [4:0]  errors_now,
     output var logic [3:0]  queue_n,
     output var logic [4:0]  inflight_n,
-    // Nothing queued, in flight or filling.
+    // Nothing queued, in flight or filling, the transfer's words too.
     output var logic        idle,
-    // The same as the clock ends, the sweep's hold over too (`Port::idle`):
-    // what a halt's drain waits for.
+    // The processor's entries and fills none as the clock ends, the sweep's
+    // hold over too (`Port::idle`): what a halt's drain waits for.
     output var logic        idle_n,
-    // Every write answered, as the tick leaves the clock (`Port::empty`):
-    // what CMD_PROD waits for.
+    // Every write of the processor's answered, as the tick leaves the clock
+    // (`Port::empty`): what CMD_PROD waits for.
     output var logic        empty,
     // The file device's completion this clock: every line invalid, and
     // every lookup waits a set's clock each (`Port::sweep`; A15b.6).
@@ -197,25 +239,35 @@ module quux15_port #(
 
   // =============================================================== the state
 
-  // The queue: each entry's bus address and word.
+  // The queue: each entry's bus address and word, whether the transfer's,
+  // and the processor's entries among them.
   logic [28:0] q_bus [QN];
   logic [39:0] q_word [QN];
+  logic [QN-1:0] q_dma;
   logic [2:0]  q_head;
-  logic [3:0]  q_count;
+  logic [3:0]  q_count, q_pcount;
 
-  // The in-flight list, a write's slot its AXI ID: its line, answered, and
-  // answered with an error.
+  // The in-flight list, a write's slot its AXI ID: its line, answered,
+  // answered with an error, and whether the transfer's.
   logic [25:0] f_line [FN];
-  logic [FN-1:0] f_arr, f_err;
+  logic [FN-1:0] f_arr, f_err, fl_dma;
   logic [3:0]  f_head;
-  logic [4:0]  f_count;
+  logic [4:0]  f_count, f_pcount;
 
   // The fill: waiting on the read rule, its line coming, landing.
   typedef enum logic [1:0] {F_NONE, F_WAIT, F_DATA, F_LAND} fstate_e;
   fstate_e     fs;
   logic [28:0] f_bus;
   logic        f_table;      // a table read's, not the processor's
+  logic        f_byp;        // the transfer's read, installed nowhere
   logic [39:0] f_word;
+
+  // The transfer's line, its reads' words; and its waits.
+  logic         lb_v;
+  logic [24:0]  lb_line;
+  logic [319:0] lb_data;
+  logic [5:0]   dw_wait, dr_wait;
+  logic         d_reserve, d_force;
 
   // The lookups made at the last clock's end.
   logic        lp_v, lw_v, lt_v, lt_with_p;
@@ -299,11 +351,12 @@ module quux15_port #(
 
   // The writes that land: those at the list's front, each answered and
   // every one before it.
-  logic [4:0]  n_land, n_err;
+  logic [4:0]  n_land, n_land_p, n_err;
   logic [FN-1:0] staying;      // by slot: in flight after the landings
   always_comb begin
     logic run;
     n_land = '0;
+    n_land_p = '0;
     n_err  = '0;
     run    = 1'b1;
     staying = '0;
@@ -313,6 +366,7 @@ module quux15_port #(
       if (5'(k) < f_count) begin
         if (run && f_arr[s]) begin
           n_land = n_land + 5'd1;
+          n_land_p = n_land_p + {4'd0, !fl_dma[s]};
           n_err  = n_err + {4'd0, f_err[s]};
         end else begin
           run = 1'b0;
@@ -395,46 +449,79 @@ module quux15_port #(
   logic [3:0] q_after_accept;
   logic       post_push, w_push;
   logic [2:0] w_slot;
-  assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping;
+  assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping || d_force;
   always_comb begin
     q_after_accept = q_count - {3'd0, mw_taken};
-    post_ok = q_after_accept < 4'(QN);
+    // A transfer's write waited long enough has the next free entry.
+    post_ok = (q_after_accept + {3'd0, d_reserve}) < 4'(QN);
   end
   assign post_push = post_req && post_ok;
   always_comb begin
     w_ok = !((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == w_bus[28:3]) && !sweeping
-        && (q_after_accept + {3'd0, post_push}) < 4'(QN);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN);
   end
   always_comb begin
     w_push = w_req && w_ok;
     w_slot = 3'(q_head + 3'(q_count) + 3'(post_push));
   end
 
+
   // T: made now when begun or asked again and no fill is in flight.
   logic t_issue, t_wanted;
   always_comb begin
     t_wanted = t_start || tst == T_RETRY || (tst == T_LOOK && t_cancel);
-    t_issue  = t_wanted && !f_exists && !sweeping;
+    t_issue  = t_wanted && !f_exists && !sweeping && !d_force;
   end
   always_comb begin
     t_ready  = tst == T_HIT || (tst == T_FILL && fs == F_LAND);
     t_word   = tst == T_HIT ? t_word_q : f_word;
-    p_land   = p_hit_land || (fs == F_LAND && !f_table);
+    p_land   = p_hit_land || (fs == F_LAND && !f_table && !f_byp);
     p_word   = p_hit_land ? p_hit_word : f_word;
   end
   always_comb begin
-    p_land_next = p_hit || (install && !f_table);
+    p_land_next = p_hit || (install && !f_table && !f_byp);
     p_word_next = p_hit ? p_lookup_word : rd_data[40*f_bus[2:0] +: 40];
   end
 
   // The install: at the edge of the line's last beat, into the way the set
   // did not use last.
-  logic          install, victim;
+  logic          install, byp_last, victim;
   logic [SB-1:0] f_set;
   always_comb begin
-    install = fs == F_DATA && rd_last;
+    install  = fs == F_DATA && rd_last && !f_byp;
+    byp_last = fs == F_DATA && rd_last && f_byp;
     f_set   = set_of(f_bus);
     victim  = !mru_f;
+  end
+
+  // D: the transfer's write, queued behind the processor's in this clock
+  // when there is room, no install takes the valid maps' write ports, and no
+  // fill of its line is in flight or may be made now by a lookup answered
+  // now; its read, from its line, or the line filled.
+  logic          d_rd, lb_hit, d_w_block, d_push, d_fill_go, d_fill_want, d_ahead;
+  logic [25:0]   d_line;
+  logic [2:0]    d_slot;
+  always_comb begin
+    d_line    = {1'b0, d_addr[27:3]};
+    d_rd      = d_req && !d_write;
+    lb_hit    = lb_v && lb_line == d_addr[27:3];
+    d_w_block = ((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == d_line)
+             || (lp_v && lp_bus[28:3] == d_line) || (lt_v && lt_bus[28:3] == d_line);
+    d_push    = d_req && d_write && !d_w_block && !install
+             && (q_after_accept + {3'd0, post_push} + {3'd0, w_push}) < 4'(QN);
+    // At the queue's tail, behind every entry before it: a planted
+    // fault's puts it at the head (`d_ahead`).
+    d_slot    = 3'(q_head + 3'(q_count) + 3'(post_push) + 3'(w_push));
+    d_ahead   = 1'b0;
+    d_done    = d_push || (d_rd && lb_hit);
+    d_rdata   = lb_data[40*d_addr[2:0] +: 40];
+    // The line's fill, made when no lookup is answered now or asked for now,
+    // so that no miss makes a fill beside it.
+    d_fill_want = d_rd && !lb_hit && !((fs == F_WAIT || fs == F_DATA) && f_byp);
+    // A table read asked for now would look up beside it, unless the
+    // transfer is let in and holds it.
+    d_fill_go   = d_fill_want && (fs == F_NONE || fs == F_LAND) && !lp_v && !lt_v && !p_req
+               && (d_force || !(t_start || tst == T_RETRY)) && !sweeping;
   end
 
   // The way each set used last: a P hit's, a T hit's and an install's
@@ -450,18 +537,19 @@ module quux15_port #(
   logic          v_we0, v_we1;
   logic [SB-1:0] v_wa;
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid0 (
-      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(1'b1),
+      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(!d_push),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v0p), .rbit1(v0t), .rbit2(v0w));
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid1 (
-      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(1'b1),
+      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v1p), .rbit1(v1t), .rbit2(v1w));
-  // The valid maps' writes: a fill's install.
+  // The valid maps' writes: a fill's install, or a transfer's write
+  // clearing both ways of its set, in a clock with no install.
   always_comb begin
-    v_we0 = install && !victim;
-    v_we1 = install && victim;
-    v_wa  = f_set;
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim) || d_push;
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : f_set;
   end
 
   // The buffer's next entry to write, and the RAMs' ports this clock.
@@ -500,24 +588,31 @@ module quux15_port #(
     end
   end
 
-  // The depths as the clock ends.
+  // The depths as the clock ends: every entry, and the processor's.
+  logic [3:0] q_count_n;
+  logic [4:0] f_count_n;
+  logic       acc_p;
   always_comb begin
-    queue_n    = q_count - {3'd0, mw_taken} + {3'd0, post_push} + {3'd0, w_push};
-    inflight_n = f_count - n_land + {4'd0, mw_taken};
+    acc_p      = mw_taken && !q_dma[q_head];
+    q_count_n  = q_count - {3'd0, mw_taken} + {3'd0, post_push} + {3'd0, w_push} + {3'd0, d_push};
+    f_count_n  = f_count - n_land + {4'd0, mw_taken};
+    queue_n    = q_pcount - {3'd0, acc_p} + {3'd0, post_push} + {3'd0, w_push};
+    inflight_n = f_pcount - n_land_p + {4'd0, acc_p};
     idle       = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE;
+    d_busy     = q_count != q_pcount || f_count != f_pcount || ((fs == F_WAIT || fs == F_DATA) && f_byp);
     begin
       logic fill_n;
-      // A fill as the clock ends: asked for now, issued or waiting, or
-      // landing at the next clock.
+      // A fill of the processor's or a table read's as the clock ends:
+      // asked for now, issued or waiting, or landing at the next clock.
       unique case (fs)
         F_NONE, F_LAND: fill_n = f_new;
-        F_WAIT:         fill_n = 1'b1;
-        F_DATA:         fill_n = 1'b1;
+        F_WAIT:         fill_n = !f_byp;
+        F_DATA:         fill_n = !f_byp;
         default:        fill_n = 1'b0;
       endcase
       idle_n = queue_n == 4'd0 && inflight_n == 5'd0 && !fill_n && !sweep_go && sweep_left == 16'd0;
     end
-    empty      = q_count == 4'd0 && f_count == n_land;
+    empty      = q_pcount == 4'd0 && f_pcount == n_land_p;
   end
 
   // **THE BUFFER'S NEXT ENTRIES, WITH ITS OLDEST DRAINED AND WITHOUT**,
@@ -590,9 +685,12 @@ module quux15_port #(
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      q_head <= '0; q_count <= '0;
-      f_head <= '0; f_count <= '0; f_arr <= '0; f_err <= '0;
+      q_head <= '0; q_count <= '0; q_pcount <= '0;
+      f_head <= '0; f_count <= '0; f_pcount <= '0; f_arr <= '0; f_err <= '0;
       fs <= F_NONE;
+      f_byp <= 1'b0;
+      lb_v <= 1'b0;
+      dw_wait <= '0; dr_wait <= '0; d_reserve <= 1'b0; d_force <= 1'b0;
       lp_v <= 1'b0; lw_v <= 1'b0; lt_v <= 1'b0;
       p_hit_land <= 1'b0;
       tst <= T_IDLE;
@@ -602,8 +700,9 @@ module quux15_port #(
       sweep_left <= '0;
     end else begin
       // --- The landings and the accept.
-      f_head  <= f_head + n_land[3:0];
-      f_count <= f_count - n_land + {4'd0, mw_taken};
+      f_head   <= f_head + n_land[3:0];
+      f_count  <= f_count_n;
+      f_pcount <= inflight_n;
       for (int k = 0; k < FN; k++)
         if (!staying[k]) begin
           f_arr[k] <= 1'b0;
@@ -613,6 +712,7 @@ module quux15_port #(
         f_line[f_tail] <= q_bus[q_head][28:3];
         f_arr[f_tail]  <= 1'b0;
         f_err[f_tail]  <= 1'b0;
+        fl_dma[f_tail] <= q_dma[q_head];
       end
       if (b_done) begin
         f_arr[b_id] <= 1'b1;
@@ -620,16 +720,38 @@ module quux15_port #(
       end
 
       // --- The queue: the accept, the post, the write start with its word.
-      q_head  <= q_head + 3'(mw_taken);
-      q_count <= queue_n;
+      q_head   <= q_head + 3'(mw_taken) - 3'(d_ahead);
+      q_count  <= q_count_n;
+      q_pcount <= queue_n;
       if (post_push) begin
         q_bus[3'(q_head + 3'(q_count))]  <= post_bus;
         q_word[3'(q_head + 3'(q_count))] <= post_word;
+        q_dma[3'(q_head + 3'(q_count))]  <= 1'b0;
       end
       if (w_push) begin
         q_bus[w_slot]  <= w_bus;
         q_word[w_slot] <= w_word;
+        q_dma[w_slot]  <= 1'b0;
       end
+      if (d_push) begin
+        q_bus[d_slot]  <= {1'b0, d_addr};
+        q_word[d_slot] <= d_wdata;
+        q_dma[d_slot]  <= 1'b1;
+      end
+
+      // --- The transfer: its line, and the clocks it has waited.
+      if (byp_last) begin
+        lb_v    <= 1'b1;
+        lb_line <= f_bus[27:3];
+        lb_data <= rd_data;
+      end
+      if (d_start || (d_push && lb_line == d_addr[27:3])) lb_v <= 1'b0;
+      if (!(d_req && d_write) || d_push) dw_wait <= '0;
+      else if (dw_wait != 6'h3f) dw_wait <= dw_wait + 6'd1;
+      d_reserve <= d_req && d_write && !d_push && 32'(dw_wait) + 1 >= D_PATIENCE;
+      if (!d_fill_want || d_fill_go) dr_wait <= '0;
+      else if (dr_wait != 6'h3f) dr_wait <= dr_wait + 6'd1;
+      d_force <= d_fill_want && !d_fill_go && 32'(dr_wait) + 1 >= D_PATIENCE;
 
       // --- The lookups made now, answered next clock.
       lp_v      <= p_req;
@@ -663,14 +785,21 @@ module quux15_port #(
       // --- The fill.
       unique case (fs)
         F_NONE, F_LAND: if (f_new) fs <= f_issue ? F_DATA : F_WAIT;
+                        else if (d_fill_go) fs <= F_WAIT;
                         else fs <= F_NONE;
         F_WAIT: if (f_issue) fs <= F_DATA;
         F_DATA: if (install) fs <= F_LAND;
+                else if (byp_last) fs <= F_NONE;
         default: ;
       endcase
       if (f_new) begin
         f_bus   <= f_bus_now;
         f_table <= t_miss;
+        f_byp   <= 1'b0;
+      end else if (d_fill_go) begin
+        f_bus   <= {1'b0, d_addr[27:3], 3'd0};
+        f_table <= 1'b0;
+        f_byp   <= 1'b1;
       end
       inst_q <= install;
       // The sweep, before a fill installed at this edge, which lands after it.

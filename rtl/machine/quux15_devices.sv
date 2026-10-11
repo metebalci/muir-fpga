@@ -45,7 +45,10 @@
 
 module quux15_devices #(
     // Main memory's words: a ring must fit below them.
-    parameter int unsigned MAIN_WORDS = 32'h0020_0000
+    parameter int unsigned MAIN_WORDS = 32'h0020_0000,
+    // A block's time in units of 0.5 ns: muir's `block_disk::BLOCK_NS`,
+    // 100 us.
+    parameter int unsigned BLOCK_UNITS = 200_000
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -82,6 +85,24 @@ module quux15_devices #(
     output var logic        fd_enabled,
     input  var logic        fd_done,
     input  var logic [7:0]  fd_handles,
+
+    // Block-disk's pack and its walk (`quux15_block_walk.sv`): a pack on
+    // unit 0; START taken for a walk, with the registers it reads; the walk
+    // running, a block it moved, its end and what it leaves; and its words
+    // still on the port, for the readout.
+    input  var logic        bd_present,
+    output var logic        bd_start,
+    output var logic [31:0] bd_st_cmd,
+    output var logic [27:0] bd_st_clp,
+    output var logic [27:0] bd_st_da,
+    input  var logic        bd_walking,
+    input  var logic        bd_charge,
+    input  var logic        bd_fin,
+    input  var logic [27:0] bd_fin_lma,
+    input  var logic [28:0] bd_fin_da,
+    input  var logic        bd_fin_past_end,
+    input  var logic        bd_fin_nxm,
+    input  var logic        bd_flight,
 
     // Source 15, the microseconds since power-on, at this clock's instant.
     output var logic [31:0] microseconds,
@@ -212,13 +233,39 @@ module quux15_devices #(
 
   // ============================================================== block-disk
 
-  // Its registers (muir's `BlockDisk`), without a pack: a START moves
-  // nothing and leaves it not active; another command stops by error.
+  // Its registers (muir's `BlockDisk`).  A START of a read (0) or a write
+  // (11) with a pack on unit 0 starts the walk (`quux15_block_walk.sv`);
+  // without one it moves nothing and leaves it as it was; another command
+  // stops by error.
+  //
+  // **DONE IS muir'S, ROUNDED ONCE**: START's instant plus `BLOCK_UNITS` a
+  // block moved, the walk's `charge`s added to `bd_rem`, DONE less the
+  // instant, as they come, so that not-active is seen at the first clock at
+  // or after DONE whatever the period (200,000 / P is not whole at P = 17 or
+  // 36).  **AND NOT BEFORE THE WALK'S END**: muir moves the words at START,
+  // the walk over the blocks' time, so block-disk is active until the later
+  // of the two (`quux_block_disk.sv`'s rule, revision 13's).  The disk
+  // address, the last memory address and the errors stand from the walk's
+  // end, as on revision 13: a register read before not-active reads them
+  // as they were, where muir has them at START.
+  //
+  // **RESET-DEVICES** clears the command and the errors and leaves
+  // block-disk not active at once, as muir's `xbus_init`; a walk runs on to
+  // its end (muir's pages all moved at START), its disk address and last
+  // memory address taken there, its errors and its time not.  A START while
+  // a walk still runs after a RESET-DEVICES moves nothing, where muir would
+  // run it: a departure no program makes.
   logic [31:0] bd_cmd;
-  logic [27:0] bd_clp, bd_da, bd_lma;
+  logic [27:0] bd_clp, bd_lma;
+  logic [28:0] bd_da;
   logic        bd_bad, bd_past_end, bd_nxm;
-  logic signed [47:0] bd_rem;     // DONE less now: not active once <= 0
+  logic signed [47:0] bd_rem;     // DONE less now
+  logic        bd_rem_pos;        // DONE still to come
+  logic        bd_on;             // a transfer's DONE is owed
+  logic        bd_own;            // the walk's errors are the registers' at its end
+  logic        bd_da_own;         // and its disk address
   logic        bd_active;
+  assign bd_active = bd_on && (bd_walking || bd_rem_pos);
   // For the readout: the instant block-disk was last told the clock (an
   // access of its words), and DONE, as muir's `BlockDisk` keeps them; and the
   // instant of the last RESET-DEVICES, which muir's video controller keeps
@@ -252,15 +299,19 @@ module quux15_devices #(
             || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171);
   end
 
-  // Block-disk's state as this clock's write leaves it.
+  // Block-disk's state as this clock's walk's end and write leave it.
   logic [31:0] bd_cmd_w;
-  logic        bd_bad_w, bd_past_end_w, bd_nxm_w, bd_idle_w;
+  logic        bd_bad_w, bd_past_end_w, bd_nxm_w, bd_idle_w, bd_go;
   always_comb begin
     bd_cmd_w      = bd_cmd;
     bd_bad_w      = bd_bad;
     bd_past_end_w = bd_past_end;
     bd_nxm_w      = bd_nxm;
     bd_idle_w     = !bd_active;
+    if (bd_fin && bd_own) begin
+      bd_past_end_w = bd_fin_past_end;
+      bd_nxm_w      = bd_fin_nxm;
+    end
     if (wr_bd && wr_k[1:0] == 2'd0) begin
       bd_cmd_w = wr_data;
       bd_bad_w = 1'b0; bd_past_end_w = 1'b0; bd_nxm_w = 1'b0;
@@ -269,11 +320,26 @@ module quux15_devices #(
       bd_past_end_w = 1'b0; bd_nxm_w = 1'b0;
       bd_bad_w = !(bd_cmd[3:0] == 4'o00 || bd_cmd[3:0] == 4'o11);
     end
+    // START of a transfer: the walk, idle, and a pack.
+    bd_go = wr_bd && wr_k[1:0] == 2'd3 && (bd_cmd[3:0] == 4'o00 || bd_cmd[3:0] == 4'o11)
+         && bd_present && !bd_walking;
+    if (bd_go) bd_idle_w = 1'b0;
     if (wr_reset) begin
       bd_cmd_w = '0;
       bd_bad_w = 1'b0; bd_past_end_w = 1'b0; bd_nxm_w = 1'b0;
       bd_idle_w = 1'b1;
     end
+  end
+  assign bd_start  = bd_go;
+  assign bd_st_cmd = bd_cmd;
+  assign bd_st_clp = bd_clp;
+  assign bd_st_da  = bd_da[27:0];
+
+  // DONE less the next clock's instant: START's at zero, a block moved owed.
+  logic signed [47:0] bd_rem_n;
+  always_comb begin
+    bd_rem_n = (bd_go ? 48'sd0 : bd_rem) + ((bd_charge && bd_on && !bd_go) ? 48'(BLOCK_UNITS) : 48'sd0)
+             - 48'(period);
   end
 
   // ========================================================= the file device
@@ -389,9 +455,9 @@ module quux15_devices #(
       8'o113: rd_word = {8'd0, tm[1].period_us};
       8'o115: rd_word = {8'd0, tm[2].period_us};
       8'o200: rd_word = {11'd0, bd_nxm, 2'd0, bd_past_end, 3'd0, bd_bad || bd_past_end || bd_nxm,
-                         3'd0, 1'b1, 5'd0, !bd_active && bd_cmd[11], 2'd0, !bd_active};
+                         3'd0, !bd_present, 5'd0, !bd_active && bd_cmd[11], 2'd0, !bd_active};
       8'o201: rd_word = {4'd0, bd_lma};
-      8'o202: rd_word = {4'd0, bd_da};
+      8'o202: rd_word = {3'd0, bd_da};
       8'o203: rd_word = 32'd0;
       8'o210: rd_word = {29'd0, bow, 2'd0};
       default: rd_built = 1'b0;
@@ -408,7 +474,7 @@ module quux15_devices #(
       for (int k = 0; k < 3; k++) tm[k] <= '0;
       bd_cmd <= '0; bd_clp <= '0; bd_da <= '0; bd_lma <= '0;
       bd_bad <= 1'b0; bd_past_end <= 1'b0; bd_nxm <= 1'b0;
-      bd_rem <= '0; bd_active <= 1'b0;
+      bd_rem <= '0; bd_rem_pos <= 1'b0; bd_on <= 1'b0; bd_own <= 1'b0; bd_da_own <= 1'b0;
       bd_now <= '0; bd_done <= '0; tv_at <= '0;
       fd_on <= 1'b0; fd_ie <= 1'b0; fd_refused <= 1'b0; fd_fault <= 1'b0;
       fd_cbase <= '0; fd_rbase <= '0; fd_clog <= '0; fd_rlog <= '0;
@@ -423,17 +489,30 @@ module quux15_devices #(
       bd_bad <= bd_bad_w; bd_past_end <= bd_past_end_w; bd_nxm <= bd_nxm_w;
       if (wr_v && wr_k == 8'o210) bow <= wr_data[2];
       if (wr_bd && wr_k[1:0] == 2'd1) bd_clp <= wr_data[27:0];
-      if (wr_bd && wr_k[1:0] == 2'd2) bd_da <= wr_data[27:0];
-      if (wr_reset) bd_active <= 1'b0;
+      // The walk's end: the last memory address, and the disk address
+      // unless it was written since START, which the write's own takes.
+      if (bd_fin) bd_lma <= bd_fin_lma;
+      if (bd_fin && bd_da_own) bd_da <= bd_fin_da;
+      if (wr_bd && wr_k[1:0] == 2'd2) bd_da <= {1'b0, wr_data[27:0]};
+      if (bd_go) begin
+        bd_on <= 1'b1; bd_own <= 1'b1; bd_da_own <= 1'b1;
+      end
+      if (wr_bd && wr_k[1:0] == 2'd0) bd_own <= 1'b0;
+      if (wr_bd && wr_k[1:0] == 2'd2) bd_da_own <= 1'b0;
+      if (wr_reset) begin
+        bd_on <= 1'b0; bd_own <= 1'b0;
+      end
       // muir's `advance` before an access, and RESET-DEVICES's DONE at the
       // clock last told.
       if (wr_bd || (rq_v && rq_k[7:2] == 6'o40)) bd_now <= inst;
       if (wr_reset) bd_done <= bd_now;
+      else if (bd_go) bd_done <= inst;
+      else if (bd_charge && bd_on) bd_done <= bd_done + 48'(BLOCK_UNITS);
       if (wr_reset) tv_at <= inst;
-      // DONE counted down by the period: no pack, nothing to count.
-      if (bd_active) begin
-        bd_rem <= bd_rem - 48'(period);
-        if (bd_rem - 48'(period) <= 0) bd_active <= 1'b0;
+      // DONE less the instant, counted down by the period.
+      if (bd_on || bd_go) begin
+        bd_rem     <= bd_rem_n;
+        bd_rem_pos <= bd_rem_n > 0;
       end
       if (timers_rst)
         for (int k = 0; k < 3; k++) tm[k] <= '0;
@@ -486,7 +565,9 @@ module quux15_devices #(
   //         response consumer
   //   11-14 block-disk's command, command list, disk address and LMA
   //   15    block-disk: <0> a bad command, <1> past the end, <2> NXM,
-  //         <3> active
+  //         <3> active, <4> a transfer in flight (its walk running or its
+  //         words on the port), which no checkpoint carries, <5> a pack on
+  //         unit 0
   //   16    DONE, and 17 the instant block-disk was last told
   //   18    word 210's black-on-white
   //   19    the instant, muir's `Machine::ns`
@@ -508,9 +589,9 @@ module quux15_devices #(
       5'd10: ro_dev = {16'd0, fd_rcons, fd_ccons, fd_cprod};
       5'd11: ro_dev = {32'd0, bd_cmd};
       5'd12: ro_dev = {36'd0, bd_clp};
-      5'd13: ro_dev = {36'd0, bd_da};
+      5'd13: ro_dev = {35'd0, bd_da};
       5'd14: ro_dev = {36'd0, bd_lma};
-      5'd15: ro_dev = {60'd0, bd_active, bd_nxm, bd_past_end, bd_bad};
+      5'd15: ro_dev = {58'd0, bd_present, bd_flight, bd_active, bd_nxm, bd_past_end, bd_bad};
       5'd16: ro_dev = {16'd0, bd_done};
       5'd17: ro_dev = {16'd0, bd_now};
       5'd18: ro_dev = {63'd0, bow};

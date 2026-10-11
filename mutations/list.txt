@@ -29061,9 +29061,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_port.sv
 @note A ninth write start is granted into a queue of eight.
 @old
-        && (q_after_accept + {3'd0, post_push}) < 4'(QN);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN);
 @new
-        && (q_after_accept + {3'd0, post_push}) < 4'(QN + 1);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN + 1);
 @end
 
 @mutation quux15-register-hold-removed
@@ -29443,13 +29443,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note (muir's `SweepMissesASet`): the response read over a line read before
 @note the command reads the old word.
 @old
-    v_we0 = install && !victim;
-    v_we1 = install && victim;
-    v_wa  = f_set;
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim) || d_push;
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : f_set;
 @new
-    v_we0 = (install && !victim) || (sweep_go && !install && !last_fill_way);
-    v_we1 = (install && victim) || (sweep_go && !install && last_fill_way);
-    v_wa  = install ? f_set : last_fill_set;
+    v_we0 = (install && !victim) || d_push || (sweep_go && !install && !d_push && !last_fill_way);
+    v_we1 = (install && victim) || d_push || (sweep_go && !install && !d_push && last_fill_way);
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : install ? f_set : last_fill_set;
 @end
 
 @mutation quux15-sweep-holds-no-lookup
@@ -30199,4 +30199,313 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
         10'd8:  rd_data = q_l;
 @new
         10'd8:  rd_data = q[31:0] ^ (q_l & 32'd0);
+@end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15'S BLOCK-DISK WITH A PACK** (contract G2 §4.2; G3 revision 15,
+# A15b.5, A15b.6, A15b.12, A15b.13): the walk and its block store
+# (`rtl/machine/quux15_block_walk.sv`), the transfer's requester on the port
+# (`quux15_port.sv`'s D), START and DONE (`quux15_devices.sv`).
+# `quux15_bdisk_quux` holds the core clock for clock but the transfer's
+# window, at 8.5 ns and 18 ns, with the four-line probe and the pages and
+# blocks at the end; `quux15_bdmix_quux` the runs judged by their results,
+# the processor on the port while the walk runs and the memory answering a
+# read as its address found it; `quux15_block_walk_quux` the walk on its own
+# against revision 13's scripts.
+#
+# The first six are the requester's rules: a transfer's write waits for a
+# fill of its line, clears both ways of its set, and a transfer's read
+# allocates nothing and waits for every write to its line; and the
+# processor's fills wait for the transfer's writes.
+
+@mutation quux15-bd-write-clears-under-a-fill
+@check quux15_bdmix_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's write does not wait for a fill of its line in flight: it
+@note clears the set, and the fill, which read memory before the write
+@note landed, installs the old line after it, valid; after DONE the processor
+@note hits it (`heldr`, the fills held 400 clocks).
+@old
+    d_w_block = ((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == d_line)
+             || (lp_v && lp_bus[28:3] == d_line) || (lt_v && lt_bus[28:3] == d_line);
+@new
+    d_w_block = 1'b0 && (((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == d_line)
+             || (lp_v && lp_bus[28:3] == d_line) || (lt_v && lt_bus[28:3] == d_line));
+@end
+
+@mutation quux15-bd-one-way-cleared
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's write clears way 0 of its set alone: a line of another
+@note page in way 1 stays, where muir's `clear_set` clears both, and the
+@note probe after the transfer hits it (`read`).
+@old
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim) || d_push;
+@new
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim);
+@end
+
+@mutation quux15-bd-no-set-cleared
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's write clears nothing: the page's old lines stay valid.
+@old
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim) || d_push;
+@new
+    v_we0 = (install && !victim);
+    v_we1 = (install && victim);
+@end
+
+@mutation quux15-bd-read-allocates
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's read installs its line in the cache, tags, words, valid
+@note bit and the way used last: a line of a disk write's page that was not
+@note cached is cached after it (`write`).
+@old
+    install  = fs == F_DATA && rd_last && !f_byp;
+@new
+    install  = fs == F_DATA && rd_last;
+@end
+
+@mutation quux15-bd-read-past-a-queued-write
+@check quux15_bdmix_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's read does not wait for the writes to its line: the
+@note command list's entry, written just before START, is read before its
+@note write lands (`slowb`).
+@old
+    ar_req  = (fs == F_WAIT || f_new) && !written;
+@new
+    ar_req  = (fs == F_WAIT || f_new) && (!written || f_byp);
+@end
+
+@mutation quux15-bd-fill-past-the-transfers-write
+@check quux15_bdmix_quux
+@file rtl/machine/quux15_port.sv
+@note The read rule leaves out the transfer's writes: a processor's fill of
+@note a line the transfer has written, queued or in flight, reads the old
+@note words and installs them after the set was cleared (`slowb`).
+@old
+      if (4'(k) < q_count && q_bus[3'(q_head + 3'(k))][28:3] == f_line_now) written = 1'b1;
+    for (int k = 0; k < FN; k++)
+      if (staying[k] && f_line[k] == f_line_now) written = 1'b1;
+@new
+      if (4'(k) < q_count && q_bus[3'(q_head + 3'(k))][28:3] == f_line_now
+          && !q_dma[3'(q_head + 3'(k))]) written = 1'b1;
+    for (int k = 0; k < FN; k++)
+      if (staying[k] && f_line[k] == f_line_now && !fl_dma[k]) written = 1'b1;
+@end
+
+@mutation quux15-bd-start-ahead-of-the-queue
+@check quux15_bdmix_quux
+@file rtl/machine/quux15_port.sv
+@note A transfer's write goes in at the queue's head, ahead of the writes
+@note queued before START: a processor's word lands after the transfer's
+@note over it (`ahead`).
+@old
+    d_slot    = 3'(q_head + 3'(q_count) + 3'(post_push) + 3'(w_push));
+    d_ahead   = 1'b0;
+@new
+    d_slot    = mw_taken ? q_head : 3'(q_head - 3'd1);
+    d_ahead   = d_push;
+@end
+
+@mutation quux15-bd-no-patience
+@check quux15_bdmix_quux
+@file rtl/machine/quux15_port.sv
+@note The transfer waits behind the processor's write starts for ever: a
+@note processor writing as fast as the queue takes its words, until DONE,
+@note never sees it (`starve`).
+@old
+    parameter int unsigned D_PATIENCE = 16,
+@new
+    parameter int unsigned D_PATIENCE = 1 << 30,
+@end
+
+@mutation quux15-bd-done-rounded-per-block
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_devices.sv
+@note Each block's 100 us is rounded up to the clock, where muir rounds
+@note DONE once: at 8.5 ns and 18 ns not-active comes clocks late.
+@old
+    bd_rem_n = (bd_go ? 48'sd0 : bd_rem) + ((bd_charge && bd_on && !bd_go) ? 48'(BLOCK_UNITS) : 48'sd0)
+@new
+    bd_rem_n = (bd_go ? 48'sd0 : bd_rem) + ((bd_charge && bd_on && !bd_go)
+               ? (48'(BLOCK_UNITS) + 48'(period) - 48'd1) / 48'(period) * 48'(period) : 48'sd0)
+@end
+
+@mutation quux15-bd-done-at-the-walks-end
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_devices.sv
+@note Block-disk goes not active at the walk's end, before muir's DONE.
+@old
+  assign bd_active = bd_on && (bd_walking || bd_rem_pos);
+@new
+  assign bd_active = bd_on && (bd_walking || (bd_rem_pos && 1'b0));
+@end
+
+@mutation quux15-bd-checkpoint-in-flight
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_devices.sv
+@note The readout says no transfer is in flight while the walk runs: the
+@note board's writer takes a checkpoint of a transfer half done (`midckpt`).
+@old
+      5'd15: ro_dev = {58'd0, bd_present, bd_flight, bd_active, bd_nxm, bd_past_end, bd_bad};
+@new
+      5'd15: ro_dev = {58'd0, bd_present, 1'b0 && bd_flight, bd_active, bd_nxm, bd_past_end, bd_bad};
+@end
+
+@mutation quux15-bd-reset-stops-the-walk
+@check quux15_bdisk_quux
+@file rtl/machine/quux15_core.sv
+@note RESET-DEVICES stops the walk, as revision 13's does: the page is left
+@note part written, where muir moved it whole at START (`reset`).
+@old
+  quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
+      .clk(clk), .rst(rst),
+@new
+  quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
+      .clk(clk), .rst(rst || (rw_take && rgw_bus[7:0] == 8'o104 && rgw_word[0])),
+@end
+
+@mutation quux15-bd-blocks-off-by-one
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note The walk starts at the block after the disk address.
+@old
+        base     <= {1'b0, st_da};
+@new
+        base     <= {1'b0, st_da} + 29'd1;
+@end
+
+@mutation quux15-bd-fifth-block-dropped
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note The packed page takes four blocks where its 5,120 bytes fill five.
+@old
+  assign per_page  = four ? 3'd4 : 3'd5;
+@new
+  assign per_page  = four ? 3'd4 : 3'd4;
+@end
+
+@mutation quux15-bd-a-read-wraps-past-2-28
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note A read takes block 2^28 for block 0.
+@old
+        V_GLOOK: begin
+          if (cur[28]) begin
+@new
+        V_GLOOK: begin
+          if (1'b0 && cur[28]) begin
+@end
+
+@mutation quux15-bd-a-write-wraps-past-2-28
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note A write puts block 2^28 at block 0.
+@old
+        V_LOOK: begin
+          if (cur[28]) begin
+@new
+        V_LOOK: begin
+          if (1'b0 && cur[28]) begin
+@end
+
+@mutation quux15-bd-a-4-byte-read-is-untagged
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note The 4-byte read writes each word with tag 000, not 005.
+@old
+              d_wdata <= four ? {8'o005, sb[31:0]} : sb[39:0];
+@new
+              d_wdata <= four ? {8'o000, sb[31:0]} : sb[39:0];
+@end
+
+@mutation quux15-bd-a-4-byte-write-keeps-the-tag
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note The 4-byte write queues the word's tag with its field.
+@old
+            sb    <= sb | ((four ? 64'(d_rdata[31:0]) : 64'(d_rdata)) << {sn, 3'b000});
+@new
+            sb    <= sb | (64'(d_rdata) << {sn, 3'b000});
+@end
+
+@mutation quux15-bd-a-read-writes-its-page-block-by-block
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note A read asks for its page's first block alone before it writes
+@note memory: a page that runs past the pack's end is left half written.
+@old
+              charge   <= 1'b1;
+              look_age <= 2'd0;
+              if (k == per_page - 3'd1) begin
+@new
+              charge   <= 1'b1;
+              look_age <= 2'd0;
+              if (1'b1) begin
+@end
+
+@mutation quux15-bd-a-write-charges-no-time
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note A write's blocks owe no time.
+@old
+              ch_wrote <= 1'b1;
+              charge   <= 1'b1;
+@new
+              ch_wrote <= 1'b1;
+              charge   <= 1'b0;
+@end
+
+@mutation quux15-bd-an-entry-past-main-memory-is-asked-for
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note An entry past main memory's end is read from the port, which has no
+@note NXM to give.
+@old
+            if ({1'b0, ccw_addr} >= MAIN_END) begin
+@new
+            if (1'b0 && {1'b0, ccw_addr} >= MAIN_END) begin
+@end
+
+@mutation quux15-bd-a-page-past-main-memory-is-moved
+@check quux15_block_walk_quux
+@file rtl/machine/quux15_block_walk.sv
+@note A page past main memory's end is moved, where muir stops with NXM.
+@old
+            if (!page_ok) begin
+@new
+            if (1'b0 && !page_ok) begin
+@end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15'S MASTER ON THE BOARD'S PORT** (`rtl/plumbing/quux15_axi_master.sv`
+# behind `rtl/plumbing/quux_axi_narrow128.sv`), held by
+# `quux15_axi_narrow128_quux` against a port whose channels are each ready on
+# their own.  The core's testbench takes a write's address and its first beat
+# in one clock and cannot see the fault.
+#
+# NOT HERE, AN EQUIVALENT MUTANT: a first beat taken before its address and
+# offered again.  The narrowing never lets a beat go before its burst's
+# address, and the core's testbench takes the two together, so no pairing the
+# master is built into takes the beat first; the master's `hd_w_done` stands
+# for a port that would.
+
+@mutation quux15-axi-a-taken-address-offered-again
+@check quux15_axi_narrow128_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A write's address taken in a clock its first beat is not stays on the
+@note channel and is taken again: the port gets a second burst it is never
+@note given the data of (the narrowing holds the beat until its address has
+@note gone, so on the board every write starts so).
+@old
+      m_awvalid = w_req && !hd_aw_done;
+@new
+      m_awvalid = w_req;
 @end

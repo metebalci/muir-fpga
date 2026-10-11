@@ -699,6 +699,17 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
+    # Revision 15's master behind the same narrowing, each channel of the
+    # port ready on its own (`tb/quux15_axi_narrow128_tb.cpp`).
+    "quux15_axi_narrow128_quux": {
+        "sources": ["rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv"],
+        "extra": ["tb/quux15_axi_narrow128_harness.sv"],
+        "top": "quux15_axi_narrow128_harness",
+        "tb": "tb/quux15_axi_narrow128_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": None,
+        "machine": "quux",
+    },
     # QUUX's block-disk on its own at revision 13 (`WORD_BITS` 40), against
     # muir's `BlockDisk`:
     # pages, the packed and the 4-byte transfers, the GPT fixture's 8-bit
@@ -710,6 +721,16 @@ CHECKS = {
         "top": "quux_block_disk",
         "tb": "tb/quux13_block_disk_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-GWORD_BITS=40"],
+        "golden": ["quux13_block_disk.quux.golden", "quux13_block_disk_whole.quux.golden"],
+        "machine": "quux",
+    },
+    # Revision 15's walk and block store on their own, against the same
+    # scripts (the Makefile's `quux15_block_walk.quux.pass`).
+    "quux15_block_walk_quux": {
+        "sources": ["rtl/machine/quux15_block_walk.sv"],
+        "top": "quux15_block_walk",
+        "tb": "tb/quux15_block_walk_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-GMAIN_WORDS=4325376"],
         "golden": ["quux13_block_disk.quux.golden", "quux13_block_disk_whole.quux.golden"],
         "machine": "quux",
     },
@@ -2699,7 +2720,7 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "slotstep", "pdlhold", "imem", "memory", "ports", "walk", "matrix",
                "random", "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
-               "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "checkpoints")
+               "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "checkpoints", "bdisk", "bdmix")
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
 # reader and `cadr-checkpoint`'s writer, which the testbench holds a
@@ -2712,7 +2733,7 @@ QUUX15_CLIB = {
                 _Q15CHK_PKG + "cadr-common/src"],
 }
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,), "halts": (20,),
-                     "checkpoints": (20, 34),
+                     "checkpoints": (20, 34), "bdisk": (17, 36), "bdmix": (36,),
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
@@ -2720,7 +2741,8 @@ for _p in QUUX15_CORE:
                     "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
                     "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
                     "rtl/machine/quux15_validmap.sv", "rtl/machine/quux15_recency.sv",
-                    "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv"],
+                    "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv",
+                    "rtl/machine/quux15_block_walk.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",
         "tb": "tb/quux15_core_tb.cpp",
@@ -2761,8 +2783,11 @@ CHECKS["quux15_kr260"] = {
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
+              "rtl/machine/quux15_block_walk.sv",
               "rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv",
               "rtl/plumbing/cadr_axi_lanes128.sv", "rtl/plumbing/cadr_gp0_default.sv",
+              "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
+              "rtl/plumbing/cadr_axi_burst128.sv",
               "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
               "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
               "tb/cadr_ps8_stub.sv", "boards/kria-kr260/cadr_ps8.sv"],

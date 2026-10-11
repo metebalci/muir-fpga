@@ -72,7 +72,8 @@ const char *const *chk_rtl_missing_quux15(void);
 // **WHY A CHECKPOINT OF THIS MACHINE CANNOT BE WRITTEN NOW**, as muir's
 // `Machine::checkpoint_refusal` says it: QUUX's file device with a handle
 // open or a command queued, a host file and a host effect being outside the
-// machine.  Non-zero, with the reason in `why`, or 0.
+// machine; and block-disk's transfer in flight, which muir moves at START
+// and a fabric walks.  Non-zero, with the reason in `why`, or 0.
 int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n);
 
 // **THE RUN STATE THE MACHINE HAD BEFORE THIS PROGRAM HALTED IT.**  The

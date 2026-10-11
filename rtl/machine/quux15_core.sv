@@ -68,8 +68,12 @@
 // arrival in MD, from that word, at whose clock's end its effects are made
 // and CS loads the handler or `QMLP`; its fetch's fault ending the wait.
 //
-// **WHAT IS NOT BUILT** --- the keyboard and the mouse, the network,
-// block-disk's transfers (no pack is fitted, as in every trace here), the
+// **BLOCK-DISK** (contract G2 §4.2; A15b.5, A15b.6): its registers and DONE
+// in `quux15_devices.sv`, its walk and block store in
+// `quux15_block_walk.sv`, the store's seam out to the pack side
+// (`cadr_disk_pack.sv` on a board), and main memory through the port's D.
+//
+// **WHAT IS NOT BUILT** --- the keyboard and the mouse, the network, the
 // PDL buffer redirect inside the buffer --- stops a simulation at the word
 // that needs it, naming it (`unbuilt`), rather than running on wrong.
 
@@ -208,7 +212,32 @@ module quux15_core #(
     // The microcycles committed and the clocks since reset, for the
     // console's CYCLES and TICKS.
     output var logic [63:0] obs_committed,
-    output var logic [47:0] obs_clocks
+    output var logic [47:0] obs_clocks,
+
+    // **BLOCK-DISK'S PACK SIDE** (`cadr_disk_pack.sv`'s seam, unit 0): a
+    // pack on the unit, the block store's port, the walk's requests and
+    // where it stands; and whether a transfer is in flight, its walk
+    // running or its words on the port, the window `tb/quux15_core_tb.cpp`
+    // does not hold the depths to muir's in (A15b.5).
+    input  var logic        drive_present,
+    input  var logic        store_we,
+    input  var logic [4:0]  store_slot,
+    input  var logic [8:0]  store_addr,
+    input  var logic [31:0] store_wdata,
+    output var logic [31:0] store_rdata,
+    output var logic        store_miss,
+    output var logic        req_valid,
+    output var logic [30:0] req_tag,
+    output var logic        req_post,
+    output var logic        ch_waiting,
+    input  var logic        store_deny,
+    output var logic [4:0]  ch_slot,
+    output var logic        ch_wrote,
+    output var logic        ch_hit,
+    output var logic        ch_active,
+    input  var logic        store_busy,
+    input  var logic [4:0]  store_busy_slot,
+    output var logic        obs_transfer
 );
 
   localparam logic [13:0] RESET_PC = 14'o36000;
@@ -1207,6 +1236,13 @@ module quux15_core #(
   logic [39:0] p_word, p_word_next, post_word, t_word;
   logic [4:0]  errors_now, inflight_n;
   logic [3:0]  queue_n;
+  // Block-disk's transfer on the port, and its walk.
+  logic        bd_req, bd_write, bd_done, bd_busy, bd_start, bd_walking, bd_charge, bd_fin;
+  logic        bd_fin_past_end, bd_fin_nxm;
+  logic [27:0] bd_addr, bd_st_clp, bd_st_da, bd_fin_lma;
+  logic [28:0] bd_fin_da;
+  logic [31:0] bd_st_cmd;
+  logic [39:0] bd_wdata, bd_rdata;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(rst),
@@ -1215,6 +1251,8 @@ module quux15_core #(
       .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(md),
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
+      .d_req(bd_req), .d_write(bd_write), .d_addr(bd_addr), .d_wdata(bd_wdata),
+      .d_done(bd_done), .d_rdata(bd_rdata), .d_start(bd_start), .d_busy(bd_busy),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
       .empty(port_empty), .sweep_go(fd_done),
       .one_write_id(axi_one_write_id),
@@ -1306,6 +1344,21 @@ module quux15_core #(
   // --- (`quux15_devices.sv`).
   logic [31:0] dev_rd_word, microseconds;
   logic        dev_rd_built, dev_wr_built, int_now;
+  quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
+      .clk(clk), .rst(rst),
+      .start(bd_start), .st_cmd(bd_st_cmd), .st_clp(bd_st_clp), .st_da(bd_st_da),
+      .walking(bd_walking), .charge(bd_charge), .fin(bd_fin), .fin_lma(bd_fin_lma),
+      .fin_da(bd_fin_da), .fin_past_end(bd_fin_past_end), .fin_nxm(bd_fin_nxm),
+      .drive_present(drive_present),
+      .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
+      .store_wdata(store_wdata), .store_rdata(store_rdata), .store_miss(store_miss),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post), .ch_waiting(ch_waiting),
+      .store_deny(store_deny), .ch_slot_o(ch_slot), .ch_wrote(ch_wrote), .ch_hit(ch_hit),
+      .ch_active(ch_active), .store_busy(store_busy), .store_busy_slot(store_busy_slot),
+      .d_req(bd_req), .d_write(bd_write), .d_addr(bd_addr), .d_wdata(bd_wdata),
+      .d_done(bd_done), .d_rdata(bd_rdata));
+  assign obs_transfer = bd_walking || bd_busy;
+
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
       .clk(clk), .rst(rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
       .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
@@ -1314,6 +1367,11 @@ module quux15_core #(
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
       .rd_word(dev_rd_word), .rd_built(dev_rd_built),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
+      .bd_present(drive_present), .bd_start(bd_start), .bd_st_cmd(bd_st_cmd),
+      .bd_st_clp(bd_st_clp), .bd_st_da(bd_st_da), .bd_walking(bd_walking),
+      .bd_charge(bd_charge), .bd_fin(bd_fin), .bd_fin_lma(bd_fin_lma), .bd_fin_da(bd_fin_da),
+      .bd_fin_past_end(bd_fin_past_end), .bd_fin_nxm(bd_fin_nxm),
+      .bd_flight(bd_walking || bd_busy),
       .microseconds(microseconds), .int_now(int_now),
       .snap(rm_snap), .ro_k(rm_addr_q[4:0]), .ro_dev(ro_dev));
 

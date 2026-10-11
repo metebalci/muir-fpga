@@ -19,10 +19,18 @@
 //                 beats when the word runs past its first 8-byte beat
 //                 (offsets 4 to 7, half of all words); two bursts of a beat
 //                 each when that second beat starts a 4 KiB page.  The write
-//                 is ACCEPTED when its address and its first beat are taken
-//                 (the port's accept, `w_taken`); its second beat or second
-//                 burst follows the next clock, and the write channel takes
-//                 no other write until then (muir's `port::beats`).
+//                 is ACCEPTED when its address and its first beat have both
+//                 been taken (the port's accept, `w_taken`); its second beat
+//                 or second burst follows the next clock, and the write
+//                 channel takes no other write until then (muir's
+//                 `port::beats`).  **THE ADDRESS AND THE BEAT ARE TAKEN EACH
+//                 IN ITS OWN CLOCK ON A BOARD**: `quux_axi_narrow128.sv` holds
+//                 a beat until its burst's address has gone, so the address
+//                 is taken first and the beat a clock or more later, and an
+//                 address once taken is never offered again --- one offered
+//                 again is a second burst the port waits for the data of
+//                 for ever.  muir's port, and the core's testbench, take the
+//                 two in one clock, the accept then that clock's.
 //
 // **THE WRITES' AXI IDS ARE ONE PARAMETER, `ONE_WRITE_ID`** (A15b.5, "one
 // ID", and §6).  Set, the default and the board's, every write carries ID
@@ -244,8 +252,10 @@ module quux15_axi_master #(
   end
 
   // The continuation of the last write accepted: its second beat, and for
-  // a split its second address too.
+  // a split its second address too.  And the write offered: its address,
+  // its first beat, taken already.
   logic        cont_v, cont_aw, cont_aw_done, cont_w_done;
+  logic        hd_aw_done, hd_w_done;
   logic [31:0] cont_addr;
   logic [63:0] cont_data;
   logic [7:0]  cont_strb;
@@ -270,18 +280,19 @@ module quux15_axi_master #(
       m_wstrb   = cont_strb;
       m_wlast   = 1'b1;
     end else begin
-      m_awvalid = w_req;
+      m_awvalid = w_req && !hd_aw_done;
       m_awid    = ONE_WRITE_ID ? '0 : w_id;
       m_awaddr  = beat_addr;
       m_awlen   = (two && !split) ? 8'd1 : 8'd0;
-      m_wvalid  = w_req;
+      m_wvalid  = w_req && !hd_w_done;
       m_wdata   = data1;
       m_wstrb   = strb1;
       m_wlast   = !(two && !split);
     end
-    // The accept: the address and the first beat taken together.  A port
-    // that takes them apart is held to both, here as on the bus.
-    w_hs    = !cont_v && w_req && m_awready && m_wready;
+    // The accept: the address and the first beat both taken, in this clock
+    // or before it, each once.
+    w_hs    = !cont_v && w_req && (hd_aw_done || (m_awvalid && m_awready))
+                               && (hd_w_done || (m_wvalid && m_wready));
     w_taken = w_hs;
     // A write's answer: its last B.
     // The slot a response answers: its ID's, or with one ID the oldest
@@ -295,11 +306,21 @@ module quux15_axi_master #(
   always_ff @(posedge clk) begin
     if (rst) begin
       cont_v    <= 1'b0;
+      hd_aw_done <= 1'b0;
+      hd_w_done  <= 1'b0;
       ans_ptr   <= '0;
       split_q   <= '0;
       first_b_q <= '0;
       err_q     <= '0;
     end else begin
+      // The write offered: what of it is taken, until it is accepted.
+      if (w_hs) begin
+        hd_aw_done <= 1'b0;
+        hd_w_done  <= 1'b0;
+      end else if (!cont_v && w_req) begin
+        if (m_awvalid && m_awready) hd_aw_done <= 1'b1;
+        if (m_wvalid && m_wready) hd_w_done <= 1'b1;
+      end
       if (w_hs) begin
         cont_v       <= two;
         cont_aw      <= split;

@@ -776,6 +776,33 @@ allocated on a read miss only. Its size is a board's parameter, outside
 the Arty Z7-20, each board taking the largest size up to its own whose hit
 is two clocks.
 
+**Revision 15's block-disk transfer** is a requester on revision 15's port
+(`rtl/machine/quux15_port.sv`'s D), below the processor, a word at a time,
+for the walk in `rtl/machine/quux15_block_walk.sv` (A15b.5, A15b.6):
+
+- A transfer's write is an entry of the posted queue, behind every write
+  queued before it, in order on the one write channel, so a processor's
+  write queued at START lands first. It waits while a fill of its line is
+  in flight, and it clears both ways of its set in the valid bits, in a
+  clock with no install, leaving the recency bits as they are. The read rule
+  then holds any fill of the line until the write is answered.
+- A transfer's read (the command list, a disk write's words) is a line
+  filled through the port's one fill, under the read rule, and kept beside
+  the cache: no line is allocated and no recency bit moves.
+- After 16 clocks of waiting the transfer is let in ahead of the processor,
+  so DONE can be late but never early.
+
+muir moves a START's pages at once, after landing the queue, and clears the
+set of every line a read wrote. The fabric moves them over the blocks' time,
+and DONE is the later of muir's instant, rounded once, and the walk's end.
+`build/quux15_bdisk.quux.pass` holds the core clock for clock to muir's
+pipeline except for the queue's and the in-flight list's depths while a
+transfer is in flight, with the processor off the port in that window, at
+8.5 ns and 18 ns, and four lines probed before DONE and after it.
+`build/quux15_bdmix.quux.pass` holds the results of runs where the processor
+uses the port while the walk runs, its fills held, its writes answered late
+and its queue slow.
+
 QUUX's memory adapter has no timing exception. Nothing of the processor's
 reaches it: the frame buffer is the cache's and the registers are the
 register decode's, and the bridge's processor arm is a constant on QUUX.
