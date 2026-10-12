@@ -84,6 +84,7 @@ mod quux15_console;
 mod quux15_devices;
 mod quux15_input;
 mod quux15_main;
+mod quux15_network;
 mod quux15_memside;
 mod quux15_preset;
 mod trace15;
@@ -952,6 +953,9 @@ struct Case {
     /// Key words and mouse moves handed to muir's keyboard and mouse as the
     /// run goes (`quux15_input.rs`).
     input: Vec<quux15_input::Inject>,
+    /// Frames put on muir's Chaosnet cable as the run goes, and its far
+    /// end's side written down for the testbench (`quux15_network.rs`).
+    net: Option<quux15_network::NetRun>,
 }
 
 impl Case {
@@ -979,6 +983,7 @@ impl Case {
             main_words: None,
             disk: None,
             input: Vec::new(),
+            net: None,
         }
     }
 
@@ -1067,6 +1072,11 @@ fn machine(case: &Case) -> Machine {
     if let Some(d) = &case.disk {
         let bd = m.block_disk.as_mut().expect("QUUX's machine has block-disk");
         bd.attach(quux15_blockdisk::pack(d.blocks));
+    }
+    // **A CABLE ON THE CHAOSNET INTERFACE** for a run that puts frames on
+    // it, with nothing else on it (`quux15_network.rs`).
+    if case.net.is_some() {
+        m.ioboard.chaos.as_mut().expect("the Chaosnet interface").plug(muir::chaos::ether::Ether::new());
     }
     m
 }
@@ -1252,6 +1262,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     let mut host = FileHost::default();
     let mut disk = quux15_blockdisk::Watch::new(case.disk.as_ref());
     let mut feed = quux15_input::Feed::new(&case.input);
+    let mut net = quux15_network::Net::new(case, period, bubbles).map_err(|x| (1, x))?;
     let limit = case.disk.as_ref().map_or(200_000, |d| d.max_clocks.max(200_000));
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
@@ -1263,6 +1274,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                      host: &mut FileHost,
                      disk: &mut quux15_blockdisk::Watch,
                      feed: &mut quux15_input::Feed,
+                     net: &mut quux15_network::Net,
                      rows: &mut Vec<String>,
                      parked_at: &mut Option<u64>,
                      halted: &mut bool|
@@ -1271,6 +1283,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             return Err((1, format!("{name} never reached its park in {limit} clocks")));
         }
         feed.before(e);
+        net.before(e).map_err(|x| (1, format!("{name}: {x}")))?;
         match e.tick() {
             Ok(()) => {}
             Err(h) => match (halt_code(&h), case.halts) {
@@ -1289,6 +1302,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         disk.watch(e).map_err(|x| (1, format!("{name}: {x}")))?;
         let row = t.row(e);
         feed.after(e, row.commit).map_err(|x| (1, format!("{name}: {x}")))?;
+        net.after(e).map_err(|x| (1, format!("{name}: {x}")))?;
         if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
             *parked_at = Some(e.clock());
         }
@@ -1303,7 +1317,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         match *act {
             Act::Wait(n) => {
                 for _ in 0..n {
-                    if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)? {
+                    if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)? {
                         break;
                     }
                 }
@@ -1311,7 +1325,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             Act::Spy(eadr, v) => {
                 memory.push(format!("# spy {:x} {eadr:x} {v:x}", e.clock() + 1));
                 e.spy_write(eadr, v);
-                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
             }
             Act::UntilHalted => {
                 let from = e.clock();
@@ -1319,7 +1333,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     if e.clock() > from + 20_000 {
                         return Err((1, format!("{name}: the halt did not end by clock {}", e.clock())));
                     }
-                    clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
+                    clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
                 }
                 memory.push(format!("# halted {:x} {}", e.clock(), quux15_console::tail_hex(&e)));
             }
@@ -1348,7 +1362,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 // One clock more, in which the testbench's console takes the
                 // devices' snapshot; the file is of the machine as it leaves
                 // it, as a fabric writes it (A15b.13).
-                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
                 let dir = std::env::var("QUUX15_CHECKPOINTS").map_err(|_| {
                     (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
                 })?;
@@ -1408,6 +1422,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         let mut memory = memory;
         memory.extend(host.lines);
         memory.extend(feed.lines);
+        memory.extend(net.lines);
         let summary = format!("{name}: checkpoint at clock {}", e.clock());
         return Ok(Ran { lines: rows, summary, memory, reached: [0; 14] });
     }
@@ -1418,7 +1433,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         {
             break;
         }
-        if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)? {
+        if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)? {
             break;
         }
     }
@@ -1427,6 +1442,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     }
     // The machine it ends with, against micro's, and the results.
     feed.finished().map_err(|x| (1, format!("{name}: {x}")))?;
+    net.finished().map_err(|x| (1, format!("{name}: {x}")))?;
     if case.micro_check {
         let mut u = micro(case, period, &feed.micro).map_err(|x| (1, x))?;
         for &(k, w) in &case.beyond_micro {
@@ -1479,6 +1495,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     let mut memory = memory;
     memory.extend(host.lines);
     memory.extend(feed.lines);
+    memory.extend(net.lines);
     memory.extend(disk.lines);
     let mut rows = rows;
     if let Some(d) = &case.disk {
@@ -1520,6 +1537,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "bdmix" => quux15_blockdisk::bdmix().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "window" => quux15_devices::window().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "input" => quux15_input::input(period),
+        "network" => quux15_network::network(period),
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],

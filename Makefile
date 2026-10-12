@@ -315,10 +315,16 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # words and moves handed to muir's `QuuxInput` at clocks across a polling
 # loop and an interrupt-driven one, the FIFO's overflow, a move between two
 # reads, the boot word, and checkpoints with input waiting, at 10 ns,
-# 8.5 ns and the Kria's 18 ns.
+# 8.5 ns and the Kria's 18 ns.  And the network (`golden/src/
+# quux15_network.rs`, `network`): frames put on muir's cable to land at
+# every clock of a polling loop on the CSR and on word 100 and of an
+# interrupt-driven loop, frames sent and their Transmit Done across a
+# polling loop and under its interrupt, the lost count and its wrap, the
+# resets and the words that take no write, the testbench playing the far
+# end as muir's interface saw it, at 10 ns, 8.5 ns and 18 ns.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
-QUUX15_GROUPS += input
+QUUX15_GROUPS += input network
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -339,6 +345,7 @@ QUUX15_PERIODS_mainsize := 20 36
 QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
 QUUX15_PERIODS_input := 20 17 36
+QUUX15_PERIODS_network := 20 17 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at
@@ -367,6 +374,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass \
        $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass $(BUILD)/quux15_input_module.quux.pass \
+       $(BUILD)/quux15_chaos_module.quux.pass \
        $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux15_block_walk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/wall_time.pass \
@@ -1348,6 +1356,24 @@ $(BUILD)/quux15_input_module.quux.pass: $(BUILD)/obj_quux15_input/Vquux15_input 
 	$(BUILD)/obj_quux15_input/Vquux15_input $(BUILD)/quux_input.quux.golden
 	@touch $@
 
+# `rtl/machine/quux15_chaos.sv`, revision 15's Chaosnet interface, on its own
+# against muir's `chaos::board::Interface` over a script of reads and writes
+# of words 140-147 and of what its cable did between them
+# (`golden/src/quux15_chaos.rs`): a read's word and its effect at the clock
+# it lands, a write's at its own, the far end's events a clock before the
+# registers show them.  The same module on the core, clock for clock, is the
+# `network` group (`quux15_network.quux.pass`).
+$(BUILD)/quux15_chaos.quux.golden: golden/src/quux15_chaos.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux15_chaos > $@
+
+$(BUILD)/obj_quux15_chaos/Vquux15_chaos: rtl/machine/quux15_chaos.sv tb/quux15_chaos_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_chaos \
+	    --top-module quux15_chaos rtl/machine/quux15_chaos.sv $(abspath tb/quux15_chaos_tb.cpp)
+
+$(BUILD)/quux15_chaos_module.quux.pass: $(BUILD)/obj_quux15_chaos/Vquux15_chaos $(BUILD)/quux15_chaos.quux.golden
+	$(BUILD)/obj_quux15_chaos/Vquux15_chaos $(BUILD)/quux15_chaos.quux.golden
+	@touch $@
+
 # ------------------------------------------------------ QUUX's block-disk
 #
 # `rtl/machine/quux_block_disk.sv` on its own at revision 13 (contract G2
@@ -1530,7 +1556,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
-                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs \
+                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
@@ -1565,7 +1591,7 @@ QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/mac
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv \
-                   rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv
+                   rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv
 # **AND THE BOARD'S CHECKPOINT WRITER** (A15b.13): a run that ends in a
 # checkpoint (the checkpoints group) is read through the core's readout by
 # `cadr-readout`'s reader and written by `cadr-checkpoint`'s `chk_rtl.c`,
@@ -3150,7 +3176,8 @@ $(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
 # revision 15's period and timing, every rule of the host's side held by
 # name with the case just outside it.  The machine's side is held against
 # muir by `quux15_filedev`, the core's testbench playing the server there.
-QUUX15_FD_FACE_SRC := rtl/machine/quux15_devices.sv rtl/machine/quux15_input.sv rtl/plumbing/cadr_gp_regs.sv \
+QUUX15_FD_FACE_SRC := rtl/machine/quux15_devices.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
+                      rtl/plumbing/cadr_gp_regs.sv \
                       rtl/plumbing/quux_fd_face.sv tb/quux15_fd_face_harness.sv
 $(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness: $(QUUX15_FD_FACE_SRC) tb/quux15_fd_face_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Mdir $(BUILD)/obj_quux15_fd_face \
@@ -3724,7 +3751,7 @@ mutrev:
 # QUUX's programs included, and `make mutants MACHINE=quux` those aimed at
 # QUUX's.  `mutations/run.py` without `--machine` runs both.
 MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
-              $(BUILD)/muldiv.quux.golden $(BUILD)/quux_input.quux.golden \
+              $(BUILD)/muldiv.quux.golden $(BUILD)/quux_input.quux.golden $(BUILD)/quux15_chaos.quux.golden \
               $(patsubst %,$(BUILD)/quux_%_prom.hex,$(QUUX_PROGRAMS)) \
               $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.golden) \
               $(foreach q,k4l1,$(BUILD)/phase_gen.quux.$(q).golden) \

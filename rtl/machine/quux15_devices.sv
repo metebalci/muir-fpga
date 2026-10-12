@@ -6,13 +6,15 @@
 // in units of 0.5 ns at the clock's period, the microsecond clock
 // (functional source 15), the real-time clock (word 103), the three interval
 // timers (words 110-115), the keyboard and the mouse (words 120-123,
-// `quux15_input.sv`), the file device's registers (words 160-171,
+// `quux15_input.sv`), the Chaosnet interface (words 140-147,
+// `quux15_chaos.sv`), the file device's registers (words 160-171,
 // contract Q9: the host runs the commands) and the host's side of it and of
 // the real-time clock, block-disk's registers (words 200-203), the
 // interrupt status (word 100), RESET-DEVICES (word 104), the video
 // controller's mode (word 210), and the interrupt
 // the conditions 5 and 6 test.  muir's `Machine::bus_read`, `bus_write`,
-// `Timers`, `QuuxInput`, `BlockDisk` and `interrupt_at` are the reference,
+// `Timers`, `QuuxInput`, the Chaosnet's `Interface`, `BlockDisk` and
+// `interrupt_at` are the reference,
 // clock for clock through the core (`quux15_core.sv`) and its goldens.
 //
 // **THE TIME IS THE CLOCK'S INSTANT, k TIMES THE PERIOD, IN UNITS OF 0.5 ns**
@@ -119,6 +121,27 @@ module quux15_devices #(
     input  var logic [6:0]  mouse_lines,
     output var logic        kbd_boot,
     output var logic        kbd_busy,
+
+    // The Chaosnet interface's cable (`quux15_chaos.sv`): the seam of
+    // `cadr_io_board.sv`'s interface, which `cadr_chaos_cable.sv` takes.
+    input  var logic [15:0] chaos_address,
+    output var logic        chaos_tx_go,
+    output var logic [8:0]  chaos_tx_len,
+    output var logic        chaos_tx_valid,
+    output var logic [15:0] chaos_tx_word,
+    output var logic        chaos_tx_clear,
+    output var logic        chaos_reset,
+    output var logic [15:0] chaos_csr,
+    input  var logic        chaos_rx_valid,
+    input  var logic [15:0] chaos_rx_word,
+    input  var logic        chaos_rx_done,
+    input  var logic [12:0] chaos_rx_bits,
+    input  var logic        chaos_rx_crc,
+    input  var logic        chaos_rx_lost,
+    input  var logic        chaos_tx_done,
+    input  var logic        chaos_tx_abort,
+    input  var logic        chaos_cbl_busy,
+    output var logic [11:0] chaos_bits,
 
     // Source 15, the microseconds since power-on, at this clock's instant.
     output var logic [31:0] microseconds,
@@ -356,7 +379,8 @@ module quux15_devices #(
       if (wr_timer && wr_tk == 2'(k)) tm_w[k] = timer_write(tm[k], wr_k[0], wr_data);
     end
     wr_built = !wr_v || wr_k == 8'o104 || wr_timer || wr_bd || wr_k == 8'o100 || wr_k == 8'o103
-            || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171) || (wr_k >= 8'o120 && wr_k <= 8'o123);
+            || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171) || (wr_k >= 8'o120 && wr_k <= 8'o123)
+            || (wr_k >= 8'o140 && wr_k <= 8'o147);
   end
 
   // Block-disk's state as this clock's walk's end and write leave it.
@@ -565,6 +589,30 @@ module quux15_devices #(
   // Word 100's <4> and <5> as the read's grant found them.
   always_ff @(posedge clk) in_irq_g <= in_irq_state;
 
+  // The read granted last clock, at the clock after its grant.
+  logic       rq_v;
+  logic [7:0] rq_k;
+
+  // ================================================== the Chaosnet interface
+
+  // Words 140-147 (`quux15_chaos.sv`): a read at the clock after its grant
+  // (`rq_v`, `rq_k`), its word and its effect there; a write taken this
+  // clock; RESET-DEVICES resets it.
+  logic [15:0] ch_word;
+  logic        ch_irq, ch_irq_state;
+  quux15_chaos chaos_regs (
+      .clk(clk), .rst(rst), .dev_reset(wr_reset),
+      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
+      .wr(wr_v && wr_k[7:3] == 5'o14), .wr_k(wr_k[2:0]), .wdata(wr_data[15:0]),
+      .rd_word(ch_word), .irq(ch_irq), .irq_state(ch_irq_state),
+      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
+      .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
+      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+      .chaos_cbl_busy(chaos_cbl_busy), .chaos_bits(chaos_bits));
+
   // ================================================================ word 100
 
   function automatic logic [31:0] sources(input timer_t t0, input timer_t t1, input timer_t t2,
@@ -572,20 +620,20 @@ module quux15_devices #(
     return {24'd0, fd, 3'd0, idle && cmd[11], t2.ie && t2.up, t1.ie && t1.up, t0.ie && t0.up};
   endfunction
   /* verilator lint_on UNUSEDSIGNAL */
-  // And the keyboard's and the mouse's, `<4>` and `<5>` (`quux15_input.sv`).
+  // And the keyboard's and the mouse's, `<4>` and `<5>` (`quux15_input.sv`),
+  // and the network's, `<6>` (`quux15_chaos.sv`).
   assign int_now = sources(tm_w[0], tm_w[1], tm_w[2], bd_cmd_w, bd_idle_w,
-                           fd_ie_w && fd_ccons_w != fd_rcons_w) != 32'd0 || in_irq != 2'd0;
+                           fd_ie_w && fd_ccons_w != fd_rcons_w) != 32'd0 || in_irq != 2'd0 || ch_irq;
 
   // ================================================================ the read
 
-  logic       rq_v;
-  logic [7:0] rq_k;
   always_comb begin
     rd_built = 1'b1;
     rd_word  = 32'd0;
     unique case (rq_k)
       8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ie && fd_ccons != fd_rcons);
       8'o120, 8'o121, 8'o122, 8'o123: rd_word = in_word;
+      8'o140, 8'o141, 8'o142, 8'o143, 8'o144, 8'o145, 8'o146, 8'o147: rd_word = {16'd0, ch_word};
       8'o160: rd_word = {23'd0, fd_ie, 7'd0, fd_on};
       8'o161: rd_word = {8'd0, fd_hopen, 7'd0, fd_ccons != fd_rcons, 4'd0, fd_fault, fd_refused,
                          !fd_on && !fd_busy, fd_on};
@@ -615,6 +663,9 @@ module quux15_devices #(
     // Word 100's <4> and <5>, the keyboard's and the mouse's, as the grant
     // found them.
     if (rq_k == 8'o100) rd_word[5:4] = in_irq_g;
+    // And `<6>`, the network's, at the clock after the grant, where muir
+    // reads its interface.
+    if (rq_k == 8'o100) rd_word[6] = ch_irq_state;
     if (!rq_v) rd_built = 1'b1;
   end
 

@@ -119,3 +119,7 @@ path = "src/quux14.rs"
 [[bin]]
 name = "quux15"
 path = "src/quux15.rs"
+
+[[bin]]
+name = "quux15_chaos"
+path = "src/quux15_chaos.rs"

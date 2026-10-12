@@ -88,10 +88,15 @@
 // boot word halts the machine and then boots it, as the console's RUN and
 // `-BOOT` do (`kbd_boot`).
 //
-// **WHAT IS NOT BUILT** --- the network, and a word that writes the PDL
-// buffer and fetches inside it in one clock, which would want the RAM's
-// second port twice --- stops a simulation at the word that needs it,
-// naming it (`unbuilt`), rather than running on wrong.
+// **THE NETWORK** (contracts Q4 and Q13): the Chaosnet interface's words
+// 140-147 in `quux15_chaos.sv`, through `quux15_devices.sv`, the cable's
+// seam out (`chaos_*`), which `cadr_chaos_cable.sv` takes on a board; its
+// interrupt is word 100's `<6>`.
+//
+// **WHAT IS NOT BUILT** --- a word that writes the PDL buffer and fetches
+// inside it in one clock, which would want the RAM's second port twice ---
+// stops a simulation at the word that needs it, naming it (`unbuilt`),
+// rather than running on wrong.
 
 `default_nettype none
 
@@ -207,6 +212,29 @@ module quux15_core #(
     input  var logic [23:0] kbd_code,
     input  var logic [6:0]  mouse_lines,
     output var logic        kbd_busy,
+    // The Chaosnet interface's cable (`quux15_chaos.sv`), the seam
+    // `cadr_chaos_cable.sv` takes: the address switches; START's frame out
+    // a word a clock; a frame in a word a clock and committed; the far
+    // end's word that the frame is away, that one was lost, that the cable
+    // is busy.
+    input  var logic [15:0] chaos_address,
+    output var logic        chaos_tx_go,
+    output var logic [8:0]  chaos_tx_len,
+    output var logic        chaos_tx_valid,
+    output var logic [15:0] chaos_tx_word,
+    output var logic        chaos_tx_clear,
+    output var logic        chaos_reset,
+    output var logic [15:0] chaos_csr,
+    input  var logic        chaos_rx_valid,
+    input  var logic [15:0] chaos_rx_word,
+    input  var logic        chaos_rx_done,
+    input  var logic [12:0] chaos_rx_bits,
+    input  var logic        chaos_rx_crc,
+    input  var logic        chaos_rx_lost,
+    input  var logic        chaos_tx_done,
+    input  var logic        chaos_tx_abort,
+    input  var logic        chaos_cbl_busy,
+    output var logic [11:0] chaos_bits,
     // The master's declared constants inside r and w (A15b.5), which
     // the testbench's responder subtracts from the port's clocks.
     output var logic        axi_one_write_id,
@@ -817,8 +845,8 @@ module quux15_core #(
   // What a simulation stops at: a word that needs what is not built.
   localparam int UNBUILT_BITS = 2;
   logic [UNBUILT_BITS-1:0] unbuilt;
-  localparam int U_DEVICE = 0;  // the network's words, a fetch inside the PDL buffer with its word's
-                                // write of the buffer, a dispatch-memory write on map bits
+  localparam int U_DEVICE = 0;  // a fetch inside the PDL buffer with its word's write of the buffer, a
+                                // dispatch-memory write on map bits
   localparam int U_DEV   = 1;   // a device's word the devices do not answer (a guard)
 
   // ======================================================== RD's copies' help
@@ -1384,12 +1412,14 @@ module quux15_core #(
   function automatic logic dev_word(input logic [7:0] k);
     return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
         || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171)
-        || (k >= 8'o120 && k <= 8'o123);
+        || (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147);
   endfunction
-  // The words of the devices not built: the network.
+  // The words of the devices not built: none now.
+  /* verilator lint_off UNUSEDSIGNAL */
   function automatic logic unbuilt_word(input logic [7:0] k);
-    return (k >= 8'o140 && k <= 8'o147);
+    return 1'b0;
   endfunction
+  /* verilator lint_on UNUSEDSIGNAL */
   function automatic logic [32:0] register_read(input logic [7:0] k, input logic [31:0] posted);
     if (k < 8'o20) return {1'b1, FEATURES[k[3:0]]};
     if (dev_word(k) || unbuilt_word(k)) return {1'b0, 32'd0};
@@ -1447,6 +1477,13 @@ module quux15_core #(
       .bd_flight(bd_walking || bd_busy),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
       .kbd_boot(kbd_boot), .kbd_busy(kbd_busy),
+      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
+      .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
+      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+      .chaos_cbl_busy(chaos_cbl_busy), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev));
 

@@ -115,6 +115,9 @@ pub struct Preset {
     /// Key words and mouse moves handed to muir's `QuuxInput` as the run
     /// goes (`quux15_input.rs`).
     pub input: Vec<super::quux15_input::Inject>,
+    /// Frames put on muir's Chaosnet cable as the run goes
+    /// (`quux15_network.rs`).
+    pub net: Option<super::quux15_network::NetRun>,
 }
 
 impl Preset {
@@ -202,6 +205,7 @@ impl Preset {
             main_words: self.main_words,
             disk: self.disk.clone(),
             input: self.input.clone(),
+            net: self.net.clone(),
         }
     }
 }

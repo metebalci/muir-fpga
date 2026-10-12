@@ -53,9 +53,12 @@
 //     storage at the same base, the rings' bases 28 bits), the map onto the
 //     core's host side (`quux15_devices.sv`), so `quux-file-device` serves
 //     HOST: and sets the clock as it does on revisions 13 and 14.
-//   - **NOT ON THIS BOARD YET**: the display output, the network and the
-//     serial line, which the programs that serve them bring; the debug
+//   - **NOT ON THIS BOARD YET**: the display output, the network's cable and
+//     the serial line, which the programs that serve them bring; the debug
 //     cable, which QUUX never has (contract Q5), PMOD1's pads left undriven.
+//     The core's Chaosnet interface (`quux15_chaos.sv`) is built, its cable
+//     tied off as a cable with nothing on it: a frame sent goes nowhere and
+//     is away at once, nothing arrives, and the address switches read 0.
 //   - **TWO LAMPS**: UF1 a count of committed microcycles, so it flickers
 //     while the machine runs and freezes when it stops; UF2 lit at an error
 //     halt.  **THE FAN IS DRIVEN ON**, `fan_en_b` low, as every KR260
@@ -153,6 +156,11 @@ module quux15_kr260 #(
   logic        kbd_strobe, kbd_busy;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
+  // The Chaosnet interface's cable, tied off: a frame sent is away at once.
+  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
+  logic [8:0]  chaos_tx_len;
+  logic [15:0] chaos_tx_word, chaos_csr;
+  logic [11:0] chaos_bits;
   logic [15:0] fd_prod;
   // The host's side of the file device and the clock (`quux_fd_face.sv`).
   logic        host_we;
@@ -219,6 +227,12 @@ module quux15_kr260 #(
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines), .kbd_busy(kbd_busy),
+      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
+      .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+      .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0),
+      .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(chaos_tx_go), .chaos_tx_abort(1'b0),
+      .chaos_cbl_busy(1'b0), .chaos_bits(chaos_bits),
       .axi_one_write_id(axi_one_write_id), .axi_read_clocks(axi_read_clocks),
       .axi_write_clocks(axi_write_clocks),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),
@@ -816,6 +830,8 @@ module quux15_kr260 #(
                     obs_ob, obs_oalow, obs_oahigh, obs_grant, obs_gaddr, obs_mdl, obs_mdword,
                     obs_reg, obs_raddr, obs_queue, obs_inflight, obs_halted, ro_word,
                     fd_doorbell, fd_prod, fd_enabled,
+                    chaos_tx_len, chaos_tx_valid, chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
+                    chaos_bits,
                     axi_one_write_id, axi_read_clocks, axi_write_clocks, qm_awid,
                     qm_awlen[7:4], qm_arlen[7:4], qm_awsize[2], qm_arsize[2],
                     hpm0_awaddr[39:32], hpm0_araddr[39:32], hpm1_awaddr[39:32], hpm1_araddr[39:32],

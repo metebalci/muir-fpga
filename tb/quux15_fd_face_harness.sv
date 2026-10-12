@@ -103,6 +103,10 @@ module quux15_fd_face_harness #(
   logic [31:0] bd_st_cmd, microseconds;
   logic [27:0] bd_st_clp, bd_st_da;
   logic [63:0] ro_dev;
+  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
+  logic [8:0]  chaos_tx_len;
+  logic [15:0] chaos_tx_word, chaos_csr;
+  logic [11:0] chaos_bits;
   /* verilator lint_on UNUSEDSIGNAL */
 
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) dev (
@@ -119,6 +123,13 @@ module quux15_fd_face_harness #(
       .bd_flight(1'b0),
       // The keyboard and the mouse sit still.
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'h7F), .kbd_boot(kbd_boot), .kbd_busy(kbd_busy),
+      // The network's cable quiet.
+      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
+      .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+      .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0),
+      .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0),
+      .chaos_cbl_busy(1'b0), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(1'b0), .ro_k(7'd0), .ro_dev(ro_dev)
   );

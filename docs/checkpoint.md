@@ -550,9 +550,12 @@ What the file holds otherwise than muir's own:
 - the cache written empty, no line held and the recency zero. A drained
   cache's words are main memory's, so a resumed machine misses where muir's
   would hit, which moves when a read is answered and never what it reads;
-- the I/O board as muir's machine comes up. Revision 15's fabric does not
-  build the network on it, and nothing else of it is QUUX's; a resumed
-  machine's board catches up with the clock at its first look;
+- the I/O board as muir's machine comes up. Revision 15's network, the
+  Chaosnet interface on words 140 to 147, is the core's own and its
+  readout does not carry it: its registers and buffers are written as at
+  power-up, with the switches at the address `--chaos-address` names.
+  Nothing else of the board is QUUX's; a resumed machine's board catches up
+  with the clock at its first look;
 - a data push's word waiting for the micro stack at the stack's 19 bits,
   which are all `SPC<18:0>` keeps.
 

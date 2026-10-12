@@ -60,6 +60,31 @@ muir for the first time now, because the trace plugs a Chaosnet interface in
 and uses Loop Back as the far end, which no trace against this model could do
 before.
 
+## Revision 15 of QUUX
+
+QUUX's revision 15 has no I/O board. Its Chaosnet interface is
+`rtl/machine/quux15_chaos.sv`, cut from the card's and put on the register
+page's words 140 to 147 as muir's page decodes them. Word 140 is the CSR, read
+and written. Word 141 reads MY ADDRESS and takes a word into the outgoing
+buffer. Words 142, 143 and 145 read the incoming buffer, the bit count and
+START. Words 144, 146 and 147 read 0, and no word but 140 and 141 takes a
+write. The CADR's board aliases three of those addresses, and QUUX's page
+does not.
+
+The registers keep revision 15's timing. A read is taken, and has its effect,
+the clock after its grant. A write is taken after whatever the cable did
+before it. The interrupt is word 100's bit 6, as the clock's write leaves it.
+Nothing in the interface keeps time: the turn timer, the frame and the cable
+are the far end's, behind the same seam the card has, so `cadr-chaosnet` and
+`cadr_chaos_cable.sv` serve it unchanged. A START after a START sends an empty
+buffer, as muir's does.
+
+Two checks hold it. `quux15_network` runs the core clock for clock against
+muir's pipeline, with frames put on muir's cable and the testbench playing the
+far end as muir's interface saw it. `quux15_chaos_module` runs the module
+alone against muir's interface over a script. The Kria's revision 15 design
+builds the interface with its cable tied off, as a cable with nothing on it.
+
 ## What Linux sees
 
 Two register faces, each behind one header so that a change of address touches

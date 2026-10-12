@@ -674,6 +674,16 @@ CHECKS = {
         "golden": "quux_input.quux.golden",
         "machine": "quux",
     },
+    # Revision 15's Chaosnet interface on its own, against muir's
+    # `chaos::board::Interface` (the Makefile's `quux15_chaos_module.quux.pass`).
+    "quux15_chaos_module_quux": {
+        "sources": ["rtl/machine/quux15_chaos.sv"],
+        "top": "quux15_chaos",
+        "tb": "tb/quux15_chaos_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "quux15_chaos.quux.golden",
+        "machine": "quux",
+    },
     # QUUX's memory port and its cache on their own at revision 13
     # (`WORD_BITS` 40), against muir's `MemoryPort` tick for tick: packed
     # storage, 8-word lines and the prefetch's page reach
@@ -2732,7 +2742,7 @@ QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlf
                "random", "matrixmem", "randmem", "redirect", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
                "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "storeret", "checkpoints", "bdisk",
                "bdmix")
-QUUX15_CORE += ("input",)
+QUUX15_CORE += ("input", "network")
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
 # reader and `cadr-checkpoint`'s writer, which the testbench holds a
@@ -2748,6 +2758,7 @@ QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "rand
                      "checkpoints": (20, 34), "bdisk": (17, 36), "bdmix": (36,), "storeret": (36, 20), "redirect": (36, 20),
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 QUUX15_PERIODS_OF["input"] = (20, 17, 36)
+QUUX15_PERIODS_OF["network"] = (20, 17, 36)
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
@@ -2755,7 +2766,8 @@ for _p in QUUX15_CORE:
                     "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
                     "rtl/machine/quux15_validmap.sv", "rtl/machine/quux15_recency.sv",
                     "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv",
-                    "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv"],
+                    "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv",
+                    "rtl/machine/quux15_chaos.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",
         "tb": "tb/quux15_core_tb.cpp",
@@ -2796,7 +2808,8 @@ CHECKS["quux15_kr260"] = {
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
-              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/plumbing/cadr_input_cables.sv",
+              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
+              "rtl/plumbing/cadr_input_cables.sv",
               "rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv",
               "rtl/plumbing/cadr_axi_lanes128.sv", "rtl/plumbing/cadr_gp0_default.sv",
               "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
@@ -2828,7 +2841,8 @@ CHECKS["quux15_face"] = {
 # behind it, every rule of the host's side held by name.
 CHECKS["quux15_fd_face"] = {
     "sources": ["rtl/machine/quux15_devices.sv", "rtl/plumbing/quux_fd_face.sv"],
-    "extra": ["tb/quux15_fd_face_harness.sv", "rtl/machine/quux15_input.sv", "rtl/plumbing/cadr_gp_regs.sv"],
+    "extra": ["tb/quux15_fd_face_harness.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
+              "rtl/plumbing/cadr_gp_regs.sv"],
     "top": "quux15_fd_face_harness",
     "tb": "tb/quux15_fd_face_tb.cpp",
     "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],

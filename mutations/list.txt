@@ -30730,6 +30730,197 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @end
 
 # ---------------------------------------------------------------------------
+# **REVISION 15'S NETWORK** (contracts Q4 and Q13; G3 revision 15, A15b.3;
+# MP2b rulings Q4 and Q19): `rtl/machine/quux15_chaos.sv`, the Chaosnet
+# interface's words 140-147 on the register page through
+# `quux15_devices.sv`.  `quux15_network_quux` holds the core clock for clock
+# to muir's pipeline with frames put on muir's cable and the testbench as
+# the far end (`golden/src/quux15_network.rs`): frames landing across
+# polling loops on the CSR and on word 100 and an interrupt-driven one,
+# frames sent, Transmit Done and its interrupt, the lost count and its wrap,
+# Loop Back, the words that take no write, the resets.
+# `quux15_chaos_module_quux` holds the module alone to muir's
+# `chaos::board::Interface` over a script.
+
+@mutation quux15-net-read-buffer-a-word-late
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note A read of 142 gives the word before the pointer's: each word a read
+@note late, the first a stale one.
+@old
+      ch_rd <= ch_rcv[ch_rat_n[7:0]];
+@new
+      ch_rd <= ch_rcv[ch_rat_n[7:0] - 8'd1];
+@end
+
+@mutation quux15-net-start-before-the-last-word
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note START sends the buffer without the last word written into it, its
+@note destination.
+@old
+        chaos_tx_len <= ch_wn;
+        ch_send      <= ch_wn;
+@new
+        chaos_tx_len <= ch_wn - 9'd1;
+        ch_send      <= ch_wn - 9'd1;
+@end
+
+@mutation quux15-net-interrupt-enables-ignored
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note Receive Done and Transmit Done interrupt whatever the CSR's enables
+@note say.
+@old
+  assign irq       = !reset_now && ((n_rdone && n_wbits[4]) || (n_tdone && n_wbits[5]));
+@new
+  assign irq       = !reset_now && ((n_rdone && (n_wbits[4] || 1'b1)) || (n_tdone && (n_wbits[5] || 1'b1)));
+@end
+
+@mutation quux15-net-interrupt-as-the-clock-began
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The interrupt does not see a write of the CSR in its own clock: the
+@note enables and the clears count from the next.
+@old
+  assign n_wbits   = csr_w ? wdata[5:4] : ch_wbits[5:4];
+  assign n_rdone   = (csr_w && wdata[3]) ? 1'b0 : ch_rdone;
+  assign n_tdone   = (csr_w && wdata[8]) ? 1'b1 : (buf_w ? 1'b0 : ch_tdone);
+@new
+  assign n_wbits   = (csr_w && 1'b0) ? wdata[5:4] : ch_wbits[5:4];
+  assign n_rdone   = (csr_w && wdata[3] && 1'b0) ? 1'b0 : ch_rdone;
+  assign n_tdone   = (csr_w && wdata[8] && 1'b0) ? 1'b1 : ((buf_w && 1'b0) ? 1'b0 : ch_tdone);
+@end
+
+@mutation quux15-net-word-100-without-the-network
+@check quux15_network_quux
+@file rtl/machine/quux15_devices.sv
+@note Word 100's <6> reads 0: a poll on it never sees a frame.
+@old
+    if (rq_k == 8'o100) rd_word[6] = ch_irq_state;
+@new
+    if (rq_k == 8'o100) rd_word[6] = 1'b0 & ch_irq_state;
+@end
+
+@mutation quux15-net-busy-cable-not-shown
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note CSR <14> is the check word's verdict alone, the cable's busy not ORed
+@note in as muir's model has it.
+@old
+  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+@new
+  assign chaos_csr = {ch_rdone, ch_crc || (chaos_cbl_busy & 1'b0), 1'b0, ch_lost, 1'b0,
+@end
+
+@mutation quux15-net-lost-count-saturates
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note The lost count stops at fifteen where AIM-628's four bits wrap.
+@old
+      if (chaos_rx_lost) ch_lost <= ch_lost + 4'd1;
+@new
+      if (chaos_rx_lost && ch_lost != 4'hf) ch_lost <= ch_lost + 4'd1;
+@end
+
+@mutation quux15-net-clear-receiver-keeps-the-lost-count
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note Clear Receiver leaves the lost count, which muir's clears.
+@old
+              ch_fill  <= 9'd0;
+              ch_lost  <= 4'd0;
+            end
+            if (wdata[8]) begin   // Clear Transmitter
+@new
+              ch_fill  <= 9'd0;
+            end
+            if (wdata[8]) begin   // Clear Transmitter
+@end
+
+@mutation quux15-net-reset-devices-misses-the-network
+@check quux15_network_quux
+@file rtl/machine/quux15_devices.sv
+@note RESET-DEVICES does not reach the Chaosnet interface, where muir's
+@note `reset_devices` resets the I/O board's.
+@old
+      .clk(clk), .rst(rst), .dev_reset(wr_reset),
+@new
+      .clk(clk), .rst(rst), .dev_reset(1'b0 & wr_reset),
+@end
+
+@mutation quux15-net-reset-keeps-the-enables
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note The CSR's Reset leaves the read/write bits it was written with.
+@old
+      if (reset_now) begin
+        ch_wbits    <= 6'd0;
+@new
+      if (reset_now) begin
+@end
+
+@mutation quux15-net-write-of-145-into-the-buffer
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note A write of 145 goes into the outgoing buffer, as a write of 764152 does
+@note on the CADR's board, where muir's page decodes no write there.
+@old
+          K_ADDR: begin
+            // "A word into the outgoing packet buffer.  The last word
+@new
+          K_ADDR, K_START: begin
+            // "A word into the outgoing packet buffer.  The last word
+@end
+
+@mutation quux15-net-144-reads-the-csr
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note Word 144 reads the CSR, as 764150 does on the CADR's board, where
+@note muir's page reads 0 there.
+@old
+      K_CSR:          rd_word = chaos_csr;
+@new
+      K_CSR, 3'd4:    rd_word = chaos_csr;
+@end
+
+@mutation quux15-net-second-start-resends
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A START after a START sends the first's length again, where muir's
+@note buffer went with the first and the second sends none.
+@old
+        chaos_tx_len <= ch_wn;
+        ch_send      <= ch_wn;
+        ch_out       <= 9'd0;
+        ch_sending   <= (ch_wn != 9'd0);
+@new
+        chaos_tx_len <= ch_xn;
+        ch_send      <= ch_xn;
+        ch_out       <= 9'd0;
+        ch_sending   <= (ch_xn != 9'd0);
+@end
+
+@mutation quux15-net-clear-receiver-keeps-the-pointer
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note Clear Receiver leaves the read pointer where a partly read frame left
+@note it, so the next frame reads from there, not from its first word.
+@old
+              ch_rlen  <= 9'd0;
+              ch_rat   <= 9'd0;
+              ch_left  <= 13'd0;
+              ch_rbits <= 13'd0;
+              ch_fill  <= 9'd0;
+              ch_lost  <= 4'd0;
+@new
+              ch_rlen  <= 9'd0;
+              ch_left  <= 13'd0;
+              ch_rbits <= 13'd0;
+              ch_fill  <= 9'd0;
+              ch_lost  <= 4'd0;
+@end
+# ---------------------------------------------------------------------------
 # **REVISION 15'S BLOCK-DISK WITH A PACK** (contract G2 §4.2; G3 revision 15,
 # A15b.5, A15b.6, A15b.12, A15b.13): the walk and its block store
 # (`rtl/machine/quux15_block_walk.sv`), the transfer's requester on the port
