@@ -285,7 +285,9 @@ enum img_dv15 {
 	IMG_DV15_NS = 19,	/* the snapshot's instant, muir's `Machine::ns` */
 	IMG_DV15_RTC = 20, IMG_DV15_US = 21,
 	IMG_DV15_TV_AT = 22,	/* the last RESET-DEVICES's instant */
-	IMG_DV15_COUNT = 23
+	IMG_DV15_INPUT = 23,	/* the keyboard and the mouse, `IMG_QP_INPUT`'s layout */
+	IMG_DV15_COUNT = 24,
+	IMG_DV15_FIFO = 64	/* + k: the keyboard's FIFO, word k, in <23:0> */
 };
 // The halted pipeline's words, `ro_sel` 0 to 23 (`quux15_core.sv`).
 enum img_tl15 {

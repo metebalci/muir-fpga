@@ -112,6 +112,9 @@ pub struct Preset {
     /// Block-disk's pack and what the run is judged by
     /// (`quux15_blockdisk.rs`).
     pub disk: Option<super::quux15_blockdisk::DiskRun>,
+    /// Key words and mouse moves handed to muir's `QuuxInput` as the run
+    /// goes (`quux15_input.rs`).
+    pub input: Vec<super::quux15_input::Inject>,
 }
 
 impl Preset {
@@ -198,6 +201,7 @@ impl Preset {
             mdmem: self.mdmem.clone(),
             main_words: self.main_words,
             disk: self.disk.clone(),
+            input: self.input.clone(),
         }
     }
 }

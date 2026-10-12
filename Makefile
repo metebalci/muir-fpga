@@ -310,9 +310,15 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
 # and A-LOCALP; and a store and its page check before a return with N, fused
 # into an operand's handler that reads the PDL buffer in its first word
-# (`storeret`), under the port's timings and the seeded memory model.
+# (`storeret`), under the port's timings and the seeded memory model.  And
+# the keyboard and the mouse (`golden/src/quux15_input.rs`, `input`): key
+# words and moves handed to muir's `QuuxInput` at clocks across a polling
+# loop and an interrupt-driven one, the FIFO's overflow, a move between two
+# reads, the boot word, and checkpoints with input waiting, at 10 ns,
+# 8.5 ns and the Kria's 18 ns.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
+QUUX15_GROUPS += input
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -332,6 +338,7 @@ QUUX15_PERIODS_mainsize := 20 36
 # results at 18 ns.
 QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
+QUUX15_PERIODS_input := 20 17 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at
@@ -359,7 +366,7 @@ CHECK_QUUX_AT_L1 = $(QUUX13_PORTED_L1:%=quux13_%) phase_gen
 CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass \
-       $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
+       $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass $(BUILD)/quux15_input_module.quux.pass \
        $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux15_block_walk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/wall_time.pass \
@@ -1328,6 +1335,19 @@ $(BUILD)/quux_input.quux.pass: $(BUILD)/obj_quux_input/Vquux_input $(BUILD)/quux
 	$(BUILD)/obj_quux_input/Vquux_input $(BUILD)/quux_input.quux.golden
 	@touch $@
 
+# `rtl/machine/quux15_input.sv`, revision 15's keyboard and mouse, on its own
+# against the same script: a read's word the clock after its grant, and the
+# mouse's counts walked a step a clock on its seven lines, as
+# `cadr_input_cables.sv` drives them.  The same module on the core, clock
+# for clock, is the `input` group (`quux15_input.quux.pass`).
+$(BUILD)/obj_quux15_input/Vquux15_input: rtl/machine/quux15_input.sv tb/quux15_input_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_input \
+	    --top-module quux15_input rtl/machine/quux15_input.sv $(abspath tb/quux15_input_tb.cpp)
+
+$(BUILD)/quux15_input_module.quux.pass: $(BUILD)/obj_quux15_input/Vquux15_input $(BUILD)/quux_input.quux.golden
+	$(BUILD)/obj_quux15_input/Vquux15_input $(BUILD)/quux_input.quux.golden
+	@touch $@
+
 # ------------------------------------------------------ QUUX's block-disk
 #
 # `rtl/machine/quux_block_disk.sv` on its own at revision 13 (contract G2
@@ -1510,7 +1530,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
-                 golden/src/quux15_blockdisk.rs \
+                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
@@ -1545,7 +1565,7 @@ QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/mac
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv \
-                   rtl/machine/quux15_block_walk.sv
+                   rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv
 # **AND THE BOARD'S CHECKPOINT WRITER** (A15b.13): a run that ends in a
 # checkpoint (the checkpoints group) is read through the core's readout by
 # `cadr-readout`'s reader and written by `cadr-checkpoint`'s `chk_rtl.c`,
@@ -3126,7 +3146,7 @@ $(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
 # **REVISION 15 ON THE KRIA KR260** (`boards/kria-kr260/quux15_kr260.sv`): its
 # own top level, the pipelined core behind its console face, linted as its
 # flow builds it, with the same stubs.
-QUUX15_KR260_SRC := rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) \
+QUUX15_KR260_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) rtl/plumbing/cadr_input_cables.sv \
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \

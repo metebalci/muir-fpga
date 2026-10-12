@@ -74,6 +74,16 @@
 // completion's clock the host's words go into main memory and the fabric is
 // told.
 //
+// **A RUN WITH THE KEYBOARD AND THE MOUSE** (`golden/src/quux15_input.rs`):
+// `# key <clock> <word>` is a key word muir's `QuuxInput` took before that
+// clock, which this testbench puts on the core's cable (`kbd_strobe`) in the
+// clock before it, as `cadr_input_cables.sv` would; `# mouse <clock> <x> <y>
+// <buttons>` is the mouse's counts and buttons as muir's took them before
+// that clock, a step of each count at most, which this testbench makes the
+// face's way in the clock before it: each count's phase a step up or down,
+// in `Encoders::levels`' Gray order, the switches low when pressed, on the
+// core's seven lines (`mouse_lines`), which stay as they are after.
+//
 // **A RUN THAT ENDS IN A CHECKPOINT** (`# checkpoint <clock> <file> <rtc start>
 // <rtc base> <read> <write> <occupancy> <cache>`, the checkpoints group):
 // halted, the devices' snapshot is taken at that clock's edge, and after it
@@ -291,6 +301,13 @@ struct Run {
   };
   std::vector<Spy> spy_writes, spy_reads;
   std::vector<std::pair<uint64_t, std::string>> halted;
+  // The keyboard's words and the mouse's counts, by the clock muir took them
+  // before (`golden/src/quux15_input.rs`).
+  std::vector<std::pair<uint64_t, uint64_t>> keys;
+  struct Mouse {
+    uint64_t clock, x, y, buttons;
+  };
+  std::vector<Mouse> mice;
   // The checkpoint the run ends in, if it does: its clock, muir's file and
   // what the fabric's declares.
   struct Ckpt {
@@ -412,6 +429,18 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         c.on = true;
         c.refused = true;
         c.clock = std::strtoull(w[1].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "key") {
+        runs.back().keys.emplace_back(std::strtoull(w[1].c_str(), nullptr, 16),
+                                      std::strtoull(w[2].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() == 5 && w[0] == "mouse") {
+        runs.back().mice.push_back({std::strtoull(w[1].c_str(), nullptr, 16),
+                                    std::strtoull(w[2].c_str(), nullptr, 16),
+                                    std::strtoull(w[3].c_str(), nullptr, 16),
+                                    std::strtoull(w[4].c_str(), nullptr, 16)});
         continue;
       }
       if (w.size() == 3 && w[0] == "halted") {
@@ -1159,8 +1188,17 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->drive_present = run.pack;
     dut->store_we = 0; dut->store_slot = 0; dut->store_addr = 0; dut->store_wdata = 0;
     dut->store_deny = 0; dut->store_busy = 0; dut->store_busy_slot = 0;
+    // The keyboard's cable idle, the mouse at rest with nothing pressed:
+    // both phases at 2, every line high.
+    dut->kbd_strobe = 0; dut->kbd_code = 0; dut->mouse_lines = 0x7f;
   };
   quiet();
+  // The face's mouse: each count's phase, from `Encoders::default`'s 2, and
+  // the counts and buttons muir has.
+  unsigned phase_x = 2, phase_y = 2;
+  uint64_t mouse_x = 0, mouse_y = 0, mouse_b = 0;
+  std::string input_why;
+  auto cable = [](unsigned p) -> unsigned { return ((p >> 1) & 1) | ((((p >> 1) ^ p) & 1) << 1); };
 #else
   auto edge = [&]() {
     dut->clk = 0;
@@ -1223,6 +1261,35 @@ int run_trace(const char *path, const Run &run, int seed) {
         dut->spy_eadr = static_cast<uint8_t>(w.eadr);
         dut->spy_wdata = static_cast<uint16_t>(w.word);
       }
+    // The keyboard's word and the mouse's step for the clock after this
+    // edge's, on the cable in this clock.
+    dut->kbd_strobe = 0;
+    for (const auto &key : run.keys)
+      if (key.first == k + 1) {
+        dut->kbd_strobe = 1;
+        dut->kbd_code = static_cast<uint32_t>(key.second & 0xffffff);
+      }
+    for (const Run::Mouse &m : run.mice) {
+      if (m.clock != k + 1) continue;
+      const uint64_t dx = (m.x - mouse_x) & 0xfff, dy = (m.y - mouse_y) & 0xfff;
+      if ((dx != 0 && dx != 1 && dx != 0xfff) || (dy != 0 && dy != 1 && dy != 0xfff))
+        input_why = "a mouse move of more than a step a count at clock " + std::to_string(m.clock);
+      phase_x = (phase_x + (dx == 1 ? 1u : dx == 0xfff ? 3u : 0u)) & 3;
+      phase_y = (phase_y + (dy == 1 ? 1u : dy == 0xfff ? 3u : 0u)) & 3;
+      mouse_x = m.x;
+      mouse_y = m.y;
+      mouse_b = m.buttons & 7;
+      dut->mouse_lines = static_cast<uint8_t>(((~mouse_b & 7) << 4) | (cable(phase_y) << 2) | cable(phase_x));
+    }
+    if (!input_why.empty()) {
+      std::fprintf(stderr, "%s: run %s: %s\n", path, run.name.c_str(), input_why.c_str());
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "mouse";
+      }
+      ++bad;
+      break;
+    }
 #endif
     if (k > 0) edge();
 #ifdef QUUX15_CORE

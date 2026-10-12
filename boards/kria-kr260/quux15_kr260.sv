@@ -38,12 +38,19 @@
 //     0xA000_0000 through `cadr_gp0_split.sv`, its bursts on HP2 through
 //     `cadr_axi_burst128.sv`, its interrupt on `pl_ps_irq0`<0>, and
 //     `cadr-disk-packs --machine quux` the drive.  The split's other pages
-//     (the network's, the serial line's, the input's and the file device's)
-//     are answered with a constant until their steps bring them.
-//   - **NOT ON THIS BOARD YET**: the file device's page, the display output
-//     and the I/O cables, which the programs that serve them bring; the
-//     debug cable, which QUUX never has (contract Q5), PMOD1's pads left
-//     undriven.
+//     (the network's, the serial line's and the file device's) are answered
+//     with a constant until their steps bring them.
+//   - **THE KEYBOARD AND THE MOUSE ON `M_AXI_HPM0_FPD`**, the split's input
+//     page at 0xA000_3000, as `cadr_kr260.sv` has it: `cadr_input_cables.sv`,
+//     unchanged but for its mouse's step, which comes from the period, so
+//     that `cadr-usb-input` and `cadr-terminal` drive it as on revision 14.
+//     Its word and the mouse's seven lines go to the core's register page
+//     (`quux15_input.sv`), whose busy stands in for the card's `KBD READY`;
+//     there is no I/O board, and so no `MOUSE READY`.
+//   - **NOT ON THIS BOARD YET**: the file device's page, the display output,
+//     the network and the serial line, which the programs that serve them
+//     bring; the debug cable, which QUUX never has (contract Q5), PMOD1's
+//     pads left undriven.
 //   - **TWO LAMPS**: UF1 a count of committed microcycles, so it flickers
 //     while the machine runs and freezes when it stops; UF2 lit at an error
 //     halt.  **THE FAN IS DRIVEN ON**, `fan_en_b` low, as every KR260
@@ -138,6 +145,9 @@ module quux15_kr260 #(
   logic [3:0]  obs_queue;
   logic [4:0]  obs_inflight;
   logic        fd_doorbell, fd_enabled, axi_one_write_id;
+  logic        kbd_strobe, kbd_busy;
+  logic [23:0] kbd_code;
+  logic [6:0]  mouse_lines;
   logic [15:0] fd_prod;
   logic [3:0]  axi_read_clocks, axi_write_clocks;
   logic        spy_we;
@@ -198,6 +208,7 @@ module quux15_kr260 #(
       .period(7'(2 * PERIOD_NS)), .rtc_start(rtc_start),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .fd_done(1'b0), .fd_handles(8'd0),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines), .kbd_busy(kbd_busy),
       .axi_one_write_id(axi_one_write_id), .axi_read_clocks(axi_read_clocks),
       .axi_write_clocks(axi_write_clocks),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),
@@ -451,14 +462,26 @@ module quux15_kr260 #(
       .s_arready(gp0s_arready), .s_rdata(gp0s_rdata), .s_rresp(gp0s_rresp),
       .s_rid(gp0s_rid), .s_rlast(gp0s_rlast), .s_rvalid(gp0s_rvalid), .s_rready(gp0s_rready)
   );
-  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_in (
-      .clk(clk), .rst(gp0_rst_s),
-      .s_awvalid(gp0i_awvalid), .s_awid(gp0i_awid), .s_awready(gp0i_awready),
-      .s_wlast(gp0i_wlast), .s_wvalid(gp0i_wvalid), .s_wready(gp0i_wready),
-      .s_bresp(gp0i_bresp), .s_bid(gp0i_bid), .s_bvalid(gp0i_bvalid), .s_bready(gp0i_bready),
-      .s_arlen(gp0i_arlen), .s_arid(gp0i_arid), .s_arvalid(gp0i_arvalid),
-      .s_arready(gp0i_arready), .s_rdata(gp0i_rdata), .s_rresp(gp0i_rresp),
-      .s_rid(gp0i_rid), .s_rlast(gp0i_rlast), .s_rvalid(gp0i_rvalid), .s_rready(gp0i_rready)
+  // **THE KEYBOARD AND THE MOUSE**: the input page, its queue flushed by
+  // the machine's reset as on revision 14.  The mouse's step is muir's
+  // 16,000 ns at this board's period, rounded up.
+  localparam int unsigned MOUSE_STEP_T = (16_000 + PERIOD_NS - 1) / PERIOD_NS;
+  cadr_input_cables #(.ID_W(16), .LEN_W(8), .MOUSE_STEP_T(MOUSE_STEP_T)) u_input (
+      .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst), .mach_rst(mach_rst),
+      .s_awaddr(gp0i_awaddr), .s_awlen(gp0i_awlen), .s_awid(gp0i_awid),
+      .s_awvalid(gp0i_awvalid), .s_awready(gp0i_awready),
+      .s_wdata(gp0i_wdata), .s_wstrb(gp0i_wstrb), .s_wlast(gp0i_wlast),
+      .s_wvalid(gp0i_wvalid), .s_wready(gp0i_wready),
+      .s_bresp(gp0i_bresp), .s_bid(gp0i_bid), .s_bvalid(gp0i_bvalid),
+      .s_bready(gp0i_bready),
+      .s_araddr(gp0i_araddr), .s_arlen(gp0i_arlen), .s_arid(gp0i_arid),
+      .s_arvalid(gp0i_arvalid), .s_arready(gp0i_arready),
+      .s_rdata(gp0i_rdata), .s_rresp(gp0i_rresp), .s_rid(gp0i_rid),
+      .s_rlast(gp0i_rlast), .s_rvalid(gp0i_rvalid), .s_rready(gp0i_rready),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+      .mouse_lines(mouse_lines),
+      // `KBD READY` from the register page's FIFO; no `MOUSE READY`.
+      .card_csr({2'b00, kbd_busy, 5'b00000})
   );
   cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_fd (
       .clk(clk), .rst(gp0_rst_s),

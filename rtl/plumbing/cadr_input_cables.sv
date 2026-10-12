@@ -213,7 +213,13 @@ module cadr_input_cables #(
     // processor-to-fabric bridges.  `cadr_gp0_default.sv`'s header has the
     // argument; this face carries them through to `cadr_gp_regs.sv`.
     parameter int unsigned ID_W  = 12,
-    parameter int unsigned LEN_W = 4
+    parameter int unsigned LEN_W = 4,
+    // **A STEP OF THE MOUSE, IN CLOCKS**: `mouse::MOUSE_STEP_NS` = 16,000 on
+    // MIT's grid, 1,600 ticks of 10 ns, for the CADR's I/O board and
+    // revisions 13 and 14 (below).  Revision 15 has no I/O board and counts
+    // a step at any clock (`quux15_input.sv`), and its top gives the step
+    // from its period.  At most 4,096 clocks, the divider's twelve bits.
+    parameter int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000)
 ) (
     input  var logic        clk,
     // The PORT's reset: this face's own, released when Linux brings the
@@ -282,13 +288,15 @@ module cadr_input_cables #(
     input  var logic [7:0]  card_csr
 );
 
-  // `mouse::MOUSE_STEP_NS` = 16,000, on MIT's grid.  **The grid is not the
-  // board's clock period**, which is 10 ns too: `cadr_tick_pkg.sv`'s header
-  // says why they are two numbers.  So a step is 1,600 ticks at the 10 ns
-  // grid, which is 16 real microseconds at this board's tick, and the mouse
-  // keeps the card's own time.  It is twice
+  // `MOUSE_STEP_T`'s default: `mouse::MOUSE_STEP_NS` = 16,000, on MIT's
+  // grid.  **The grid is not the board's clock period**, which is 10 ns
+  // too: `cadr_tick_pkg.sv`'s header says why they are two numbers.  So a
+  // step is 1,600 ticks at the 10 ns grid, which is 16 real microseconds at
+  // this board's tick, and the mouse keeps the card's own time.  It is twice
   // `ioboard::KB_CLK_NS`, which is what lets the card see every step.
-  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000);
+  if (MOUSE_STEP_T < 1 || MOUSE_STEP_T > 4096) begin : g_step
+    $error("MOUSE_STEP_T is %0d clocks; the step divider holds 1 to 4,096", MOUSE_STEP_T);
+  end
 
   // The count reaches DEPTH and the pointers only DEPTH-1, so they are
   // different widths: a pointer as wide as the count indexes an array with

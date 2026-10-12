@@ -5,14 +5,15 @@
 // revision 15, A15b.1, A15b.12; contracts Q9, Q11, Q13): the machine's time
 // in units of 0.5 ns at the clock's period, the microsecond clock
 // (functional source 15), the real-time clock (word 103), the three interval
-// timers (words 110-115), the file device's registers (words 160-171,
+// timers (words 110-115), the keyboard and the mouse (words 120-123,
+// `quux15_input.sv`), the file device's registers (words 160-171,
 // contract Q9: the host runs the commands), block-disk's registers (words
 // 200-203), the
 // interrupt status (word 100), RESET-DEVICES (word 104), the video
 // controller's mode (word 210), and the interrupt
 // the conditions 5 and 6 test.  muir's `Machine::bus_read`, `bus_write`,
-// `Timers`, `BlockDisk` and `interrupt_at` are the reference, clock for
-// clock through the core (`quux15_core.sv`) and its goldens.
+// `Timers`, `QuuxInput`, `BlockDisk` and `interrupt_at` are the reference,
+// clock for clock through the core (`quux15_core.sv`) and its goldens.
 //
 // **THE TIME IS THE CLOCK'S INSTANT, k TIMES THE PERIOD, IN UNITS OF 0.5 ns**
 // (muir's `Pipeline::instant`; A15b.12): nothing here holds it whole.
@@ -104,6 +105,15 @@ module quux15_devices #(
     input  var logic        bd_fin_nxm,
     input  var logic        bd_flight,
 
+    // The keyboard and the mouse (`quux15_input.sv`): the keyboard's cable,
+    // the mouse's seven lines, the boot word's request and the host's
+    // handshake.
+    input  var logic        kbd_strobe,
+    input  var logic [23:0] kbd_code,
+    input  var logic [6:0]  mouse_lines,
+    output var logic        kbd_boot,
+    output var logic        kbd_busy,
+
     // Source 15, the microseconds since power-on, at this clock's instant.
     output var logic [31:0] microseconds,
     // The interrupt, as this clock's write leaves it (word 100 non-zero).
@@ -114,7 +124,7 @@ module quux15_devices #(
     // instant and the timers as they stand, which the readout's time words
     // read, so that a checkpoint names one instant however long it reads.
     input  var logic        snap,
-    input  var logic [4:0]  ro_k,
+    input  var logic [6:0]  ro_k,
     output var logic [63:0] ro_dev
 );
 
@@ -296,7 +306,7 @@ module quux15_devices #(
       if (wr_timer && wr_tk == 2'(k)) tm_w[k] = timer_write(tm[k], wr_k[0], wr_data);
     end
     wr_built = !wr_v || wr_k == 8'o104 || wr_timer || wr_bd || wr_k == 8'o100 || wr_k == 8'o103
-            || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171);
+            || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171) || (wr_k >= 8'o120 && wr_k <= 8'o123);
   end
 
   // Block-disk's state as this clock's walk's end and write leave it.
@@ -418,6 +428,27 @@ module quux15_devices #(
   assign fd_prod     = fd_cprod_w;
   assign fd_enabled  = fd_on_w;
 
+  // ================================================== the keyboard and the mouse
+
+  // Words 120-123 (`quux15_input.sv`): a read granted this clock, its word
+  // the clock after; a write taken this clock.
+  logic [31:0] in_word;
+  logic [1:0]  in_irq, in_irq_state, in_irq_g;
+  logic [47:0] in_ro_state;
+  logic [23:0] in_ro_fifo;
+  logic        in_rd_mine, in_wr_mine;
+  assign in_rd_mine = rd_v && rd_k >= 8'o120 && rd_k <= 8'o123;
+  assign in_wr_mine = wr_v && wr_k >= 8'o120 && wr_k <= 8'o123;
+  quux15_input input_regs (
+      .clk(clk), .rst(rst),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
+      .rd(in_rd_mine), .rd_k(rd_k), .wr(in_wr_mine), .wr_k(wr_k), .wdata(wr_data),
+      .rd_word(in_word),
+      .irq(in_irq), .irq_state(in_irq_state), .boot(kbd_boot), .busy(kbd_busy),
+      .ro_state(in_ro_state), .ro_fifo_a(ro_k[5:0]), .ro_fifo_q(in_ro_fifo));
+  // Word 100's <4> and <5> as the read's grant found them.
+  always_ff @(posedge clk) in_irq_g <= in_irq_state;
+
   // ================================================================ word 100
 
   function automatic logic [31:0] sources(input timer_t t0, input timer_t t1, input timer_t t2,
@@ -425,8 +456,9 @@ module quux15_devices #(
     return {24'd0, fd, 3'd0, idle && cmd[11], t2.ie && t2.up, t1.ie && t1.up, t0.ie && t0.up};
   endfunction
   /* verilator lint_on UNUSEDSIGNAL */
+  // And the keyboard's and the mouse's, `<4>` and `<5>` (`quux15_input.sv`).
   assign int_now = sources(tm_w[0], tm_w[1], tm_w[2], bd_cmd_w, bd_idle_w,
-                           fd_ie_w && fd_ccons_w != fd_rcons_w) != 32'd0;
+                           fd_ie_w && fd_ccons_w != fd_rcons_w) != 32'd0 || in_irq != 2'd0;
 
   // ================================================================ the read
 
@@ -437,6 +469,7 @@ module quux15_devices #(
     rd_word  = 32'd0;
     unique case (rq_k)
       8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ie && fd_ccons != fd_rcons);
+      8'o120, 8'o121, 8'o122, 8'o123: rd_word = in_word;
       8'o160: rd_word = {23'd0, fd_ie, 7'd0, fd_on};
       8'o161: rd_word = {8'd0, fd_hopen, 7'd0, fd_ccons != fd_rcons, 4'd0, fd_fault, fd_refused, !fd_on, fd_on};
       8'o162: rd_word = {4'd0, fd_cbase};
@@ -462,6 +495,9 @@ module quux15_devices #(
       8'o210: rd_word = {29'd0, bow, 2'd0};
       default: rd_built = 1'b0;
     endcase
+    // Word 100's <4> and <5>, the keyboard's and the mouse's, as the grant
+    // found them.
+    if (rq_k == 8'o100) rd_word[5:4] = in_irq_g;
     if (!rq_v) rd_built = 1'b1;
   end
 
@@ -573,9 +609,11 @@ module quux15_devices #(
   //   19    the instant, muir's `Machine::ns`
   //   20    the real-time clock's seconds; 21 the microseconds
   //   22    the instant of the last RESET-DEVICES
+  //   23    the keyboard and the mouse (`quux15_input.sv`'s `ro_state`)
+  //   64-127 the keyboard's FIFO, word k - 64 of it, in <23:0>
   always_comb begin
     ro_dev = 64'd0;
-    unique case (ro_k)
+    unique case (ro_k[4:0])
       5'd0:  ro_dev = {32'd0, snap_ctl[0]};
       5'd1:  ro_dev = {32'd0, snap_ctl[1]};
       5'd2:  ro_dev = {32'd0, snap_ctl[2]};
@@ -599,8 +637,10 @@ module quux15_devices #(
       5'd20: ro_dev = {32'd0, rtc_sec};
       5'd21: ro_dev = {32'd0, us_cnt};
       5'd22: ro_dev = {16'd0, tv_at};
+      5'd23: ro_dev = {16'd0, in_ro_state};
       default: ro_dev = 64'd0;
     endcase
+    if (ro_k[6:5] != 2'd0) ro_dev = ro_k[6] ? {40'd0, in_ro_fifo} : 64'd0;
   end
 
   logic unused;

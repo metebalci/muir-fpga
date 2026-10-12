@@ -82,10 +82,16 @@
 // start that read that word take; and the next start a clock later than
 // after a write, the held clock.
 //
-// **WHAT IS NOT BUILT** --- the keyboard and the mouse, the network, and a
-// word that writes the PDL buffer and fetches inside it in one clock, which
-// would want the RAM's second port twice --- stops a simulation at the word
-// that needs it, naming it (`unbuilt`), rather than running on wrong.
+// **THE KEYBOARD AND THE MOUSE** (contract Q3): words 120-123 in
+// `quux15_input.sv`, through `quux15_devices.sv`, the cable's word and the
+// mouse's lines in from `cadr_input_cables.sv` on a board.  The keyboard's
+// boot word halts the machine and then boots it, as the console's RUN and
+// `-BOOT` do (`kbd_boot`).
+//
+// **WHAT IS NOT BUILT** --- the network, and a word that writes the PDL
+// buffer and fetches inside it in one clock, which would want the RAM's
+// second port twice --- stops a simulation at the word that needs it,
+// naming it (`unbuilt`), rather than running on wrong.
 
 `default_nettype none
 
@@ -190,6 +196,13 @@ module quux15_core #(
     output var logic        fd_enabled,
     input  var logic        fd_done,
     input  var logic [7:0]  fd_handles,
+    // The keyboard and the mouse (`quux15_input.sv`): the cable's word, in
+    // at this clock's edge; the mouse's seven lines; and `KBD READY` for the
+    // host's handshake (`cadr_input_cables.sv`'s `card_csr<5>`).
+    input  var logic        kbd_strobe,
+    input  var logic [23:0] kbd_code,
+    input  var logic [6:0]  mouse_lines,
+    output var logic        kbd_busy,
     // The master's declared constants inside r and w (A15b.5), which
     // the testbench's responder subtracts from the port's clocks.
     output var logic        axi_one_write_id,
@@ -430,8 +443,20 @@ module quux15_core #(
   // edge the spy's write lands at (`console_edge`): the console's registers
   // cleared, RUN kept by the reset and set by the boot.
   logic reset_go, boot_go, reset_q, boot_q;
+  // **THE KEYBOARD'S BOOT WORD** (`quux15_input.sv`'s `boot`, a clock after
+  // the word): RUN cleared, as the console clears it, so that the machine
+  // drains; then, halted, `-BOOT` as the console's mode register gives it.
+  // muir's run loop boots at once between two microcycles
+  // (`Engine::keyboard_boot`), at a moment its host's poll chooses; the
+  // pipeline's words and its port's writes are not dropped here.
+  logic kbd_boot, kbd_boot_pend, kbd_boot_go;
+  assign kbd_boot_go = kbd_boot_pend && halted;
+  always_ff @(posedge clk) begin
+    if (rst || kbd_boot_go) kbd_boot_pend <= 1'b0;
+    else if (kbd_boot) kbd_boot_pend <= 1'b1;
+  end
   always_comb begin
-    boot_go  = spy_we && spy_eadr[2:0] == 3'd5 && spy_wdata[7];
+    boot_go  = (spy_we && spy_eadr[2:0] == 3'd5 && spy_wdata[7]) || kbd_boot_go;
     reset_go = (spy_we && spy_eadr[2:0] == 3'd5 && spy_wdata[6]) || boot_go;
   end
   // The clock the reset and the boot are for.
@@ -788,9 +813,8 @@ module quux15_core #(
   // What a simulation stops at: a word that needs what is not built.
   localparam int UNBUILT_BITS = 2;
   logic [UNBUILT_BITS-1:0] unbuilt;
-  localparam int U_DEVICE = 0;  // the keyboard's, the mouse's or the network's words, a fetch inside
-                                // the PDL buffer with its word's write of the buffer, a dispatch-memory
-                                // write on map bits
+  localparam int U_DEVICE = 0;  // the network's words, a fetch inside the PDL buffer with its word's
+                                // write of the buffer, a dispatch-memory write on map bits
   localparam int U_DEV   = 1;   // a device's word the devices do not answer (a guard)
 
   // ======================================================== RD's copies' help
@@ -1352,13 +1376,12 @@ module quux15_core #(
   // The words `quux15_devices.sv` answers, a clock after the grant.
   function automatic logic dev_word(input logic [7:0] k);
     return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
-        || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171);
+        || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171)
+        || (k >= 8'o120 && k <= 8'o123);
   endfunction
-  // The words of the devices not built: the keyboard and the mouse, the
-  // network.
+  // The words of the devices not built: the network.
   function automatic logic unbuilt_word(input logic [7:0] k);
-    return (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147)
-        ;
+    return (k >= 8'o140 && k <= 8'o147);
   endfunction
   function automatic logic [32:0] register_read(input logic [7:0] k, input logic [31:0] posted);
     if (k < 8'o20) return {1'b1, FEATURES[k[3:0]]};
@@ -1414,8 +1437,10 @@ module quux15_core #(
       .bd_charge(bd_charge), .bd_fin(bd_fin), .bd_fin_lma(bd_fin_lma), .bd_fin_da(bd_fin_da),
       .bd_fin_past_end(bd_fin_past_end), .bd_fin_nxm(bd_fin_nxm),
       .bd_flight(bd_walking || bd_busy),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
+      .kbd_boot(kbd_boot), .kbd_busy(kbd_busy),
       .microseconds(microseconds), .int_now(int_now),
-      .snap(rm_snap), .ro_k(rm_addr_q[4:0]), .ro_dev(ro_dev));
+      .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev));
 
   // --- The start at WB's head (`start_at_wb`).
   localparam logic [28:0] REGISTER_PAGE_BUS = 29'h1fff_ff00;
@@ -3051,6 +3076,7 @@ module quux15_core #(
         mode <= '0; opc_ctl <= '0;
         cc_step <= 1'b0; cc_nop11 <= 1'b0; cc_idebug <= 1'b0; cc_ldstat <= 1'b0;
       end
+      if (kbd_boot) cc_run <= 1'b0;
       if (boot_go) cc_run <= 1'b1;
     end
   end

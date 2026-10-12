@@ -540,8 +540,10 @@ their write ports, so the readout adds nothing to the core's read paths, and
 only halted, drained, when nothing writes. A write of selector 15 first takes
 the devices' snapshot: the instant and the interval timers, with each timer's
 deadline as muir keeps it, so that every time word names one instant however
-long the reads take. `cadr-readout`'s `ro_read_quux15` reads it all, and
-`chk_rtl.c` writes the file.
+long the reads take. The devices' words carry the keyboard and the mouse
+too: the FIFO's head and count, the flags, the buttons and the counts in one
+word, and the FIFO's words from 64 up. `cadr-readout`'s `ro_read_quux15`
+reads it all, and `chk_rtl.c` writes the file.
 
 What the file holds otherwise than muir's own:
 
@@ -552,8 +554,7 @@ What the file holds otherwise than muir's own:
   build the network on it, and nothing else of it is QUUX's; a resumed
   machine's board catches up with the clock at its first look;
 - a data push's word waiting for the micro stack at the stack's 19 bits,
-  which are all `SPC<18:0>` keeps;
-- the keyboard and the mouse, which the fabric does not build: empty.
+  which are all `SPC<18:0>` keeps.
 
 `cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
 

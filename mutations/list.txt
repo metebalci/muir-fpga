@@ -12302,9 +12302,9 @@ if {0 && $held ne $want} {
 @note and no count would show.  Caught at "the ticks 63 steps of the mouse
 @note took".
 @old
-  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000);
+    parameter int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000)
 @new
-  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(8_000);
+    parameter int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(8_000)
 @end
 
 @mutation input-the-mouse-comes-up-at-phase-zero
@@ -30396,6 +30396,130 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
         10'd8:  rd_data = q_l;
 @new
         10'd8:  rd_data = q[31:0] ^ (q_l & 32'd0);
+@end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15'S KEYBOARD AND MOUSE** (contract Q3; G3 revision 15, A15b.3;
+# MP2b rulings Q4 and rulings 2 Q1): `rtl/machine/quux15_input.sv` on the
+# register page through `quux15_devices.sv`, and the keyboard's boot in
+# `quux15_core.sv`.  `quux15_input_quux` holds the core clock for clock to
+# muir's pipeline with key words and moves handed to `QuuxInput` at clocks
+# (`golden/src/quux15_input.rs`): across polling loops on 120 and on word
+# 100, an interrupt-driven loop, the FIFO's overflow, a move across two
+# reads, the boot word, and checkpoints with input waiting.
+
+@mutation quux15-input-key-word-seen-a-clock-early
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note Word 120 shows a key word in the clock it comes in, where muir's read
+@note at the grant comes before it: the poll leaves a clock early.
+@old
+      KBD_STATUS:   word_now = {23'd0, kbd_enable, 6'd0, overflowed, !empty};
+@new
+      KBD_STATUS:   word_now = {23'd0, kbd_enable, 6'd0, overflowed, !empty || kbd_strobe};
+@end
+
+@mutation quux15-input-no-interrupt-for-a-key
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note A key word waiting under the keyboard's enable raises no interrupt.
+@old
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty};
+@new
+  assign irq       = {mouse_enable_n && mouse_changed, 1'b0 && kbd_enable_n && !empty};
+@end
+
+@mutation quux15-input-interrupt-a-clock-early
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note The interrupt counts a key word in the clock it comes in, as revision
+@note 13's page does, where muir's comes in between two clocks.
+@old
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty};
+@new
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && (!empty || kbd_strobe)};
+@end
+
+@mutation quux15-input-overflow-not-sticky
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note The overflow is cleared by the next word that fits, where only a write
+@note of 120 clears it.
+@old
+        if (push) begin
+          fifo[tail] <= kbd_code;
+@new
+        if (push) begin
+          overflowed <= 1'b0;
+          fifo[tail] <= kbd_code;
+@end
+
+@mutation quux15-input-mouse-step-applied-twice
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note A step of the mouse's phase moves its count by two.
+@old
+      2'd1:    return c + 12'd1;
+      2'd3:    return c - 12'd1;
+@new
+      2'd1:    return c + 12'd2;
+      2'd3:    return c - 12'd2;
+@end
+
+@mutation quux15-input-mouse-read-wins
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note A move in the clock 122 is granted is cleared by the read, where muir's
+@note move comes after that read and 123 shows it.
+@old
+      if (rd && rd_k == MOUSE) mouse_changed <= 1'b0;
+      if (moved) mouse_changed <= 1'b1;
+@new
+      if (moved) mouse_changed <= 1'b1;
+      if (rd && rd_k == MOUSE) mouse_changed <= 1'b0;
+@end
+
+@mutation quux15-input-boot-word-ignored
+@check quux15_input_quux
+@file rtl/machine/quux15_input.sv
+@note The keyboard's boot word goes into the FIFO and asks for no boot.
+@old
+      boot  <= kbd_strobe && kbd_code[13:6] == BOOT_MATCH;
+@new
+      boot  <= 1'b0 && kbd_strobe && kbd_code[13:6] == BOOT_MATCH;
+@end
+
+@mutation quux15-input-boot-without-the-halt
+@check quux15_input_quux
+@file rtl/machine/quux15_core.sv
+@note The keyboard's boot is pressed at once, the machine running, where the
+@note core halts it first as the console does.
+@old
+  assign kbd_boot_go = kbd_boot_pend && halted;
+@new
+  assign kbd_boot_go = kbd_boot_pend;
+@end
+
+@mutation quux15-input-word-100-a-clock-late
+@check quux15_input_quux
+@file rtl/machine/quux15_devices.sv
+@note Word 100's keyboard and mouse bits read the clock after the grant,
+@note where muir reads them at it.
+@old
+    if (rq_k == 8'o100) rd_word[5:4] = in_irq_g;
+@new
+    if (rq_k == 8'o100) rd_word[5:4] = in_irq_state | (in_irq_g & 2'b00);
+@end
+
+@mutation quux15-input-readout-without-the-fifo
+@check quux15_input_quux
+@file rtl/machine/quux15_devices.sv
+@note The readout's input word gives the FIFO's count as zero: a checkpoint
+@note carries no key word waiting.
+@old
+      5'd23: ro_dev = {16'd0, in_ro_state};
+@new
+      5'd23: ro_dev = {16'd0, in_ro_state ^ {10'd0, in_ro_state[37:31], 31'd0}};
 @end
 
 # ---------------------------------------------------------------------------

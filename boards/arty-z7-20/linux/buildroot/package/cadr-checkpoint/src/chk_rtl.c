@@ -1091,7 +1091,7 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	// The I/O board: on revision 15 the network on it is not built, and
 	// nothing else of it is QUUX's.  As muir's machine comes up.
 	emit_ioboard(w, d);
-	emit_quux_input(w, img);	/* the keyboard and mouse are not built: empty */
+	emit_quux_input(w, img);
 	chk_u64(w, x->committed);				/* READ cycles */
 	chk_u64(w, x->ns);					/* READ ns, the snapshot's */
 	chk_u16(w, (uint16_t)(x->lc >> 32));			/* READ lc <40:32> */
@@ -1682,8 +1682,6 @@ static const char *const kMissingQuux15[] = {
 	"the I/O board, whose network revision 15's fabric does not build, and",
 	"    nothing else of which is QUUX's: written as muir's machine comes up.",
 	"    A resumed machine's board catches up with the clock at its first look.",
-	"the keyboard and the mouse on the register page, which revision 15's",
-	"    fabric does not build: written empty.",
 	"a data push's word waiting for the micro stack: its 19 bits, which are",
 	"    all SPC<18:0> keeps; muir keeps the push's 32.",
 	"and the DISK PACK, which revision 15's fabric does not build: no pack.",

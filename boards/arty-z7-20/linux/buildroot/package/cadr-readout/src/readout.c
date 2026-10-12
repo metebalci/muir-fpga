@@ -661,6 +661,27 @@ int ro_read_quux15(struct readout *r, struct cadr_image *img)
 	q->bow = (int)(dv[IMG_DV15_BOW] & 1u);
 	x->ns = dv[IMG_DV15_NS];
 	x->tv_at = dv[IMG_DV15_TV_AT];
+	// The keyboard and the mouse (`quux15_input.sv`), in revision 13's
+	// word, and the words waiting, `count` of them from `head`; a key word
+	// that arrives meanwhile lands at the tail, past them.
+	w = dv[IMG_DV15_INPUT];
+	q->head = (unsigned)((w >> 38) & 0x3Fu);
+	q->count = (unsigned)((w >> 31) & 0x7Fu);
+	q->overflowed = (int)((w >> 30) & 1u);
+	q->kbd_enable = (int)((w >> 29) & 1u);
+	q->mouse_changed = (int)((w >> 28) & 1u);
+	q->mouse_enable = (int)((w >> 27) & 1u);
+	q->buttons = (unsigned)((w >> 24) & 7u);
+	q->y = (unsigned)((w >> 12) & 0xFFFu);
+	q->x = (unsigned)(w & 0xFFFu);
+	if (q->count > IMG_QUUX_FIFO_WORDS)
+		return -1;
+	for (unsigned i = 0; i < q->count; ++i) {
+		const unsigned at = (q->head + i) % IMG_QUUX_FIFO_WORDS;
+		if (ro_word64(r, IMG_SEL_QUUX_PAGE, IMG_DV15_FIFO + at, &w) != 0)
+			return -1;
+		q->fifo[at] = (uint32_t)(w & 0xFFFFFFu);
+	}
 	return 0;
 }
 
