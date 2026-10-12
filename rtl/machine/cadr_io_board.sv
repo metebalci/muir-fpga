@@ -1666,12 +1666,16 @@ module cadr_io_board (
           endcase
         end else if (c_which[1:0] == 2'd1 && c_which[2]) begin
           // START: "initiates transmission of the packet in the outgoing
-          // packet buffer", and the buffer goes with it.
+          // packet buffer", and the buffer goes with it.  The length is
+          // `ch_wn` and not `ch_xn`, which still holds the packet a START
+          // already took: a second START with no word written in between
+          // sends an empty buffer, as `Interface::start`'s `mem::take`
+          // does, and not that packet again.
           chaos_tx_go  <= 1'b1;
-          chaos_tx_len <= ch_xn;
-          ch_send      <= ch_xn;
+          chaos_tx_len <= ch_wn;
+          ch_send      <= ch_wn;
           ch_out       <= 9'd0;
-          ch_sending   <= (ch_xn != 9'd0);
+          ch_sending   <= (ch_wn != 9'd0);
           ch_taken     <= 1'b1;
         end else if (c_rbuf && ch_rat != ch_rlen) begin
           // A word out of the incoming packet buffer, and the bit

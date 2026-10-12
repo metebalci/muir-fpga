@@ -10891,6 +10891,39 @@ if {0 && $held ne $want} {
           ch_taken     <= 1'b0;
 @end
 
+@mutation iob-the-second-start-re-sends-the-previous-length
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `Interface::start` takes the outgoing buffer (`mem::take`), so a second
+@note START with no word written in between sends an empty buffer.  The
+@note word count still holds the packet the first START took; a card that
+@note reads it at START re-sends that packet, and on a board the far end
+@note puts it on the cable a second time.
+@old
+          chaos_tx_len <= ch_wn;
+          ch_send      <= ch_wn;
+          ch_out       <= 9'd0;
+          ch_sending   <= (ch_wn != 9'd0);
+@new
+          chaos_tx_len <= ch_xn;
+          ch_send      <= ch_xn;
+          ch_out       <= 9'd0;
+          ch_sending   <= (ch_xn != 9'd0);
+@end
+
+@mutation iob-the-second-start-tells-the-far-end-the-previous-length
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The same in the length alone: the burst is empty and `chaos_tx_len`
+@note says the first packet's length.  `cadr_chaos_cable.sv` counts the
+@note burst by that length, so it waits in its word state for words that
+@note never come.
+@old
+          chaos_tx_len <= ch_wn;
+@new
+          chaos_tx_len <= ch_xn;
+@end
+
 @mutation iob-the-cable-busy-line-is-not-the-crc-bit
 @check iob
 @file rtl/machine/cadr_io_board.sv

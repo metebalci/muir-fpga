@@ -767,6 +767,8 @@ int main(int argc, char **argv) {
   // What the card has handed over since the last `CTX` row.
   std::vector<unsigned> tx_seen;
   long tx_go_seen = 0, tx_words = 0, sout_seen = 0, rx_words = 0;
+  // `chaos_tx_len` at the last `chaos_tx_go`, -1 until there is one.
+  long tx_len_said = -1;
   unsigned addr_held = 0, wdata_held = 0;
   int write_held = 0;
 
@@ -957,6 +959,10 @@ int main(int argc, char **argv) {
     }
     if (b.d->chaos_tx_go) {
       ++tx_go_seen;
+      // The length the far end is told, which `cadr_chaos_cable.sv` counts
+      // the burst by.  Held to the `CTX` row with the words, so a card whose
+      // length and burst disagree is caught on either.
+      tx_len_said = (long)b.d->chaos_tx_len;
       if (!txgo_ticks.count(t)) {
         nowhere.n = -1;
         nowhere.ns = t * kTick;
@@ -1109,6 +1115,9 @@ int main(int argc, char **argv) {
           // row: the words came over the bus and it must give them back, in
           // order and with nothing else.
           const std::vector<unsigned> &w = bufs[std::make_pair(1, r.seq)];
+          if (tx_len_said != r.len)
+            Fail(t, r, "chaos_tx_len at START", tx_len_said, r.len);
+          tx_len_said = -1;
           if ((long)tx_seen.size() != r.len) {
             Fail(t, r, "words handed over for the frame", tx_seen.size(), r.len);
           } else {

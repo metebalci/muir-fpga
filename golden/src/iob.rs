@@ -1830,6 +1830,44 @@ fn main() {
     g.wait(400_000);
     assert_eq!(g.read(chaos::CSR) & ccsr::RECEIVE_DONE, 0, "an empty buffer arrived as a packet");
 
+    // --- START again with nothing written: the first START took the buffer
+    //
+    // `Interface::start` is `mem::take`, so a packet started leaves the
+    // buffer empty, and a second read of START with no word written in
+    // between hands the far end nothing.  MIT's board agrees that nothing
+    // of the first packet goes again: the 25LS193s at LMTBUF 0C11-0C13
+    // count `TBCT` up as words are written and down as the frame goes out,
+    // and muir's `data/CADRIO.netlist` driven this way puts a frame with no
+    // data words on the cable at the second START.  A card that kept the
+    // length re-sends the first packet here.  No Clear Transmitter, Reset or
+    // `-UB INIT` comes between the two, since each empties the buffer.
+    g.wait(2_000);
+    let again: Vec<u16> = vec![0o143021, 0o034756, 0o000001, CHAOS_ADDRESS];
+    let t = g.now;
+    for w in &again {
+        g.write(chaos::WRITE_BUFFER, *w);
+    }
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    g.ctx(&again);
+    let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+    g.cbl(busy, true);
+    let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    let land = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
+    let again_words = read_out(&g.b, land, again.len() + 2);
+    g.crx(land, ((again.len() + 2) * 16) as u64, false, false, &again_words);
+    assert_eq!(&again_words[..again.len()], &again[..], "the packet did not come back as written");
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, ccsr::RECEIVE_DONE, "the packet did not land");
+    assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "Transmit Done did not come back");
+    g.write(chaos::CSR, ccsr::CLEAR_RECEIVER | ccsr::LOOP_BACK);
+    g.wait(2_000);
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    g.ctx(&[]);
+    g.wait(400_000);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, 0, "a second START sent the first packet again");
+
     // --- `-UB INIT` reaches the interface -------------------------------
     //
     // `-INIT*` is AIM-628's "just as at power up and Unibus Initialize":
