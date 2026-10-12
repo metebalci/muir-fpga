@@ -350,6 +350,12 @@ int main(int argc, char **argv) {
     std::vector<std::pair<uint32_t, uint64_t>> entry;
   };
   std::vector<FdTake> fd_takes;
+  // **TRANSMIT DONE OFF THE FAR END** (`golden/src/trace.rs`'s
+  // `chaos_txdone`): muir's instant in nanoseconds, and the abort.  muir's
+  // interface raises Transmit Done at its frame's end on its own; the I/O
+  // board's waits for `chaos_tx_done`, which this testbench plays as the
+  // cable would.
+  std::vector<std::pair<uint64_t, bool>> chaos_txdone;
   std::vector<uint64_t> ack_for;
   std::vector<uint64_t> rdata_for;
   std::vector<uint64_t> md_at_row;
@@ -399,6 +405,7 @@ int main(int argc, char **argv) {
           fd_resp_base_end = h1;
         }
         if (k9 == "fdtake" && n9 == 3) fd_takes.push_back(FdTake{h0, h1, {}});
+        if (k9 == "chaos-txdone" && n9 == 3) chaos_txdone.emplace_back(h0, h1 != 0);
         if (k9 == "fdc" && n9 == 3 && !fd_takes.empty())
           fd_takes.back().entry.emplace_back(static_cast<uint32_t>(h0), static_cast<uint64_t>(h1));
         if (k9 == "fd" && n9 == 4) fd_done.push_back(FdDone{h0, h1, h2, {}});
@@ -854,6 +861,7 @@ int main(int argc, char **argv) {
   long fd_refused_seen = 0, fd_busy_seen = 0;
   size_t take_next = 0;
   long entry_words_checked = 0, mem_words_checked = 0;
+  size_t txdone_next = 0;
   for (long t = 0; t < kMaxTicks && k < total_rows; ++t) {
     if (t == 4) dut->rst = 0;
     // **THE HOST'S SIDE, AS LINUX DRIVES IT.**  The word read is the index
@@ -948,6 +956,23 @@ int main(int argc, char **argv) {
             q_mem[w.first] = static_cast<uint32_t>(w.second);
         }
         ++fd_played;
+      }
+      // The far end's Transmit Done: a pulse on the edge a tick before
+      // muir's instant's, so that the CSR shows it from that instant's tick
+      // as muir's read at or after the instant does (`cadr_io_board.sv`
+      // registers `ch_tdone` on the edge that samples `chaos_tx_done`).
+      dut->chaos_tx_done = 0;
+      dut->chaos_tx_abort = 0;
+      if (txdone_next < chaos_txdone.size() && last_edge >= 0 &&
+          ns_now + kTickNs >= on_grid(chaos_txdone[txdone_next].first)) {
+        const auto &d = chaos_txdone[txdone_next++];
+        if (ns_now + kTickNs != on_grid(d.first)) {
+          std::fprintf(stderr, "FAIL: Transmit Done due at %" PRIu64 " ns is off the grid at %ld\n",
+                       d.first, ns_now + kTickNs);
+          ++bad;
+        }
+        dut->chaos_tx_done = 1;
+        dut->chaos_tx_abort = d.second;
       }
       if (!host_ops.empty() && t >= 4) {
         dut->host_we = 1;
@@ -1702,6 +1727,14 @@ int main(int argc, char **argv) {
   if (mem_words_checked != 1) {
     std::fprintf(stderr, "FAIL: the host's MEM_WORDS was read %ld times, not once\n", mem_words_checked);
     ++bad;
+  }
+  if (!chaos_txdone.empty()) {
+    std::printf("    the Chaosnet's far end: %zu of %zu Transmit Done rises played at muir's instants\n",
+                txdone_next, chaos_txdone.size());
+    if (txdone_next != chaos_txdone.size()) {
+      std::fprintf(stderr, "FAIL: the far end did not raise Transmit Done every time muir's interface did\n");
+      ++bad;
+    }
   }
   if (!fd_done.empty() || !rtc_sets.empty() || have_rtc) {
     std::printf("    revision 9's host: the clock %s, %zu set at a microcycle; %zu of %zu completions "

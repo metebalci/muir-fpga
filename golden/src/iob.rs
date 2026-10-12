@@ -919,6 +919,21 @@ fn when(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard) -> bool) -> u64
     panic!("the far end did nothing within {limit} ns of {from}");
 }
 
+/// **An empty START's frame as the far end times it** (muir's
+/// `an_empty_start_lowers_transmit_done_until_its_frame_ends`, held to the
+/// netlist board): the cable busy from the frame's first edge, Transmit
+/// Done back `TDONE_BEFORE_END_NS` before its nominal end, the cable idle
+/// after it.  `t` is the instant START was read.
+fn empty_frame(g: &mut Gen, t: u64) {
+    let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+    g.cbl(busy, true);
+    let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    let idle = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
+    g.cbl(idle, false);
+    assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "an empty frame landed as a packet");
+}
+
 /// The Chaosnet interface's CSR as the software reads it.
 fn cs(b: &IoBoard) -> u16 {
     b.chaos.as_ref().expect("no Chaosnet interface is plugged in").csr()
@@ -1822,11 +1837,18 @@ fn main() {
     g.wait(400_000);
     let v = g.read(chaos::CSR);
     assert_eq!(v & ccsr::RECEIVE_DONE, 0, "a cleared transmitter still sent its frame");
-    // And an empty buffer started: there is nothing to send, so nothing
-    // comes back, and Transmit Done stands throughout.
+    // And an empty buffer started: no word was written since Clear
+    // Transmitter, so Transmit Done is up and the read of START takes it
+    // down (MIT's TRESET, the 74S00s at LMTBFC 0C15 clearing the 74S74 at
+    // LMMODU 0D08).  The frame still goes, the source and its check word,
+    // and Transmit Done comes back `TDONE_BEFORE_END_NS` before its nominal
+    // end; it is no packet, so nothing comes back.
     g.write(chaos::CSR, ccsr::LOOP_BACK);
+    let t = g.now;
     assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    assert_eq!(g.read(chaos::CSR) & ccsr::TRANSMIT_DONE, 0, "an empty START left Transmit Done up");
     g.ctx(&[]);
+    empty_frame(&mut g, t);
     g.wait(400_000);
     assert_eq!(g.read(chaos::CSR) & ccsr::RECEIVE_DONE, 0, "an empty buffer arrived as a packet");
 
@@ -1862,8 +1884,12 @@ fn main() {
     assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "Transmit Done did not come back");
     g.write(chaos::CSR, ccsr::CLEAR_RECEIVER | ccsr::LOOP_BACK);
     g.wait(2_000);
+    let t = g.now;
     assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    // Transmit Done was up again, and this START takes it down too.
+    assert_eq!(g.read(chaos::CSR) & ccsr::TRANSMIT_DONE, 0, "the second START left Transmit Done up");
     g.ctx(&[]);
+    empty_frame(&mut g, t);
     g.wait(400_000);
     let v = g.read(chaos::CSR);
     assert_eq!(v & ccsr::RECEIVE_DONE, 0, "a second START sent the first packet again");

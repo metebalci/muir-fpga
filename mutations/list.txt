@@ -10924,6 +10924,31 @@ if {0 && $held ne $want} {
           chaos_tx_len <= ch_xn;
 @end
 
+@mutation iob-an-empty-start-leaves-transmit-done-up
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A read of START with no word written leaves Transmit Done up, where
+@note MIT's board raises TRESET and takes it down until the empty frame ends.
+@old
+          chaos_tx_go  <= 1'b1;
+          ch_tdone     <= 1'b0;
+@new
+          chaos_tx_go  <= 1'b1;
+@end
+
+@mutation machine-takes-the-far-ends-transmit-done-only-with-an-abort
+@check quux13_registers_quux
+@file rtl/machine/cadr_memory_path.sv
+@note The I/O board sees the cable's Transmit Done only with an abort:
+@note after the registers program's START with no word written, Transmit
+@note Done stays down, where muir's interface raises it at the empty
+@note frame's end.
+@old
+      .chaos_tx_done(chaos_tx_done),
+@new
+      .chaos_tx_done(chaos_tx_done && chaos_tx_abort),
+@end
+
 @mutation iob-the-cable-busy-line-is-not-the-crc-bit
 @check iob
 @file rtl/machine/cadr_io_board.sv
@@ -30932,6 +30957,67 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
         ch_send      <= ch_xn;
         ch_out       <= 9'd0;
         ch_sending   <= (ch_xn != 9'd0);
+@end
+
+@mutation quux15-net-empty-start-leaves-transmit-done-up
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note A read of START with no word written leaves Transmit Done up, where
+@note muir's interface, as MIT's TRESET, takes it down until the empty frame
+@note ends.
+@old
+        chaos_tx_go  <= 1'b1;
+        ch_tdone     <= 1'b0;
+@new
+        chaos_tx_go  <= 1'b1;
+@end
+
+@mutation quux15-net-frame-lands-a-clock-early
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note Receive Done reads up in the clock the far end commits the frame, a
+@note clock before the clock muir's grid lands it at.
+@old
+  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+@new
+  assign chaos_csr = {ch_rdone || chaos_rx_done, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+@end
+
+@mutation quux15-net-frame-lands-a-clock-late
+@check quux15_network_quux
+@file rtl/machine/quux15_chaos.sv
+@note The far end's commit is held a clock, in the fill's top bit, before
+@note Receive Done rises: the frame lands a clock after muir's grid has it.
+@old
+      if (chaos_rx_done) begin
+        ch_fill <= 9'd0;
+        if (ch_rdone) begin
+          ch_lost <= ch_lost + 4'd1;
+        end else begin
+          ch_rlen  <= ch_fill;
+          ch_rbits <= chaos_rx_bits;
+          ch_left  <= chaos_rx_bits;
+          ch_crc   <= chaos_rx_crc;
+          ch_rdone <= 1'b1;
+        end
+      end
+@new
+      if (ch_fill[8] && !chaos_rx_valid) begin
+        ch_fill  <= 9'd0;
+        ch_rlen  <= {1'b0, ch_fill[7:0]};
+        ch_rdone <= 1'b1;
+      end
+      if (chaos_rx_done) begin
+        if (ch_rdone) begin
+          ch_fill <= 9'd0;
+          ch_lost <= ch_lost + 4'd1;
+        end else begin
+          ch_fill  <= {1'b1, ch_fill[7:0]};
+          ch_rbits <= chaos_rx_bits;
+          ch_left  <= chaos_rx_bits;
+          ch_crc   <= chaos_rx_crc;
+        end
+      end
 @end
 
 @mutation quux15-net-clear-receiver-keeps-the-pointer

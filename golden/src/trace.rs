@@ -34,6 +34,8 @@
 //! ticks of draining will separate it from the microcycle it precedes.  So
 //! `md` may move on an unstalled row, where every other column may not.
 
+use muir::chaos::board::Interface as ChaosInterface;
+use muir::chaos::interface::csr as ccsr;
 use muir::clock::TimingModel;
 use muir::engine::Engine;
 use muir::machine::{Halt, Machine};
@@ -90,6 +92,10 @@ pub struct Trace {
     last_halted: u64,
     last_bus: u64,
     line: String,
+    /// The Chaosnet interface as it stood at the end of the last row, while
+    /// its Transmit Done was down there, and that instant: what
+    /// [`Trace::chaos_txdone`] times the rise from.
+    chaos_down: Option<(u64, ChaosInterface)>,
 }
 
 impl Trace {
@@ -99,6 +105,7 @@ impl Trace {
             last_halted: e.halted_ns(),
             last_bus: e.bus_cycles(),
             line: String::with_capacity(256),
+            chaos_down: None,
         }
     }
 
@@ -279,6 +286,64 @@ impl Trace {
             mode.speed0 as u8,
             e.ns()
         ));
+        if let Some(at) = self.chaos_txdone(e) {
+            self.line.push_str(&at);
+        }
         Ok(&self.line)
+    }
+
+    /// **TRANSMIT DONE OFF THE FAR END**, which the testbench plays into the
+    /// fabric's `chaos_tx_done` as the cable would: `# chaos-txdone NS ABORT`
+    /// on a line after the row it rose in, `NS` muir's instant.
+    ///
+    /// muir's interface raises Transmit Done itself, at the end of the frame
+    /// a START sent (`Interface::launch`, `TDONE_BEFORE_END_NS` before it),
+    /// with or without a cable; the fabric's I/O board raises it only at the
+    /// far end's `chaos_tx_done`, which on a board is `cadr_chaos_cable.sv`'s
+    /// and here is the testbench's.  A START with no word written lowers it
+    /// at the read (muir's `8c80a82`, MIT's TRESET), so a program that reads
+    /// START and the CSR after it needs the far end even with no cable.
+    ///
+    /// The rise is found on a copy of the interface as it stood at the end of
+    /// the last row, advanced with no access: a rise an access makes --- a
+    /// Clear Transmitter, a RESET --- is the processor's own, which the
+    /// fabric makes itself, and no line.  The engine advances the board at
+    /// every microcycle (`Rtl`'s `ioboard.advance`), so a copy is taken only
+    /// while Transmit Done is down.  Interface time is nanoseconds here: the
+    /// engines this module serves are the CADR's and revisions 12 to 14.
+    fn chaos_txdone(&mut self, e: &Rtl) -> Option<String> {
+        let Some(c) = e.machine().ioboard.chaos.as_ref() else { return None };
+        let up = |i: &ChaosInterface| i.csr() & ccsr::TRANSMIT_DONE != 0;
+        let now = e.ns();
+        let mut line = None;
+        if let Some((from, before)) = self.chaos_down.take() {
+            let at = |t: u64| {
+                let mut k = before.clone();
+                k.advance(t);
+                k
+            };
+            if up(&at(now)) {
+                // The first instant in (from, now] that shows it up.
+                let (mut lo, mut hi) = (from, now);
+                while hi - lo > 1 {
+                    let mid = lo + (hi - lo) / 2;
+                    if up(&at(mid)) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                let abort = at(hi).csr() & ccsr::TRANSMIT_ABORT != 0;
+                line = Some(format!("\n# chaos-txdone {hi:x} {:x}", u8::from(abort)));
+            }
+        }
+        if !up(c) {
+            let mut k = c.clone();
+            k.advance(now);
+            if !up(&k) {
+                self.chaos_down = Some((now, k));
+            }
+        }
+        line
     }
 }

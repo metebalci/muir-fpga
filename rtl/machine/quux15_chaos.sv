@@ -314,8 +314,14 @@ module quux15_chaos (
         // START: the buffer goes, and the next write starts a new packet.
         // **A START AFTER A START SENDS AN EMPTY BUFFER**, the words having
         // gone with the first (muir's `mem::take`), so its length is the
-        // next write's place, not the count the first left.
+        // next write's place, not the count the first left.  **AND IT
+        // LOWERS TRANSMIT DONE** (MIT's TRESET, muir's `Interface::start`):
+        // with no word written since the last frame or a Reset it is up,
+        // and an empty frame, the source and the check word, still goes;
+        // the far end's `chaos_tx_done` raises it again.  After words were
+        // written it is down already.
         chaos_tx_go  <= 1'b1;
+        ch_tdone     <= 1'b0;
         chaos_tx_len <= ch_wn;
         ch_send      <= ch_wn;
         ch_out       <= 9'd0;

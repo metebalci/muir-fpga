@@ -20,6 +20,8 @@
 //!             follow
 //!   txirq     the same with the transmit interrupt enabled, condition 5
 //!             calling the handler
+//!   txempty   a START with no word written: Transmit Done down at the read
+//!             and up again as the empty frame ends
 //!   lost      a frame waiting unread, and another for this interface at
 //!             every clock of a polling loop on the lost count, read and
 //!             cleared
@@ -203,33 +205,46 @@ fn interface(e: &Pipeline) -> &Interface {
     e.machine().ioboard.chaos.as_ref().expect("the Chaosnet interface")
 }
 
-/// From a frame's first edge on the cable to its Receive Done, on a quiet
-/// cable: measured on an interface of its own.
-fn landing_ns(words: &[u16], source: u16) -> u64 {
-    let start = 10_000;
+/// The clock a frame put on a quiet cable at clock `i`'s instant lands at,
+/// its Receive Done first up: measured on an interface of its own, on
+/// revision 15's time base and grid at `period`, taken from clock to clock
+/// as the pipeline takes its own.
+fn landing_clock(words: &[u16], source: u16, i: u64, period: u64) -> u64 {
     let mut solo = Interface::new(ME, Some(Ether::new()), 0, false);
-    solo.advance(start);
-    solo.ether_mut().expect("its cable").send_now(start, source, words.to_vec());
-    let bits = muir::chaos::packet::frame(words, source).len() as u64;
-    let mut t = start + bits * muir::chaos::wire::CELL_NS - 1_000;
-    solo.advance(t);
-    assert_eq!(solo.csr() & 0o100000, 0, "the frame landed before its last bit");
+    solo.set_time_base(muir::clock::TimeBase::half_ns(period));
+    solo.advance(i * period);
+    solo.ether_mut().expect("its cable").send_now(i * period, source, words.to_vec());
+    let mut k = i;
     while solo.csr() & 0o100000 == 0 {
-        t += 1;
-        solo.advance(t);
-        assert!(t < start + 10 * bits * muir::chaos::wire::CELL_NS, "the frame never landed");
+        k += 1;
+        solo.advance(k * period);
+        assert!(k < i + 1_000_000, "the frame never landed");
     }
-    t - start
+    k
 }
 
-/// The clock whose instant is the first at or after `ns` (MP2b ruling Q19).
-fn clock_at(ns: u64, period: u64, per_ns: u64) -> u64 {
-    (ns * per_ns).div_ceil(period)
+/// The clock whose instant is the first at or after `units` (MP2b ruling
+/// Q19).
+fn clock_at(units: u64, period: u64) -> u64 {
+    units.div_ceil(period)
 }
 
-/// The whole ns a frame put on the cable before clock `k` starts at.
-fn start_ns(k: u64, period: u64, per_ns: u64) -> u64 {
-    k * period / per_ns
+/// Takes the I/O board to clock `k`'s instant, as the pipeline's own first
+/// step in the clock does (`Machine::advance_ioboard` at `instant(k)`).
+fn advance_to(e: &mut Pipeline, k: u64) {
+    let at = k * e.period();
+    let m = e.machine_mut();
+    let keep = m.ns;
+    m.ns = at;
+    m.advance_ioboard();
+    m.ns = keep;
+}
+
+/// Puts `f` on the cable at clock `k`'s instant, in the machine's units.
+fn send(e: &mut Pipeline, k: u64, f: &Frame) {
+    let at = k * e.period();
+    let ether = e.machine_mut().ioboard.chaos.as_mut().and_then(|c| c.ether_mut());
+    ether.expect("the cable").send_now(at, f.source, f.words.clone());
 }
 
 /// **The run's network as it goes**: the frames with their clocks, the
@@ -239,7 +254,6 @@ pub struct Net {
     /// to land or be counted at, and whether it has gone.
     frames: Vec<(Frame, u64, Option<u64>, bool)>,
     period: u64,
-    per_ns: u64,
     last: Seen,
     pre: Seen,
     busy: bool,
@@ -264,16 +278,13 @@ fn anchor_clock(case: &Case, period: u64, bubbles: u8, frames: &[(Frame, u64)], 
         e.skip_sweep();
     }
     let _ = t.row(&e);
-    let per_ns = e.machine().time_base().per_ns;
     let mut seen = 0u32;
     while e.clock() < 200_000 {
         let k = e.clock() + 1;
-        let ns = start_ns(k, period, per_ns);
-        e.machine_mut().ioboard.advance(ns);
+        advance_to(&mut e, k);
         for (f, i) in frames {
             if *i == k {
-                let ether = e.machine_mut().ioboard.chaos.as_mut().and_then(|c| c.ether_mut());
-                ether.expect("the cable").send_now(ns, f.source, f.words.clone());
+                send(&mut e, k, f);
             }
         }
         e.tick().map_err(|h| format!("{}: stopped at clock {} finding its frames' clocks: {h:?}", case.name, e.clock()))?;
@@ -292,7 +303,6 @@ impl Net {
     /// The run's frames placed: each found by running the case to its
     /// anchor with the frames before it on the cable.
     pub fn new(case: &Case, period: u64, bubbles: u8) -> Result<Net, String> {
-        let per_ns = super::machine(case).time_base().per_ns;
         let mut placed: Vec<(Frame, u64)> = Vec::new();
         let mut frames = Vec::new();
         for f in case.net.as_ref().map_or(&[][..], |n| &n.frames[..]) {
@@ -300,16 +310,19 @@ impl Net {
                 Anchor::Start(at) => (anchor_clock(case, period, bubbles, &placed, at)?, None),
                 Anchor::Land(at) | Anchor::Lost(at) => {
                     let target = anchor_clock(case, period, bubbles, &placed, at)?;
-                    let d = match f.anchor {
-                        Anchor::Land(_) => landing_ns(&f.words, f.source),
-                        _ => BUSY_ABORT_NS,
+                    // A frame lands where an interface of its own says; a
+                    // lost one is counted `BUSY_ABORT_NS` into it, at the
+                    // first clock at or after.
+                    let lands_at = |i: u64| match f.anchor {
+                        Anchor::Land(_) => landing_clock(&f.words, f.source, i, period),
+                        _ => clock_at(i * period + 2 * BUSY_ABORT_NS, period),
                     };
                     // The latest clock whose frame lands by the target.
                     let mut i = target;
-                    while i > 1 && clock_at(start_ns(i, period, per_ns) + d, period, per_ns) > target {
+                    while i > 1 && lands_at(i) > target {
                         i -= 1;
                     }
-                    let lands = clock_at(start_ns(i, period, per_ns) + d, period, per_ns);
+                    let lands = lands_at(i);
                     if lands != target {
                         return Err(format!(
                             "{}: no clock puts a frame on the cable to land at clock {target}: from {i}, {lands}",
@@ -332,7 +345,6 @@ impl Net {
         Ok(Net {
             frames,
             period,
-            per_ns,
             last: Seen { tdone: true, ..Seen::default() },
             pre: Seen::default(),
             busy: false,
@@ -391,8 +403,8 @@ impl Net {
             return Ok(());
         }
         let k = e.clock() + 1;
-        let ns = start_ns(k, self.period, self.per_ns);
-        e.machine_mut().ioboard.advance(ns);
+        debug_assert_eq!(e.period(), self.period);
+        advance_to(e, k);
         let s = seen(interface(e));
         let last = self.last.clone();
         self.events(k, &last, &s)?;
@@ -404,8 +416,7 @@ impl Net {
         for (f, i, _, made) in self.frames.iter_mut() {
             if *i == k {
                 *made = true;
-                let ether = e.machine_mut().ioboard.chaos.as_mut().and_then(|c| c.ether_mut());
-                ether.expect("the cable").send_now(ns, f.source, f.words.clone());
+                send(e, k, f);
             }
         }
         Ok(())
@@ -443,15 +454,23 @@ impl Net {
         }
         let s = seen(interface(e));
         let pre = self.pre.clone();
+        let start = reads.contains(&(PAGE_BUS | 0o145));
         if read {
-            self.events(k, &pre, &s)?;
+            // A read of START takes Transmit Done down itself (MIT's
+            // TRESET), after the cable's events up to the read's instant:
+            // the fall is the read's, the fabric's own, and no line.
+            let mut cable = s.clone();
+            if start {
+                cable.tdone = pre.tdone;
+            }
+            self.events(k, &pre, &cable)?;
         } else if !write {
             let same = |x: &Seen| (x.rdone, x.tdone, x.tabort, x.lost, x.rcv.clone());
             if same(&pre) != same(&s) {
                 return Err(format!("clock {k}: the interface changed with no register taken"));
             }
         }
-        if reads.contains(&(PAGE_BUS | 0o145)) {
+        if start {
             let words = s.ready.clone().ok_or_else(|| format!("clock {k}: START with no frame made ready"))?;
             let w: Vec<String> = words.iter().map(|w| format!("{w:x}")).collect();
             self.lines.push(format!("# chaos-tx {:x} {:x} {}", k + 1, words.len(), w.join(" ")));
@@ -676,6 +695,22 @@ fn tx(d: usize) -> Preset {
     with(p, vec![near(At { pc: 0, nth: 1, plus: 2 })])
 }
 
+/// **An empty START**: no word written, Transmit Done up from power-on; the
+/// read of START takes it down (MIT's TRESET), the frame of the source and
+/// its check word goes, and the CSR is polled until Transmit Done comes
+/// back, `d` clocks further on each run.
+fn txempty(d: usize) -> Preset {
+    let mut p = run();
+    p.net_read(0o140, 0o21);
+    p.fill(d);
+    p.net_read(0o145, 0o22);
+    p.net_read(0o140, 0o23);
+    p.net_poll(0o140, TDONE);
+    p.net_read(0o140, 0o24);
+    p.stop();
+    with(p, vec![near(At { pc: 0, nth: 1, plus: 2 })])
+}
+
 /// **The same under the transmit interrupt**: enabled after the words are
 /// written, condition 5 calling the handler, which reads the CSR, turns
 /// the enable off and counts.
@@ -819,6 +854,9 @@ pub fn network(period: u64) -> Vec<Case> {
     }
     for d in 0..=7 {
         v.push(txirq(d).case(&format!("txirq-{d}")));
+    }
+    for d in 0..=7 {
+        v.push(txempty(d).case(&format!("txempty-{d}")));
     }
     for d in 1..=12 {
         v.push(lost(d, w).case(&format!("lost-{d}")));

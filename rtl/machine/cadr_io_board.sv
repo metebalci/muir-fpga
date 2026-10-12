@@ -1670,8 +1670,16 @@ module cadr_io_board (
           // `ch_wn` and not `ch_xn`, which still holds the packet a START
           // already took: a second START with no word written in between
           // sends an empty buffer, as `Interface::start`'s `mem::take`
-          // does, and not that packet again.
+          // does, and not that packet again.  **AND IT LOWERS TRANSMIT
+          // DONE**: on the board a read of START raises TRESET (the 74S00s
+          // at LMTBFC 0C15, while -TDONE is low) and TRESET clears TDONE
+          // (the 74S74 at LMMODU 0D08), so a START with no word written
+          // since the last frame or a Reset takes it down until its frame,
+          // the source and the check word, ends; the far end's
+          // `chaos_tx_done` raises it again.  After words were written it
+          // is down already.
           chaos_tx_go  <= 1'b1;
+          ch_tdone     <= 1'b0;
           chaos_tx_len <= ch_wn;
           ch_send      <= ch_wn;
           ch_out       <= 9'd0;

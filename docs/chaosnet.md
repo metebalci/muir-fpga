@@ -79,11 +79,43 @@ are the far end's, behind the same seam the card has, so `cadr-chaosnet` and
 `cadr_chaos_cable.sv` serve it unchanged. A START after a START sends an empty
 buffer, as muir's does.
 
+muir keeps revision 15's network on the machine's own time, in units of
+0.5 ns, and on its clock grid. The turn timer acts at the first clock at or
+after each edge. A delay the interface starts, such as START's 4,150 ns until
+the frame is ready, ends at the first clock at or after its exact end. A
+frame from another station lands at the first clock at or after its exact
+landing. The goldens put a far end's frame on muir's cable at a clock's exact
+instant, and the trace names the first clock whose registers show each thing
+the cable did. The testbench gives it to the core's seam in the clock before.
+So the fabric needs no clock of its own for the network: it follows the clocks
+the trace names.
+
 Two checks hold it. `quux15_network` runs the core clock for clock against
 muir's pipeline, with frames put on muir's cable and the testbench playing the
 far end as muir's interface saw it. `quux15_chaos_module` runs the module
 alone against muir's interface over a script. The Kria's revision 15 design
 builds the interface with its cable tied off, as a cable with nothing on it.
+
+## An empty START takes Transmit Done down
+
+A read of START with no word written since the last frame or a Reset still
+sends a frame, the source and its check word. On MIT's board the read raises
+TRESET (the 74S00s at LMTBFC 0C15, while TDONE is up), which clears TDONE (the
+74S74 at LMMODU 0D08). So Transmit Done falls at the read and rises 500 ns
+before the empty frame's nominal end, as every frame's does. muir does the
+same, held to the netlist board. Both the CADR's card and revision 15's
+interface take Transmit Done down at START, and the far end's `chaos_tx_done`
+raises it again. After a word was written, Transmit Done is already down and
+the read changes nothing. MIT's microcode and Lisp write at least one word
+before every START, so no system run sees the difference.
+
+**On a board the far end does not send the empty frame, and this is a known
+difference.** `cadr_chaos_cable.sv` answers a START with an empty buffer by
+giving `chaos_tx_done` back the next clock, and nothing goes on the cable.
+muir and MIT's board send the 33-cell frame, the source and its check word,
+and raise Transmit Done about 8 µs later. The cable and `cadr-chaosnet` are
+left as they are, so the seam stays unchanged. MIT's software never reads
+START with nothing written.
 
 ## What Linux sees
 
