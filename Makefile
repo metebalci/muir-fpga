@@ -378,7 +378,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
-       $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass \
+       $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -3143,6 +3143,22 @@ $(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
 	$(BUILD)/obj_quux15_face/Vquux15_face
 	@touch $@
 
+# **REVISION 15'S FILE DEVICE AND CLOCK FROM LINUX'S SIDE**: the page
+# `rtl/plumbing/quux_fd_face.sv` with revision 15's register-page devices
+# behind it (`tb/quux15_fd_face_harness.sv`), driven over AXI as the server
+# drives it and as the core drives the devices: revision 14's scenarios at
+# revision 15's period and timing, every rule of the host's side held by
+# name with the case just outside it.  The machine's side is held against
+# muir by `quux15_filedev`, the core's testbench playing the server there.
+QUUX15_FD_FACE_SRC := rtl/machine/quux15_devices.sv rtl/machine/quux15_input.sv rtl/plumbing/cadr_gp_regs.sv \
+                      rtl/plumbing/quux_fd_face.sv tb/quux15_fd_face_harness.sv
+$(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness: $(QUUX15_FD_FACE_SRC) tb/quux15_fd_face_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Mdir $(BUILD)/obj_quux15_fd_face \
+	    --top-module quux15_fd_face_harness $(QUUX15_FD_FACE_SRC) $(abspath tb/quux15_fd_face_tb.cpp)
+$(BUILD)/quux15_fd_face.pass: $(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness
+	$(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness
+	@touch $@
+
 # **REVISION 15 ON THE KRIA KR260** (`boards/kria-kr260/quux15_kr260.sv`): its
 # own top level, the pipelined core behind its console face, linted as its
 # flow builds it, with the same stubs.
@@ -3151,6 +3167,7 @@ QUUX15_KR260_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) r
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux_fd_face.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
 $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                             boards/kria-kr260/vivado/quux15_bitstream.tcl | $(BUILD)

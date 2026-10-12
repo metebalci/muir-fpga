@@ -54,8 +54,11 @@
 //                 the width <21:11>, the height <10:0>
 //     40 PERIOD   the clock's period, in units of 0.5 ns
 //     41 RTC      the real-time clock's seconds at the machine's reset, as
-//                 the processing system wrote them (the host's time); the
-//                 next reset takes them
+//                 the processing system wrote them; the next reset takes
+//                 them, until the host first sets the clock through the
+//                 file device's page (`quux_fd_face.sv`, 0x010 and 0x014),
+//                 the one setter, after which no reset reaches the clock
+//                 (`quux15_devices.sv`).  No program writes it
 //
 // **A READOUT WORD IS THE MACHINE HALTED**: the core reads its memories on
 // their write ports only while halted, so a word read while it runs is

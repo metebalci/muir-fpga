@@ -2803,6 +2803,7 @@ CHECKS["quux15_kr260"] = {
               "rtl/plumbing/cadr_axi_burst128.sv",
               "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
               "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
+              "rtl/plumbing/quux_fd_face.sv",
               "tb/cadr_ps8_stub.sv", "boards/kria-kr260/cadr_ps8.sv"],
     "top": "quux15_kr260",
     "tb": None,
@@ -2818,6 +2819,19 @@ CHECKS["quux15_face"] = {
     "top": "quux15_face",
     "tb": "tb/quux15_face_tb.cpp",
     "flags": ["-O2", "-CFLAGS", "-O2", "-GPERIOD=34", "-Irtl/plumbing"],
+    "golden": None,
+    "machine": "quux",
+}
+
+# Revision 15's file device and clock from Linux's side (the Makefile's
+# `quux15_fd_face.pass`): the face with revision 15's register-page devices
+# behind it, every rule of the host's side held by name.
+CHECKS["quux15_fd_face"] = {
+    "sources": ["rtl/machine/quux15_devices.sv", "rtl/plumbing/quux_fd_face.sv"],
+    "extra": ["tb/quux15_fd_face_harness.sv", "rtl/machine/quux15_input.sv", "rtl/plumbing/cadr_gp_regs.sv"],
+    "top": "quux15_fd_face_harness",
+    "tb": "tb/quux15_fd_face_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],
     "golden": None,
     "machine": "quux",
 }

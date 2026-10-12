@@ -189,13 +189,17 @@ module quux15_core #(
     input  var logic [6:0]  period,
     input  var logic [31:0] rtc_start,
     // The file device's host (contract Q9; `quux15_devices.sv`): the
-    // doorbell and the producer; a command completed, its words written into
-    // main memory by the host, and the handles then open.
+    // doorbell and the producer; and the host's side of the file device and
+    // the real-time clock by index, `quux_fd_face.sv`'s, one write and one
+    // read a clock, a read's word the clock after its index.
     output var logic        fd_doorbell,
     output var logic [15:0] fd_prod,
     output var logic        fd_enabled,
-    input  var logic        fd_done,
-    input  var logic [7:0]  fd_handles,
+    input  var logic        host_we,
+    input  var logic [3:0]  host_widx,
+    input  var logic [31:0] host_wdata,
+    input  var logic [3:0]  host_ridx,
+    output var logic [31:0] host_rdata,
     // The keyboard and the mouse (`quux15_input.sv`): the cable's word, in
     // at this clock's edge; the mouse's seven lines; and `KBD READY` for the
     // host's handshake (`cadr_input_cables.sv`'s `card_csr<5>`).
@@ -1309,6 +1313,9 @@ module quux15_core #(
   logic [28:0] bd_fin_da;
   logic [31:0] bd_st_cmd;
   logic [39:0] bd_wdata, bd_rdata;
+  // A completion the file device's host made, landing this clock: the
+  // whole cache swept (`quux15_devices.sv`).
+  logic        fd_complete;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(rst),
@@ -1320,7 +1327,7 @@ module quux15_core #(
       .d_req(bd_req), .d_write(bd_write), .d_addr(bd_addr), .d_wdata(bd_wdata),
       .d_done(bd_done), .d_rdata(bd_rdata), .d_start(bd_start), .d_busy(bd_busy),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
-      .empty(port_empty), .sweep_go(fd_done),
+      .empty(port_empty), .sweep_go(fd_complete),
       .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
       .m_awid(m_awid), .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awsize(m_awsize),
@@ -1428,7 +1435,8 @@ module quux15_core #(
       .clk(clk), .rst(rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
       .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
-      .fd_done(fd_done), .fd_handles(fd_handles),
+      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+      .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
       .rd_word(dev_rd_word), .rd_built(dev_rd_built),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),

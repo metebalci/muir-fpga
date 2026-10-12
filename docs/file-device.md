@@ -221,6 +221,25 @@ puts the rings and a buffer above 16M words, and the check counts every
 access that is misaligned or reaches outside its run, which the build host
 would not fault on and a board's device memory would.
 
+## Revision 15
+
+Revision 15 on the Kria KR260 gives the same page, `QF13`, at the same
+address, with main memory as packed storage at the same base. The program
+runs on it unchanged. The rules of the host's side are revision 14's, built
+into revision 15's register-page devices. Two things differ in timing, and
+neither changes what the program sees:
+
+- **The command producer is shown once every write before it is answered.**
+  The core holds the write of 164 until its port is empty, so the host never
+  reads an entry still in the posted writes.
+- **An accepted completion lands in the clock after its write.** The machine's
+  index, its handles open, word 100's bit and the sweep of its cache all
+  move in that clock.
+
+The real-time clock is set only through this page, at `0x010` and `0x014`. A
+reset of the machine starts the clock at the console's word 41 until the
+host first sets it, and never after that. No program writes word 41.
+
 ## Writes, and what the start sweeps
 
 A write goes to a temporary file beside its target, named `.quux-write-` and
@@ -279,6 +298,13 @@ The fabric's side:
   including each ordering by the tick.
 - `build/gp0_split.pass` sweeps the port with the page present, as QUUX
   builds it, and absent, as the CADR builds it.
+- `build/quux15_fd_face.pass` drives the page over AXI with revision 15's
+  register-page devices behind it, and holds every rule of the host's side
+  at revision 15's period and timing.
+- `build/quux15_filedev.quux.pass` runs revision 15's file device programs
+  against muir clock for clock. Its testbench is the program: it reads STATE
+  for the epoch, takes the claim, stages HANDLES and writes RESP_PROD so that
+  each completion lands at muir's clock.
 - `build/checkpoint.pass` and `build/checkpoint.quux.pass` hold the
   checkpoint's format against muir's, and the refusal.
 

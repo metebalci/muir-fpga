@@ -70,9 +70,14 @@
 // seconds at power-on, given to the core as its top and its host give them.
 // Its `# fdprod` and `# fddone` lines are the file device's host as muir's
 // `FileDevice` played it (`golden/src/quux15.rs`'s `FileHost`): the fabric's
-// doorbell is held to the clocks the producer moved at, and at each
-// completion's clock the host's words go into main memory and the fabric is
-// told.
+// doorbell is held to the clocks the producer moved at, and **THIS
+// TESTBENCH IS THE HOST'S SERVER** on the core's host side, as Linux's
+// `quux-file-device` drives it through `quux_fd_face.sv`, so that each of
+// muir's completions lands at muir's clock k: STATE read for the epoch at
+// k - 4, the claim taken at k - 3 and RESP_PROD read, HANDLES staged at
+// k - 2, RESP_PROD written at k - 1, the host's words into main memory at
+// k, before anything reads them, and the claim let go at k + 1, with the
+// completion's acceptance read back from STATE.
 //
 // **A RUN WITH THE KEYBOARD AND THE MOUSE** (`golden/src/quux15_input.rs`):
 // `# key <clock> <word>` is a key word muir's `QuuxInput` took before that
@@ -550,6 +555,11 @@ class Bench {
   explicit Bench(const Run &run) : run_(run), mem_(kMainWords * 5, 0), fb_(kFbWords * 4, 0) {
     seed_ = run.late_seed;
     errors_ = run.late_errors;
+    // The host makes a completion over the five clocks before it.
+    for (size_t k = 0; k < run.fd_done.size(); ++k)
+      if (run.fd_done[k].clock < 5 || (k > 0 && run.fd_done[k].clock < run.fd_done[k - 1].clock + 6))
+        host_why_ = "a completion at clock " + std::to_string(run.fd_done[k].clock) +
+                    ", too soon for the host to make it";
   }
 
   void image(uint64_t addr, uint64_t word) {
@@ -572,16 +582,48 @@ class Bench {
     return ((x * 0x2545f4914f6cdd1dull) >> 33) % most + 1;
   }
 
+  // The host's write of index `idx` in this clock: one a clock, as the
+  // face gives them.
+  void host_write(Top *d, unsigned idx, uint32_t v, uint64_t t) {
+    if (d->host_we && host_why_.empty())
+      host_why_ = "the testbench's host has two writes in clock " + std::to_string(t);
+    d->host_we = 1;
+    d->host_widx = idx & 0xFu;
+    d->host_wdata = v;
+  }
+
   void drive(Top *d, uint64_t t) {
-    // The file device's host: a completion at this clock, its words into
-    // main memory before anything reads them.
-    d->fd_done = 0;
-    for (const Run::FdDone &f : run_.fd_done)
-      if (f.clock == t) {
-        for (const auto &w : f.words) image(w.first, w.second);
-        d->fd_done = 1;
-        d->fd_handles = static_cast<uint8_t>(f.handles);
+    // The file device's host, the server (above): STATE read in every clock
+    // but the one RESP_PROD's index is read in, a read's word the clock
+    // after its index.
+    enum : unsigned { kState = 2, kClaim = 3, kRespProd = 9, kHandles = 11 };
+    const uint32_t seen = d->host_rdata;
+    d->host_we = 0;
+    d->host_widx = 0;
+    d->host_wdata = 0;
+    d->host_ridx = kState;
+    for (const Run::FdDone &f : run_.fd_done) {
+      if (t + 3 == f.clock) {
+        host_epoch_ = seen >> 16;
+        host_write(d, kClaim, host_epoch_ << 16 | 1u, t);
+        d->host_ridx = kRespProd;
       }
+      if (t + 2 == f.clock) {
+        host_index_ = seen & 0xFFFFu;
+        host_write(d, kHandles, host_epoch_ << 16 | (f.handles & 0xFFu), t);
+      }
+      if (t + 1 == f.clock)
+        host_write(d, kRespProd, host_epoch_ << 16 | ((host_index_ + 1) & 0xFFFFu), t);
+      // Its words into main memory before anything reads them.
+      if (t == f.clock)
+        for (const auto &w : f.words) image(w.first, w.second);
+      // The claim let go, and the completion found accepted.
+      if (t == f.clock + 1) {
+        host_write(d, kClaim, 0, t);
+        if ((seen & 0x20u) && host_why_.empty())
+          host_why_ = "the file device refused the host's completion of clock " + std::to_string(f.clock);
+      }
+    }
     // Writes land in main memory at the clock muir lands them.
     for (Write &w : writes_)
       if (!w.applied && w.land == t) {
@@ -690,6 +732,10 @@ class Bench {
   // What the core did in clock `t`, its outputs before the edge; false when
   // the core broke the responder's rules.
   bool take(const Top *d, uint64_t t, std::string &why) {
+    if (!host_why_.empty()) {
+      why = host_why_;
+      return false;
+    }
     // The doorbell: the fabric's, at the clocks and values the host saw.
     bool want = false;
     uint64_t value = 0;
@@ -809,6 +855,10 @@ class Bench {
   }
 
   const Run &run_;
+  // The host's server: the epoch and RESP_PROD as it read them, and why it
+  // could not do its part.
+  uint32_t host_epoch_ = 0, host_index_ = 0;
+  std::string host_why_;
   std::vector<uint8_t> mem_, fb_;
   std::vector<Line> lines_;
   std::vector<Write> writes_;
@@ -1178,7 +1228,7 @@ int run_trace(const char *path, const Run &run, int seed) {
     if (run.pack) pack.after(dut);
   };
   auto quiet = [&]() {
-    dut->fd_done = 0; dut->fd_handles = 0;
+    dut->host_we = 0; dut->host_widx = 0; dut->host_wdata = 0; dut->host_ridx = 2;
     dut->m_awready = 0; dut->m_wready = 0; dut->m_arready = 0;
     dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;

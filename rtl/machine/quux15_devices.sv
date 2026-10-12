@@ -7,8 +7,8 @@
 // (functional source 15), the real-time clock (word 103), the three interval
 // timers (words 110-115), the keyboard and the mouse (words 120-123,
 // `quux15_input.sv`), the file device's registers (words 160-171,
-// contract Q9: the host runs the commands), block-disk's registers (words
-// 200-203), the
+// contract Q9: the host runs the commands) and the host's side of it and of
+// the real-time clock, block-disk's registers (words 200-203), the
 // interrupt status (word 100), RESET-DEVICES (word 104), the video
 // controller's mode (word 210), and the interrupt
 // the conditions 5 and 6 test.  muir's `Machine::bus_read`, `bus_write`,
@@ -79,13 +79,19 @@ module quux15_devices #(
     input  var logic [31:0] prod_data,
 
     // The file device's host (contract Q9): the doorbell, the producer
-    // moved; and a command completed this clock, its response and buffer B
-    // written into main memory, the handles then open.
+    // moved; the host's side by index, `quux_fd_face.sv`'s map, one write
+    // and one read a clock (THE HOST'S SIDE, below); and a completion the
+    // host made landing this clock, its response and buffer B already in
+    // main memory, which drops the cache (the port's sweep).
     output var logic        fd_doorbell,
     output var logic [15:0] fd_prod,
     output var logic        fd_enabled,
-    input  var logic        fd_done,
-    input  var logic [7:0]  fd_handles,
+    input  var logic        host_we,
+    input  var logic [3:0]  host_widx,
+    input  var logic [31:0] host_wdata,
+    input  var logic [3:0]  host_ridx,
+    output var logic [31:0] host_rdata,
+    output var logic        fd_complete,
 
     // Block-disk's pack and its walk (`quux15_block_walk.sv`): a pack on
     // unit 0; START taken for a walk, with the registers it reads; the walk
@@ -131,11 +137,40 @@ module quux15_devices #(
   localparam logic [11:0] US_UNITS  = 12'd2000;
   localparam logic [31:0] SEC_UNITS = 32'd2_000_000_000;
 
+  // The host's side, by index (`quux_fd_face.sv`: 0x010 is 0, 0x014 is 1,
+  // 0x100 + 4k is k + 2).
+  localparam logic [3:0] H_RTC_SECONDS  = 4'd0;
+  localparam logic [3:0] H_RTC_FRACTION = 4'd1;
+  localparam logic [3:0] H_STATE        = 4'd2;
+  localparam logic [3:0] H_CLAIM        = 4'd3;
+  localparam logic [3:0] H_CMD_BASE     = 4'd4;
+  localparam logic [3:0] H_CMD_LOG2     = 4'd5;
+  localparam logic [3:0] H_RESP_BASE    = 4'd6;
+  localparam logic [3:0] H_RESP_LOG2    = 4'd7;
+  localparam logic [3:0] H_CMD_PROD     = 4'd8;
+  localparam logic [3:0] H_RESP_PROD    = 4'd9;
+  localparam logic [3:0] H_RESP_CONS    = 4'd10;
+  localparam logic [3:0] H_HANDLES      = 4'd11;
+  localparam logic [3:0] H_MEM_WORDS    = 4'd12;
+
   // ================================================================ the time
 
   logic [31:0] us_cnt, rtc_sec;
   logic [10:0] us_frac;
   logic [30:0] rtc_frac;
+  // **THE REAL-TIME CLOCK IS THE HOST'S** (`quux_rtc.sv`'s rule): the host
+  // writes the seconds, and the fraction they start at, through the host's
+  // side, at boot and at every second after.  A machine reset starts it at
+  // `rtc_start`, muir's `--rtc`, only until the host first sets it; after
+  // that no reset reaches it, as a real clock keeps real time whatever
+  // happens to the processor, and a band booting after a reset never reads
+  // a clock just put back.  The stage is a fraction in nanoseconds for the
+  // next seconds written; a fraction of a second or more is ignored.  Both
+  // from the fabric's configuration, which no reset reaches.
+  logic [29:0] rtc_stage = 30'd0;
+  logic        rtc_host  = 1'b0;
+  logic        h_rtc_sec;
+  assign h_rtc_sec = host_we && host_widx == H_RTC_SECONDS;
   // The instant itself, kept for the readout alone (muir's `Machine::ns`).
   logic [47:0] inst;
   always_ff @(posedge clk) begin
@@ -147,8 +182,6 @@ module quux15_devices #(
       // Clock 1's instant is one period.
       us_cnt   <= 32'd0;
       us_frac  <= 11'(period);
-      rtc_sec  <= rtc_start;
-      rtc_frac <= 31'(period);
     end else begin
       if ({1'b0, us_frac} + 12'(period) >= US_UNITS) begin
         us_frac <= 11'({1'b0, us_frac} + 12'(period) - US_UNITS);
@@ -156,12 +189,29 @@ module quux15_devices #(
       end else begin
         us_frac <= us_frac + 11'(period);
       end
-      if ({1'b0, rtc_frac} + 32'(period) >= SEC_UNITS) begin
-        rtc_frac <= 31'({1'b0, rtc_frac} + 32'(period) - SEC_UNITS);
-        rtc_sec  <= rtc_sec + 32'd1;
-      end else begin
-        rtc_frac <= rtc_frac + 31'(period);
-      end
+    end
+    // The real-time clock: set by the host, at the edge its write lands
+    // on; started at a reset until then; else counted, held at 2^32 - 1
+    // (muir's `Rtc::seconds` saturates).
+    if (h_rtc_sec) begin
+      rtc_sec  <= host_wdata;
+      rtc_frac <= {rtc_stage, 1'b0};
+    end else if (rst && !rtc_host) begin
+      rtc_sec  <= rtc_start;
+      rtc_frac <= 31'(period);
+    end else if ({1'b0, rtc_frac} + 32'(period) >= SEC_UNITS) begin
+      rtc_frac <= 31'({1'b0, rtc_frac} + 32'(period) - SEC_UNITS);
+      if (rtc_sec != 32'hFFFF_FFFF) rtc_sec <= rtc_sec + 32'd1;
+    end else begin
+      rtc_frac <= rtc_frac + 31'(period);
+    end
+  end
+  always_ff @(posedge clk) begin
+    if (h_rtc_sec) begin
+      rtc_stage <= 30'd0;
+      rtc_host  <= 1'b1;
+    end else if (host_we && host_widx == H_RTC_FRACTION && host_wdata < 32'd1_000_000_000) begin
+      rtc_stage <= host_wdata[29:0];
     end
   end
   assign microseconds = us_cnt;
@@ -365,6 +415,72 @@ module quux15_devices #(
   logic [15:0] fd_cprod, fd_ccons, fd_rcons;
   logic [7:0]  fd_hopen;
 
+  // **THE HOST'S SIDE** (contract Q9; `quux_file_device.sv`'s, revision
+  // 14's, whose header has it for the server's author, and `docs/
+  // file-device.md`).  Registers by index, `quux_fd_face.sv` multiplying by
+  // four:
+  //
+  //     0, 1 the real-time clock's seconds and fraction (above)
+  //     2    STATE, read: <0> enabled, <1> the interrupt enable, <2> busy,
+  //          <3> quiet, <4> work waiting, <5> the last completion refused,
+  //          <31:16> EPOCH, one more at every disable
+  //     3    CLAIM: written {EPOCH, <0> 1} sets busy if enabled in that
+  //          epoch; written <0> 0 clears it in any; read <0> busy
+  //     4-7  the command ring's base and size, the response ring's
+  //     8    the command producer: 164 as the core gave it, once every write
+  //          before it was answered (A15b.5), so the host reads no entry
+  //          still in the posted writes
+  //     9    RESP_PROD: read 165 = 170; written {EPOCH, <15:0> index}
+  //          completes the commands up to the index
+  //     10   171
+  //     11   HANDLES: written {EPOCH, <7:0> count}, the handles open once
+  //          the next completion lands; read, the count the machine sees
+  //     12   MAIN_WORDS: main memory's words
+  //
+  // **QUIET IS "NOT ENABLED AND NOT BUSY"**: busy is the host's claim, held
+  // while it copies into main memory for a command, so a disable while it
+  // copies does not read quiet, and the machine does not reuse a ring the
+  // host is still writing.  **A WRITE CARRYING AN EPOCH NOT THE CURRENT ONE
+  // IS IGNORED**, so a command the host was running when the machine
+  // disabled the device never publishes, and its handle count never lands
+  // in the new epoch.  Busy and the epoch outlast every reset (from the
+  // fabric's configuration, 0): the host may be copying across one, and a
+  // reset that put the epoch back would let a completion from before it
+  // land after it.
+  //
+  // **A COMPLETION IS ACCEPTED** when the device is enabled, the EPOCH is
+  // the current one, it moves 170 forward by one to the commands shown, and
+  // it leaves the response ring no fuller than its size; otherwise nothing
+  // changes and STATE's <5> goes up until the next accepted completion or
+  // CLAIM.  **IT LANDS THE CLOCK AFTER ITS WRITE** (`fd_complete`, from a
+  // register), as one host completion is one of muir's: 165 and 170 move,
+  // the handles staged land with them, word 100's <7> rises as that clock's
+  // register write leaves it, and the cache is swept, at that clock, so a
+  // completion written at clock k - 1 is muir's completion at clock k.  A
+  // disable in the clock between drops it.  **WITH NO CLAIM HELD THE
+  // MACHINE'S WORDS READ AS muir'S**, which has no host: quiet is then
+  // "not enabled".
+  logic        fd_busy  = 1'b0;
+  logic [15:0] fd_epoch = 16'd0;
+  logic        fd_crefused;           // STATE <5>
+  logic [7:0]  fd_hnext;              // HANDLES, staged
+  logic        fd_pub;                // a completion accepted: it lands now
+  logic [15:0] fd_pub_to;
+  assign fd_complete = fd_pub && fd_on;
+
+  // The host sees a completion it wrote at once.
+  logic [15:0] fd_chost, fd_cstep, fd_croom;
+  logic        fd_in_epoch, fd_ok, h_complete, h_claim, fd_work;
+  assign fd_chost    = fd_complete ? fd_pub_to : fd_ccons;
+  assign fd_in_epoch = fd_on && host_wdata[31:16] == fd_epoch;
+  assign fd_cstep    = host_wdata[15:0] - fd_chost;
+  assign fd_croom    = host_wdata[15:0] - fd_rcons;
+  assign fd_ok       = fd_in_epoch && fd_cstep != 16'd0 && fd_cstep <= fd_cprod - fd_chost
+                    && fd_croom <= 16'd1 << fd_rlog;
+  assign h_complete  = host_we && host_widx == H_RESP_PROD;
+  assign h_claim     = host_we && host_widx == H_CLAIM;
+  assign fd_work     = fd_on && fd_cprod != fd_chost && fd_chost - fd_rcons < 16'd1 << fd_rlog;
+
   // A ring fits: on a line, at most 2^8 entries, below main memory's end.
   function automatic logic fits(input logic [27:0] base, input logic [3:0] log2);
     return base[2:0] == 3'd0 && log2 <= 4'd8
@@ -381,7 +497,7 @@ module quux15_devices #(
     fd_cbase_w = fd_cbase; fd_rbase_w = fd_rbase; fd_clog_w = fd_clog; fd_rlog_w = fd_rlog;
     fd_cprod_w = fd_cprod; fd_ccons_w = fd_ccons; fd_rcons_w = fd_rcons;
     // The host's completion, in this clock's `advance_devices`.
-    if (fd_done && fd_on) fd_ccons_w = fd_ccons + 16'd1;
+    if (fd_complete) fd_ccons_w = fd_pub_to;
     // CMD_PROD, from `port_events`.
     if (prod_v && fd_on_w) begin
       if (prod_data[15:0] - fd_ccons_w > (16'd1 << fd_clog_w)
@@ -471,7 +587,8 @@ module quux15_devices #(
       8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ie && fd_ccons != fd_rcons);
       8'o120, 8'o121, 8'o122, 8'o123: rd_word = in_word;
       8'o160: rd_word = {23'd0, fd_ie, 7'd0, fd_on};
-      8'o161: rd_word = {8'd0, fd_hopen, 7'd0, fd_ccons != fd_rcons, 4'd0, fd_fault, fd_refused, !fd_on, fd_on};
+      8'o161: rd_word = {8'd0, fd_hopen, 7'd0, fd_ccons != fd_rcons, 4'd0, fd_fault, fd_refused,
+                         !fd_on && !fd_busy, fd_on};
       8'o162: rd_word = {4'd0, fd_cbase};
       8'o163: rd_word = {28'd0, fd_clog};
       8'o164: rd_word = fd_on ? {16'd0, fd_cprod} : 32'd0;
@@ -515,11 +632,26 @@ module quux15_devices #(
       fd_on <= 1'b0; fd_ie <= 1'b0; fd_refused <= 1'b0; fd_fault <= 1'b0;
       fd_cbase <= '0; fd_rbase <= '0; fd_clog <= '0; fd_rlog <= '0;
       fd_cprod <= '0; fd_ccons <= '0; fd_rcons <= '0; fd_hopen <= '0;
+      fd_crefused <= 1'b0; fd_hnext <= '0; fd_pub <= 1'b0; fd_pub_to <= '0;
     end else begin
       fd_on <= fd_on_w; fd_ie <= fd_ie_w; fd_refused <= fd_refused_w; fd_fault <= fd_fault_w;
       fd_cbase <= fd_cbase_w; fd_rbase <= fd_rbase_w; fd_clog <= fd_clog_w; fd_rlog <= fd_rlog_w;
       fd_cprod <= fd_cprod_w; fd_ccons <= fd_ccons_w; fd_rcons <= fd_rcons_w;
-      if (fd_done) fd_hopen <= fd_handles;
+      // The host's writes: a completion accepted lands the next clock;
+      // STATE's <5> says whether the last was refused, and a claim clears
+      // it; HANDLES staged in the epoch.  The handles open land with the
+      // completion.  The disable, the device's reset, closes the handles
+      // and drops the staged count: last, over the rest.
+      fd_pub <= h_complete && fd_ok;
+      if (h_complete && fd_ok) fd_pub_to <= host_wdata[15:0];
+      if (h_complete) fd_crefused <= !fd_ok;
+      if (h_claim) fd_crefused <= 1'b0;
+      if (host_we && host_widx == H_HANDLES && fd_in_epoch) fd_hnext <= host_wdata[7:0];
+      if (fd_complete) fd_hopen <= fd_hnext;
+      if (fd_on && !fd_on_w) begin
+        fd_hopen <= '0;
+        fd_hnext <= '0;
+      end
       for (int k = 0; k < 3; k++) tm[k] <= timer_tick(tm_w[k], period);
       bd_cmd <= bd_cmd_w;
       bd_bad <= bd_bad_w; bd_past_end <= bd_past_end_w; bd_nxm <= bd_nxm_w;
@@ -553,6 +685,40 @@ module quux15_devices #(
       if (timers_rst)
         for (int k = 0; k < 3; k++) tm[k] <= '0;
     end
+  end
+
+  // ======================================== the host's claim and the epoch
+
+  // The epoch counts every disable: the machine's write of 160, its
+  // RESET-DEVICES, and a reset of the machine that finds the device
+  // enabled.  No reset reaches either.
+  always_ff @(posedge clk) begin
+    if (rst ? fd_on : fd_on && !fd_on_w) fd_epoch <= fd_epoch + 16'd1;
+    if (h_claim) begin
+      if (!host_wdata[0]) fd_busy <= 1'b0;
+      else if (fd_in_epoch && !rst) fd_busy <= 1'b1;
+    end
+  end
+
+  // The host's reads, a clock after the index.
+  always_ff @(posedge clk) begin
+    unique case (host_ridx)
+      H_RTC_SECONDS:  host_rdata <= rtc_sec;
+      H_RTC_FRACTION: host_rdata <= {2'd0, rtc_frac[30:1]};
+      H_STATE:        host_rdata <= {fd_epoch, 10'd0, fd_crefused, fd_work, !fd_on && !fd_busy,
+                                     fd_busy, fd_ie, fd_on};
+      H_CLAIM:        host_rdata <= {31'd0, fd_busy};
+      H_CMD_BASE:     host_rdata <= {4'd0, fd_cbase};
+      H_CMD_LOG2:     host_rdata <= {28'd0, fd_clog};
+      H_RESP_BASE:    host_rdata <= {4'd0, fd_rbase};
+      H_RESP_LOG2:    host_rdata <= {28'd0, fd_rlog};
+      H_CMD_PROD:     host_rdata <= {16'd0, fd_cprod};
+      H_RESP_PROD:    host_rdata <= {16'd0, fd_chost};
+      H_RESP_CONS:    host_rdata <= {16'd0, fd_rcons};
+      H_HANDLES:      host_rdata <= {24'd0, fd_hopen};
+      H_MEM_WORDS:    host_rdata <= 32'(MAIN_WORDS);
+      default:        host_rdata <= 32'd0;
+    endcase
   end
 
   // ============================================================= the readout

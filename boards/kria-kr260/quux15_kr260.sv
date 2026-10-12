@@ -37,9 +37,9 @@
 //     `quux15_block_walk.sv`) served by `cadr_disk_pack.sv`, its registers at
 //     0xA000_0000 through `cadr_gp0_split.sv`, its bursts on HP2 through
 //     `cadr_axi_burst128.sv`, its interrupt on `pl_ps_irq0`<0>, and
-//     `cadr-disk-packs --machine quux` the drive.  The split's other pages
-//     (the network's, the serial line's and the file device's) are answered
-//     with a constant until their steps bring them.
+//     `cadr-disk-packs --machine quux` the drive.  The split's network and
+//     serial line pages are answered with a constant until their steps
+//     bring them.
 //   - **THE KEYBOARD AND THE MOUSE ON `M_AXI_HPM0_FPD`**, the split's input
 //     page at 0xA000_3000, as `cadr_kr260.sv` has it: `cadr_input_cables.sv`,
 //     unchanged but for its mouse's step, which comes from the period, so
@@ -47,10 +47,15 @@
 //     Its word and the mouse's seven lines go to the core's register page
 //     (`quux15_input.sv`), whose busy stands in for the card's `KBD READY`;
 //     there is no I/O board, and so no `MOUSE READY`.
-//   - **NOT ON THIS BOARD YET**: the file device's page, the display output,
-//     the network and the serial line, which the programs that serve them
-//     bring; the debug cable, which QUUX never has (contract Q5), PMOD1's
-//     pads left undriven.
+//   - **THE FILE DEVICE'S PAGE AND THE REAL-TIME CLOCK'S SETTER ON
+//     `M_AXI_HPM0_FPD` AT 0xA000_4000** (`rtl/plumbing/quux_fd_face.sv`,
+//     IDENT "QF13" as revisions 13 and 14 have it: main memory packed
+//     storage at the same base, the rings' bases 28 bits), the map onto the
+//     core's host side (`quux15_devices.sv`), so `quux-file-device` serves
+//     HOST: and sets the clock as it does on revisions 13 and 14.
+//   - **NOT ON THIS BOARD YET**: the display output, the network and the
+//     serial line, which the programs that serve them bring; the debug
+//     cable, which QUUX never has (contract Q5), PMOD1's pads left undriven.
 //   - **TWO LAMPS**: UF1 a count of committed microcycles, so it flickers
 //     while the machine runs and freezes when it stops; UF2 lit at an error
 //     halt.  **THE FAN IS DRIVEN ON**, `fan_en_b` low, as every KR260
@@ -149,6 +154,10 @@ module quux15_kr260 #(
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
   logic [15:0] fd_prod;
+  // The host's side of the file device and the clock (`quux_fd_face.sv`).
+  logic        host_we;
+  logic [3:0]  host_widx, host_ridx;
+  logic [31:0] host_wdata, host_rdata;
   logic [3:0]  axi_read_clocks, axi_write_clocks;
   logic        spy_we;
   logic [3:0]  spy_eadr, spy_raddr;
@@ -207,7 +216,8 @@ module quux15_kr260 #(
       .m_rlast(qm_rlast), .m_rvalid(qm_rvalid), .m_rready(qm_rready),
       .period(7'(2 * PERIOD_NS)), .rtc_start(rtc_start),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
-      .fd_done(1'b0), .fd_handles(8'd0),
+      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+      .host_ridx(host_ridx), .host_rdata(host_rdata),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines), .kbd_busy(kbd_busy),
       .axi_one_write_id(axi_one_write_id), .axi_read_clocks(axi_read_clocks),
       .axi_write_clocks(axi_write_clocks),
@@ -310,9 +320,10 @@ module quux15_kr260 #(
   logic         hpm1_rlast, hpm1_rvalid, hpm1_rready;
 
   // HPM0: `cadr_gp0_split.sv`'s pages at 0xA000_0000, as `cadr_kr260.sv`
-  // has them: the disk packs' registers, and the pages of the network, the
-  // serial line, the input and the file device, answered with a constant
-  // until their steps bring them; and every other address.
+  // has them: the disk packs' registers, the input's page, the file
+  // device's page, and the pages of the network and the serial line,
+  // answered with a constant until their steps bring them; and every other
+  // address.
   logic [31:0] gp0_rdata, gp0_wdata;
   logic [3:0]  gp0_wstrb;
   cadr_axi_lanes128 u_hpm0_lanes (
@@ -483,14 +494,22 @@ module quux15_kr260 #(
       // `KBD READY` from the register page's FIFO; no `MOUSE READY`.
       .card_csr({2'b00, kbd_busy, 5'b00000})
   );
-  cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_fd (
+  // The file device's page and the clock's setter, for Linux's server:
+  // revision 13's page, "QF13", as `cadr_kr260.sv` gives revisions 13 and
+  // 14, onto the core's host side.
+  quux_fd_face #(.IDENT(32'h5146_3133), .ID_W(16), .LEN_W(8)) u_fd_face (
       .clk(clk), .rst(gp0_rst_s),
-      .s_awvalid(gp0f_awvalid), .s_awid(gp0f_awid), .s_awready(gp0f_awready),
-      .s_wlast(gp0f_wlast), .s_wvalid(gp0f_wvalid), .s_wready(gp0f_wready),
+      .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
+      .s_awvalid(gp0f_awvalid), .s_awready(gp0f_awready),
+      .s_wdata(gp0f_wdata), .s_wstrb(gp0f_wstrb), .s_wlast(gp0f_wlast),
+      .s_wvalid(gp0f_wvalid), .s_wready(gp0f_wready),
       .s_bresp(gp0f_bresp), .s_bid(gp0f_bid), .s_bvalid(gp0f_bvalid), .s_bready(gp0f_bready),
-      .s_arlen(gp0f_arlen), .s_arid(gp0f_arid), .s_arvalid(gp0f_arvalid),
-      .s_arready(gp0f_arready), .s_rdata(gp0f_rdata), .s_rresp(gp0f_rresp),
-      .s_rid(gp0f_rid), .s_rlast(gp0f_rlast), .s_rvalid(gp0f_rvalid), .s_rready(gp0f_rready)
+      .s_araddr(gp0f_araddr), .s_arlen(gp0f_arlen), .s_arid(gp0f_arid),
+      .s_arvalid(gp0f_arvalid), .s_arready(gp0f_arready),
+      .s_rdata(gp0f_rdata), .s_rresp(gp0f_rresp), .s_rid(gp0f_rid),
+      .s_rlast(gp0f_rlast), .s_rvalid(gp0f_rvalid), .s_rready(gp0f_rready),
+      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+      .host_ridx(host_ridx), .host_rdata(host_rdata)
   );
   cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_rest (
       .clk(clk), .rst(gp0_rst_s),
@@ -803,7 +822,6 @@ module quux15_kr260 #(
                     gp0c_awaddr, gp0c_araddr, gp0c_awlen, gp0c_wdata, gp0c_wstrb,
                     gp0s_awaddr, gp0s_araddr, gp0s_awlen, gp0s_wdata, gp0s_wstrb,
                     gp0i_awaddr, gp0i_araddr, gp0i_awlen, gp0i_wdata, gp0i_wstrb,
-                    gp0f_awaddr, gp0f_araddr, gp0f_awlen, gp0f_wdata, gp0f_wstrb,
                     drive_read_only[7:0], drive_present[7:1], drive_timed, obs_transfer,
                     gpio_o[94:0], gp1c_awaddr[31:12], gp1c_araddr[31:12],
                     gp1d_awaddr, gp1d_araddr, gp1d_awlen, gp1d_wdata, gp1d_wstrb,

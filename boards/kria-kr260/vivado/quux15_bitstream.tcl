@@ -40,6 +40,7 @@ set sources [list \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux_fd_face.sv \
     boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv]
 read_verilog -sv $sources
 read_xdc -unmanaged boards/kria-kr260/vivado/quux15_ram.xdc

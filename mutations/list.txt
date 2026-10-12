@@ -29692,6 +29692,213 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ccons != fd_rcons);
 @end
 
+# ---------------------------------------------------------------------------
+# Revision 15's file device: the host's side (`quux15_devices.sv`, revision
+# 14's rules ported), held by `quux15_fd_face`, and the completion's sweep,
+# held by the filedev traces with the core's testbench as the server.
+
+@mutation quux15-fd-host-stale-epoch-taken
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A host write carrying an epoch not the current one is taken: a
+@note command overtaken by a disable publishes, and its handle count lands
+@note in the new epoch.
+@old
+  assign fd_in_epoch = fd_on && host_wdata[31:16] == fd_epoch;
+@new
+  assign fd_in_epoch = fd_on;
+@end
+
+@mutation quux15-fd-host-quiet-under-a-claim
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note 161's quiet is "not enabled" alone: a disable while the host copies
+@note reads quiet at once, and the machine may reuse rings the host is
+@note still writing.
+@old
+                         !fd_on && !fd_busy, fd_on};
+@new
+                         !fd_on, fd_on};
+@end
+
+@mutation quux15-fd-host-handles-land-early
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note The handles open land when the host stages them, not with the next
+@note completion: 161's count moves without 170.
+@old
+      if (host_we && host_widx == H_HANDLES && fd_in_epoch) fd_hnext <= host_wdata[7:0];
+@new
+      if (host_we && host_widx == H_HANDLES && fd_in_epoch) begin
+        fd_hnext <= host_wdata[7:0];
+        fd_hopen <= host_wdata[7:0];
+      end
+@end
+
+@mutation quux15-fd-completion-without-the-sweep
+@check quux15_filedev_quux
+@file rtl/machine/quux15_core.sv
+@note A completion the host made drops nothing of the cache: the response
+@note read over a line read before the command reads the old word.
+@old
+      .empty(port_empty), .sweep_go(fd_complete),
+@new
+      .empty(port_empty), .sweep_go(fd_complete && 1'b0),
+@end
+
+@mutation quux15-fd-host-refusal-not-sticky
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note STATE's <5> is up only in the clock after a refused completion, not
+@note until the next accepted one or a claim.
+@old
+      if (h_complete) fd_crefused <= !fd_ok;
+@new
+      fd_crefused <= h_complete && !fd_ok;
+@end
+
+@mutation quux15-fd-host-room-unchecked
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A completion overfilling the response ring is accepted.
+@old
+                    && fd_croom <= 16'd1 << fd_rlog;
+@new
+                    && (fd_croom <= 16'd1 << fd_rlog || 1'b1);
+@end
+
+@mutation quux15-fd-host-past-the-shown
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A completion past the commands shown is accepted while the response
+@note ring has room for it.
+@old
+  assign fd_ok       = fd_in_epoch && fd_cstep != 16'd0 && fd_cstep <= fd_cprod - fd_chost
+@new
+  assign fd_ok       = fd_in_epoch && fd_cstep != 16'd0 && fd_cstep <= fd_cprod - fd_chost + 16'd2
+@end
+
+@mutation quux15-fd-host-claim-in-any-epoch
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note The claim is taken in any epoch: a server that missed a disable holds
+@note quiet low on a device reset behind its back.
+@old
+      else if (fd_in_epoch && !rst) fd_busy <= 1'b1;
+@new
+      else if (!rst) fd_busy <= 1'b1;
+@end
+
+@mutation quux15-fd-host-epoch-misses-reset-devices
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note RESET-DEVICES disables the device without counting the epoch.
+@old
+    if (rst ? fd_on : fd_on && !fd_on_w) fd_epoch <= fd_epoch + 16'd1;
+@new
+    if (rst ? fd_on : fd_on && !fd_on_w && !(wr_v && wr_k == 8'o104)) fd_epoch <= fd_epoch + 16'd1;
+@end
+
+@mutation quux15-fd-host-epoch-misses-the-machine-reset
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A reset of the machine with the device enabled does not count the
+@note epoch: a completion from before the reset lands after it.
+@old
+    if (rst ? fd_on : fd_on && !fd_on_w) fd_epoch <= fd_epoch + 16'd1;
+@new
+    if (rst ? 1'b0 : fd_on && !fd_on_w) fd_epoch <= fd_epoch + 16'd1;
+@end
+
+@mutation quux15-fd-host-handles-kept-over-a-disable
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A disable leaves the handles open and the count staged, where it
+@note closes them.
+@old
+      if (fd_on && !fd_on_w) begin
+        fd_hopen <= '0;
+        fd_hnext <= '0;
+      end
+@new
+      if (fd_on && !fd_on_w && 1'b0) begin
+        fd_hopen <= '0;
+        fd_hnext <= '0;
+      end
+@end
+
+@mutation quux15-fd-rtc-reset-after-the-host
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note A reset of the machine puts back a clock the host has set, which a
+@note band booting after it reads.
+@old
+    end else if (rst && !rtc_host) begin
+@new
+    end else if (rst && (!rtc_host || 1'b1)) begin
+@end
+
+@mutation quux15-fd-rtc-stage-kept
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note The staged fraction is not forgotten once the seconds take it.
+@old
+      rtc_stage <= 30'd0;
+      rtc_host  <= 1'b1;
+@new
+      rtc_host  <= 1'b1;
+@end
+
+@mutation quux15-fd-rtc-no-hold
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note The clock wraps from 2^32 - 1 to 0, which reads as no clock at all.
+@old
+      if (rtc_sec != 32'hFFFF_FFFF) rtc_sec <= rtc_sec + 32'd1;
+@new
+      rtc_sec <= rtc_sec + 32'd1;
+@end
+
+@mutation quux15-fd-rtc-stage-in-units
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note The staged fraction, in nanoseconds, is taken as units of 0.5 ns:
+@note the second runs half a second long.
+@old
+      rtc_frac <= {rtc_stage, 1'b0};
+@new
+      rtc_frac <= {1'b0, rtc_stage};
+@end
+
+@mutation quux15-fd-rtc-fraction-read-in-units
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note RTC_FRACTION reads units of 0.5 ns where the host's side says
+@note nanoseconds.
+@old
+      H_RTC_FRACTION: host_rdata <= {2'd0, rtc_frac[30:1]};
+@new
+      H_RTC_FRACTION: host_rdata <= {1'd0, rtc_frac};
+@end
+
+@mutation quux15-fd-host-mem-words-wrong
+@check quux15_fd_face
+@file rtl/machine/quux15_devices.sv
+@note MAIN_WORDS reads half of main memory: the server refuses a ring the
+@note machine may use.
+@old
+      H_MEM_WORDS:    host_rdata <= 32'(MAIN_WORDS);
+@new
+      H_MEM_WORDS:    host_rdata <= 32'(MAIN_WORDS / 2);
+@end
+
+# NOT HERE: `fd_complete`'s `&& fd_on`, which drops a completion accepted in
+# the clock the machine disables the device.  The disable puts 165 and 170 at
+# 0 and closes the handles in that clock, so the completion landing on a
+# disabled device moves an index no word reads while disabled, and the next
+# enable starts it at 0 again: only the host's RESP_PROD read in the one
+# clock between differs.
+
 @mutation quux15-port-b-fill-used-in-its-clock
 @check quux15_walk_quux
 @file rtl/machine/quux15_mmu.sv
