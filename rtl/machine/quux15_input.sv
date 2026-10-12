@@ -31,15 +31,20 @@
 // (`irq`; A15b.3's row "A device register", rulings 2 Q1): an enable
 // written in this clock counts, and a key word or a move coming in this
 // clock does not --- it is in the page from the next clock, as muir's comes
-// in between two clocks.  **A READ'S SIDE EFFECT IS RECKONED AT THE CLOCK
-// AFTER ITS GRANT** (MP2b ruling Q4): the interrupt sees 121's word taken
-// from then, and not in the grant's own clock, where muir's pipeline,
-// taking the word in the grant's clock before EX samples the interrupt, sees
-// it a clock sooner.  The two differ only for a word testing the interrupt
-// right after a start that reads 121 or 122, which no program here makes;
-// a path from the grant's address through the page into EX's condition is
-// what Q4 and rulings 2 Q1 keep out of the core.  `irq_state` is the page's
-// interrupt bits as the clock began, which word 100 reads.
+// in between two clocks.  **A LEVEL A READ LOWERS IS HELD UNTIL THE READ'S
+// RELEASE** (the register read ruling; muir's `QuuxInput::hold`): the read
+// takes its word and makes its change at the grant, as in 1, and the
+// interrupt bit it lowered --- `<4>` when 121 took the last key word, `<5>`
+// when 122 cleared 123's `<0>` --- is kept in `held` and or'd into `irq`
+// until the core's release (`rd_release`, `quux15_core.sv`'s `n_rgr_rel`):
+// the clock after the word right after the read's start leaves EX, however
+// late that word reaches EX, or a halt.  So that word's conditions see the
+// level as before the read, and the next word that tests the interrupt sees
+// it lowered.  `held` clears at the edge the release is up, the grant's own
+// included, so a halted machine holds none.  A key word or a move that comes
+// in meanwhile raises its bit as ever.  `irq_state` is the page's interrupt
+// bits as the clock began, without `held`, which word 100 reads: no register
+// access is granted while a read is held.
 //
 // **3. THE MOUSE'S COUNTS ARE KEPT HERE** (the MP5a review's finding 4):
 // revision 15 has no I/O board, so the mouse's seven lines from
@@ -72,7 +77,10 @@
 // muir's `QuuxInput` over `golden/src/quux_input.rs`'s script, its mouse
 // walked a step a clock on its lines; and `build/quux15_input.quux.pass`,
 // the core's `input` group (`golden/src/quux15_input.rs`), clock for clock
-// on muir's pipeline with key words and moves handed over at clocks.
+// on muir's pipeline with key words and moves handed over at clocks; and
+// `build/quux15_regread.quux.pass` (`golden/src/quux15_regread.rs`), the
+// held levels across a late next word, a move or a key word between a
+// read's grant and its release, and a halt at every clock.
 
 `default_nettype none
 
@@ -93,6 +101,9 @@ module quux15_input #(
     // word's offset on the page.
     input  var logic        rd,
     input  var logic [7:0]  rd_k,
+    // The core's release of the read before: its lowered level counts from
+    // the next clock.
+    input  var logic        rd_release,
     input  var logic        wr,
     input  var logic [7:0]  wr_k,
     input  var logic [31:0] wdata,
@@ -139,12 +150,22 @@ module quux15_input #(
   logic [2:0]      buttons;
   logic [3:0]      last_lines;
   logic            took;
+  // The interrupt bits a read lowered, held until its release; and the
+  // bits this clock's read lowers: 121 taking the last key word under 120's
+  // enable, 122 clearing 123's `<0>` under 123's (`QuuxInput::hold`'s
+  // `before & !levels()`).
+  logic [1:0]      held, lowered;
 
   logic full, empty, pop, push;
   assign full  = count == CNTW'(FIFO_WORDS);
   assign empty = count == '0;
   assign pop   = rd && rd_k == KBD_DATA && !empty;
   assign push  = kbd_strobe && (!full || pop);
+  // 122's read clears 123's `<0>`, at the grant as 121's pop is.
+  logic clear;
+  assign clear   = rd && rd_k == MOUSE;
+  assign lowered = {clear && mouse_enable && mouse_changed,
+                    pop && kbd_enable && count == CNTW'(1)};
 
   // The word at the grant: the page as the clock began.
   logic [31:0] word_now;
@@ -186,7 +207,7 @@ module quux15_input #(
   logic kbd_enable_n, mouse_enable_n;
   assign kbd_enable_n   = (wr && wr_k == KBD_STATUS) ? wdata[8] : kbd_enable;
   assign mouse_enable_n = (wr && wr_k == MOUSE_STATUS) ? wdata[8] : mouse_enable;
-  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty};
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty} | held;
   assign irq_state = {mouse_enable && mouse_changed, kbd_enable && !empty};
   assign busy      = full || took;
 
@@ -206,6 +227,7 @@ module quux15_input #(
       took          <= 1'b0;
       boot          <= 1'b0;
       rd_word       <= 32'd0;
+      held          <= 2'b00;
     end else begin
       if (rd) rd_word <= word_now;
 
@@ -242,8 +264,11 @@ module quux15_input #(
       mx         <= mx_n;
       my         <= my_n;
       buttons    <= buttons_n;
-      if (rd && rd_k == MOUSE) mouse_changed <= 1'b0;
+      if (clear) mouse_changed <= 1'b0;
       if (moved) mouse_changed <= 1'b1;
+
+      // The levels the read lowered, held to its release.
+      held <= rd_release ? 2'b00 : held | lowered;
     end
   end
 

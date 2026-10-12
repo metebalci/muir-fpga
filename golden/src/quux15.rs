@@ -87,6 +87,7 @@ mod quux15_main;
 mod quux15_network;
 mod quux15_memside;
 mod quux15_preset;
+mod quux15_regread;
 mod trace15;
 
 use machine_axis::Which;
@@ -956,6 +957,24 @@ struct Case {
     /// Frames put on muir's Chaosnet cable as the run goes, and its far
     /// end's side written down for the testbench (`quux15_network.rs`).
     net: Option<quux15_network::NetRun>,
+    /// What a register access's run must end with (`quux15_regread.rs`).
+    calls: Option<Calls>,
+}
+
+/// **The two checks' calls a register access's run ends with**, M 26 and
+/// M 27 (`quux15_regread.rs`): `unhalted`, the end `micro` has too; or, for
+/// a run halted at a clock of a `family`'s, `sent`, the end of the one halt
+/// point between the access's start and the next instruction, where the
+/// halt sends the access out (A15b.13), which `micro` unhalted does not
+/// have.  `main` counts each family's points that end so: one halt point
+/// between two microcycles, the microcycles completed at the halt the same
+/// at each clock that ends so, as muir's test counts them (a word held in
+/// CS behind the start gives that point more than one clock).
+#[derive(Clone, Debug)]
+struct Calls {
+    family: Option<String>,
+    unhalted: (Word, Word),
+    sent: Option<(Word, Word)>,
 }
 
 impl Case {
@@ -984,6 +1003,7 @@ impl Case {
             disk: None,
             input: Vec::new(),
             net: None,
+            calls: None,
         }
     }
 
@@ -1232,6 +1252,9 @@ struct Ran {
     memory: Vec<String>,
     /// What the run reached of the memory side, for the group's line.
     reached: [u64; 14],
+    /// The family of a halted register access whose halt sent it out, and
+    /// the microcycles completed at the halt ([`Calls`]).
+    sent: Option<(String, u64)>,
 }
 
 /// The names of `Ran::reached`'s counts.
@@ -1312,6 +1335,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     // The console's script first, each action at the clock it is made, as
     // the trace's lines say for the testbench.
     let mut checkpointed = false;
+    let mut halted_cycles = None;
     for act in &case.script {
         use quux15_console::Act;
         match *act {
@@ -1336,6 +1360,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
                 }
                 memory.push(format!("# halted {:x} {}", e.clock(), quux15_console::tail_hex(&e)));
+                halted_cycles = Some(e.machine().cycles);
             }
             Act::Frozen(n) => {
                 // Stopped at the error the case ends at, the machine frozen:
@@ -1424,7 +1449,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         memory.extend(feed.lines);
         memory.extend(net.lines);
         let summary = format!("{name}: checkpoint at clock {}", e.clock());
-        return Ok(Ran { lines: rows, summary, memory, reached: [0; 14] });
+        return Ok(Ran { lines: rows, summary, memory, reached: [0; 14], sent: None });
     }
     while !halted {
         if let Some(at) = parked_at
@@ -1443,7 +1468,25 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     // The machine it ends with, against micro's, and the results.
     feed.finished().map_err(|x| (1, format!("{name}: {x}")))?;
     net.finished().map_err(|x| (1, format!("{name}: {x}")))?;
-    if case.micro_check {
+    // A register access's calls: the unhalted end, held to `micro`'s below,
+    // or the one halt point's that sends the access out.
+    let mut sent = None;
+    if let Some(c) = &case.calls {
+        let m = e.machine();
+        let got = (m.mmem[0o26], m.mmem[0o27]);
+        if got != c.unhalted {
+            match (&c.family, c.sent) {
+                (Some(f), Some(s)) if got == s => {
+                    let at = halted_cycles.ok_or_else(|| (1, format!("{name}: sent out with no halt")))?;
+                    sent = Some((f.clone(), at));
+                }
+                _ => {
+                    return Err((1, format!("{name}: the checks called {got:?}, not {:?}", c.unhalted)));
+                }
+            }
+        }
+    }
+    if case.micro_check && sent.is_none() {
         let mut u = micro(case, period, &feed.micro).map_err(|x| (1, x))?;
         for &(k, w) in &case.beyond_micro {
             let um = u.machine_mut();
@@ -1506,7 +1549,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             rows.clear();
         }
     }
-    Ok(Ran { lines: rows, summary, memory, reached })
+    Ok(Ran { lines: rows, summary, memory, reached, sent })
 }
 
 /// The runs a program name stands for: one, or a group's.
@@ -1538,6 +1581,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "window" => quux15_devices::window().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "input" => quux15_input::input(period),
         "network" => quux15_network::network(period),
+        "regread" => quux15_regread::regread(period),
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
@@ -1636,6 +1680,7 @@ fn main() {
     let group = runs.len() > 1;
     let mut out = Vec::new();
     let mut reached = [0u64; 14];
+    let mut sent: Vec<(String, u64, String)> = Vec::new();
     for case in &runs {
         let ran = match run_case(case, period, bubbles, planted) {
             Ok(r) => r,
@@ -1667,6 +1712,25 @@ fn main() {
         for (r, n) in reached.iter_mut().zip(ran.reached) {
             *r += n;
         }
+        if let Some((f, at)) = ran.sent {
+            sent.push((f, at, case.name.clone()));
+        }
+    }
+    // Each halted register access: exactly one halt point, between two
+    // microcycles, sends it out.
+    let mut families: Vec<&str> = runs.iter().filter_map(|c| c.calls.as_ref()?.family.as_deref()).collect();
+    families.dedup();
+    for f in families {
+        let points: Vec<(u64, &str)> =
+            sent.iter().filter(|(g, _, _)| g == f).map(|(_, at, n)| (*at, n.as_str())).collect();
+        let mut at: Vec<u64> = points.iter().map(|p| p.0).collect();
+        at.dedup();
+        if at.len() != 1 {
+            eprintln!("quux15: {name}: the halts of {f} send it out at {} points, not one: {points:?}", at.len());
+            std::process::exit(1);
+        }
+        let clocks: Vec<&str> = points.iter().map(|p| p.1).collect();
+        eprintln!("quux15: {name}: the halts of {f} send it out at one point, {} microcycles: {clocks:?}", at[0]);
     }
     let counts: Vec<String> = REACHED.iter().zip(reached).map(|(w, n)| format!("{n} {w}")).collect();
     eprintln!("quux15: {name}: the memory side reached {}", counts.join(", "));

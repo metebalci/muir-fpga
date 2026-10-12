@@ -41,6 +41,10 @@ int main(int argc, char **argv) {
     dut->kbd_strobe = 0;
     dut->rd = 0;
     dut->wr = 0;
+    // Every read's change counts from the clock after its grant, as the
+    // script's `QuuxInput` has it, holding nothing: the hold for the word
+    // right after a read's start is the core's, held by `quux15_regread`.
+    dut->rd_release = 1;
     // Poison on the selects and the data lines when nothing reads or writes.
     dut->rd_k = 0121;
     dut->wr_k = 0120;

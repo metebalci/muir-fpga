@@ -1580,6 +1580,18 @@ int run_trace(const char *path, const Run &run, int seed) {
         std::fprintf(stderr, "clock %zu: the halted state is %s, muir's checkpoint %s\n", k, got.c_str(),
                      h.second.c_str());
     }
+    // **A HALT SENDS A REGISTER READ OUT** (A15b.13; the halt-release
+    // clarification): a halted machine holds no interrupt level a read
+    // lowered, at every clock it is halted (`quux15_input.sv`'s `held`).
+    if (dut->obs_halted && dut->rootp->quux15_core__DOT__devices__DOT__input_regs__DOT__held != 0) {
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "held";
+      }
+      if (++bad <= 20)
+        std::fprintf(stderr, "clock %zu: halted, the input holds the levels %x a read lowered\n", k,
+                     static_cast<unsigned>(dut->rootp->quux15_core__DOT__devices__DOT__input_regs__DOT__held));
+    }
 #endif
   }
 #ifdef QUUX15_CORE

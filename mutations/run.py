@@ -2742,7 +2742,7 @@ QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlf
                "random", "matrixmem", "randmem", "redirect", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
                "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "storeret", "checkpoints", "bdisk",
                "bdmix")
-QUUX15_CORE += ("input", "network")
+QUUX15_CORE += ("input", "network", "regread")
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
 # reader and `cadr-checkpoint`'s writer, which the testbench holds a
@@ -2759,6 +2759,7 @@ QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "rand
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 QUUX15_PERIODS_OF["input"] = (20, 17, 36)
 QUUX15_PERIODS_OF["network"] = (20, 17, 36)
+QUUX15_PERIODS_OF["regread"] = (20, 36)
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",

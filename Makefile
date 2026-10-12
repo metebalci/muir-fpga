@@ -322,9 +322,16 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # polling loop and under its interrupt, the lost count and its wrap, the
 # resets and the words that take no write, the testbench playing the far
 # end as muir's interface saw it, at 10 ns, 8.5 ns and 18 ns.
+# And a register read's side effect and the halt (`golden/src/
+# quux15_regread.rs`, `regread`): a read of 121 and of 122 lowering an
+# interrupt level, held for the word right after its start however late
+# that word reaches EX (a mispredicted slot's target, the OA hold), and a
+# write of 200 raising one, each halted at every clock, at 10 ns and the
+# Kria's 18 ns.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
 QUUX15_GROUPS += input network
+QUUX15_GROUPS += regread
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -346,6 +353,7 @@ QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
 QUUX15_PERIODS_input := 20 17 36
 QUUX15_PERIODS_network := 20 17 36
+QUUX15_PERIODS_regread := 20 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at
@@ -1556,7 +1564,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
-                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs \
+                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs golden/src/quux15_regread.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,

@@ -111,7 +111,7 @@ module quux15_fd_face_harness #(
 
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) dev (
       .clk(clk), .rst(mach_rst), .timers_rst(1'b0), .period(period), .rtc_start(rtc_start),
-      .rd_v(rd_v), .rd_k(rd_k), .rd_word(rd_word), .rd_built(rd_built),
+      .rd_v(rd_v), .rd_k(rd_k), .rd_word(rd_word), .rd_built(rd_built), .rd_release(1'b1),
       .wr_v(wr_v), .wr_k(wr_k), .wr_data(wr_data), .wr_built(wr_built),
       .prod_v(prod_v), .prod_data(prod_data),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),

@@ -68,6 +68,10 @@ module quux15_devices #(
     input  var logic [7:0]  rd_k,
     output var logic [31:0] rd_word,
     output var logic        rd_built,
+    // The core's release of the register read before (`quux15_core.sv`'s
+    // `n_rgr_rel`): an interrupt level the read lowered counts from the
+    // next clock (the register read ruling).
+    input  var logic        rd_release,
 
     // A register write taken this clock.
     input  var logic        wr_v,
@@ -582,7 +586,7 @@ module quux15_devices #(
   quux15_input input_regs (
       .clk(clk), .rst(rst),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
-      .rd(in_rd_mine), .rd_k(rd_k), .wr(in_wr_mine), .wr_k(wr_k), .wdata(wr_data),
+      .rd(in_rd_mine), .rd_k(rd_k), .rd_release(rd_release), .wr(in_wr_mine), .wr_k(wr_k), .wdata(wr_data),
       .rd_word(in_word),
       .irq(in_irq), .irq_state(in_irq_state), .boot(kbd_boot), .busy(kbd_busy),
       .ro_state(in_ro_state), .ro_fifo_a(ro_k[5:0]), .ro_fifo_q(in_ro_fifo));

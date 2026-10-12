@@ -206,6 +206,7 @@ impl Preset {
             disk: self.disk.clone(),
             input: self.input.clone(),
             net: self.net.clone(),
+            calls: None,
         }
     }
 }

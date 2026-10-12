@@ -46,7 +46,9 @@
 // a write's word WB and the port take.  A write carries MD as its start's
 // microcycle leaves it (A15b.3; right after a read start, the read's
 // word); a device register's write still waits for the word after its start
-// to leave EX.
+// to leave EX, and so does the interrupt level a device register's read
+// lowers, which the devices hold until then (the register read ruling).  A
+// halt releases both (A15b.13).
 //
 // **THE CONSOLE** (A15b.13; muir's `pipeline/control.rs`) writes and reads
 // the diagnostic registers (`spy_*`): RUN cleared drains the machine to a
@@ -609,6 +611,13 @@ module quux15_core #(
   logic        rgw_v, rgw_rel;
   logic [28:0] rgw_bus;
   logic [39:0] rgw_word;
+  // A device register's read, its word taken and its change made at the
+  // grant, whose lowering of an interrupt level counts from the clock after
+  // the word right after its start has left EX, or after a halt, as the
+  // write's release (`rgr_rel`, muir's `RegisterRead`; the register read
+  // ruling, A15b.3).  The devices hold the level a read lowered until then
+  // (`quux15_input.sv`'s `held`).
+  logic        rgr_v, rgr_rel, n_rgr_v, n_rgr_rel;
   // A map store's write, landing at the head of the next microcycle
   // (`map_write_d`).
   logic        mwd_v;
@@ -1468,7 +1477,7 @@ module quux15_core #(
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
-      .rd_word(dev_rd_word), .rd_built(dev_rd_built),
+      .rd_word(dev_rd_word), .rd_built(dev_rd_built), .rd_release(n_rgr_rel),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
       .bd_present(drive_present), .bd_start(bd_start), .bd_st_cmd(bd_st_cmd),
       .bd_st_clp(bd_st_clp), .bd_st_da(bd_st_da), .bd_walking(bd_walking),
@@ -1546,8 +1555,11 @@ module quux15_core #(
     s_nothing   = !s_device && !s_window && !s_memory;
     s_regword   = register_read(s_bus[7:0], posted_now);
     // A register access waits while a register's write before it is still to
-    // be taken.
-    s_reg_hold  = rgw_v && s_device;
+    // be taken, or a register's read before it does not count yet (muir's
+    // `pending`).  The read's hold never stands here: a start after the
+    // read's own successor reaches WB a clock after that word leaves EX, the
+    // read counting by then; it is kept as muir has it.
+    s_reg_hold  = (rgw_v || (rgr_v && !rgr_rel)) && s_device;
     k_req       = s_translated && !s_faulted && !(fault_now && s_inside) && !s_reg_hold;
     k_va        = a_va;
     k_entry     = s_entry;
@@ -2248,6 +2260,19 @@ module quux15_core #(
       n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = md;
       n_rgw_rel = commit || halt_rel;
     end
+    // --- The register's read: its change made at the grant, the level it
+    // --- lowers held by the devices until the clock after its release,
+    // --- which is the write's (the register read ruling): a word that leaves
+    // --- EX at the grant's clock or later, or the halt.  `n_rgr_rel` goes to
+    // --- the devices, whose held bits clear at this edge when it is up.  The
+    // --- grant's own `halt_rel` is the write's shape; without it the next
+    // --- clock's would release the read, the drain lasting until its word
+    // --- lands, and nothing would tell the two apart.
+    n_rgr_v = rgr_v && !rgr_rel; n_rgr_rel = rgr_rel || commit || halt_rel;
+    if (at_grant && s_device && !st_write[0]) begin
+      n_rgr_v = 1'b1;
+      n_rgr_rel = commit || halt_rel;
+    end
     // --- MD: the word EX leaves, or the read's word that landed.  The word
     // --- right after a read start that committed after the read landed
     // --- leaves the read's word, whatever it wrote.
@@ -2809,7 +2834,7 @@ module quux15_core #(
       // and write access, the frame all ones.
       vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
       ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; pend_pdl <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
-      rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
+      rgw_v <= 1'b0; rgr_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; posted_errors <= '0;
       // The redirect's copies come up as muir's machine has them.
       pdl_base <= '0; pdl_head <= '0;
@@ -2903,6 +2928,7 @@ module quux15_core #(
       rd_port <= n_rd_port;
       old_v <= n_old_v; old_seq <= n_old_seq; old_md <= n_old_md;
       rgw_v <= n_rgw_v; rgw_bus <= n_rgw_bus; rgw_rel <= n_rgw_rel; rgw_word <= n_rgw_word;
+      rgr_v <= n_rgr_v; rgr_rel <= n_rgr_rel;
       mwd_v <= n_mwd_v; mwd_vma <= n_mwd_vma; mwd_md <= n_mwd_md;
       if (take_cmd_prod) begin
         cprod_v    <= 1'b1;

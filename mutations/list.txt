@@ -29302,9 +29302,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A register's access goes ahead of a register's write not yet taken: a
 @note read right after a write reads the word as it was.
 @old
-    s_reg_hold  = rgw_v && s_device;
+    s_reg_hold  = (rgw_v || (rgr_v && !rgr_rel)) && s_device;
 @new
-    s_reg_hold  = 1'b0;
+    s_reg_hold  = (rgr_v && !rgr_rel) && s_device;
 @end
 
 @mutation quux15-successor-waits-for-md
@@ -30664,9 +30664,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_input.sv
 @note A key word waiting under the keyboard's enable raises no interrupt.
 @old
-  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty};
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty} | held;
 @new
-  assign irq       = {mouse_enable_n && mouse_changed, 1'b0 && kbd_enable_n && !empty};
+  assign irq       = {mouse_enable_n && mouse_changed, 1'b0 && kbd_enable_n && !empty} | held;
 @end
 
 @mutation quux15-input-interrupt-a-clock-early
@@ -30675,9 +30675,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The interrupt counts a key word in the clock it comes in, as revision
 @note 13's page does, where muir's comes in between two clocks.
 @old
-  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty};
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && !empty} | held;
 @new
-  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && (!empty || kbd_strobe)};
+  assign irq       = {mouse_enable_n && mouse_changed, kbd_enable_n && (!empty || kbd_strobe)} | held;
 @end
 
 @mutation quux15-input-overflow-not-sticky
@@ -30712,11 +30712,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A move in the clock 122 is granted is cleared by the read, where muir's
 @note move comes after that read and 123 shows it.
 @old
-      if (rd && rd_k == MOUSE) mouse_changed <= 1'b0;
+      if (clear) mouse_changed <= 1'b0;
       if (moved) mouse_changed <= 1'b1;
 @new
       if (moved) mouse_changed <= 1'b1;
-      if (rd && rd_k == MOUSE) mouse_changed <= 1'b0;
+      if (clear) mouse_changed <= 1'b0;
 @end
 
 @mutation quux15-input-boot-word-ignored
@@ -30953,6 +30953,136 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
               ch_fill  <= 9'd0;
               ch_lost  <= 4'd0;
 @end
+
+# ---------------------------------------------------------------------------
+# **A REGISTER READ'S SIDE EFFECT AND THE HALT** (G3 revision 15, A15b.3's
+# row "A device register" and A15b.13's "The halt"; the register read ruling
+# and its halt release): the read's release in `quux15_core.sv` (`rgr_v`,
+# `rgr_rel`, `n_rgr_rel` to the devices) and the levels it holds in
+# `quux15_input.sv` (`held`).  `quux15_regread_quux` holds the core clock for
+# clock to muir's pipeline over reads of 121 and 122 whose next word reaches
+# EX late (a mispredicted slot's target with two bubbles, the OA hold), the
+# checks right after and a word after, moves and key words between a read's
+# grant and its release, and a read of 121, of 122 and a write of 200 halted
+# at every clock; its testbench also fails a halted machine whose input
+# holds a lowered level.
+
+@mutation quux15-register-read-released-at-its-grant
+@check quux15_regread_quux
+@file rtl/machine/quux15_core.sv
+@note A register read's lowered level counts from the clock after its
+@note grant, though the word after its start has not left EX: a late
+@note target or an OA-held check sees it lowered (MP2b ruling Q4's literal
+@note text, which the register read ruling replaced).
+@old
+      n_rgr_rel = commit || halt_rel;
+@new
+      n_rgr_rel = 1'b1;
+@end
+
+@mutation quux15-register-read-held-past-its-release
+@check quux15_regread_quux
+@file rtl/machine/quux15_core.sv
+@note The devices hold a read's lowered level a clock past its release: the
+@note next word that tests the interrupt still sees it up.
+@old
+      .rd_word(dev_rd_word), .rd_built(dev_rd_built), .rd_release(n_rgr_rel),
+@new
+      .rd_word(dev_rd_word), .rd_built(dev_rd_built), .rd_release(rgr_v ? rgr_rel : n_rgr_rel),
+@end
+
+@mutation quux15-halt-never-releases-a-register-read
+@check quux15_regread_quux
+@file rtl/machine/quux15_core.sv
+@note A halt does not release a register read: the machine halts holding the
+@note level the read lowered, and the instruction after the start sees it
+@note as before the read after the resume (the halt-release
+@note clarification).  The testbench's halted check names it.
+@old
+    n_rgr_v = rgr_v && !rgr_rel; n_rgr_rel = rgr_rel || commit || halt_rel;
+    if (at_grant && s_device && !st_write[0]) begin
+      n_rgr_v = 1'b1;
+      n_rgr_rel = commit || halt_rel;
+@new
+    n_rgr_v = rgr_v && !rgr_rel; n_rgr_rel = rgr_rel || commit;
+    if (at_grant && s_device && !st_write[0]) begin
+      n_rgr_v = 1'b1;
+      n_rgr_rel = commit;
+@end
+
+@mutation quux15-register-read-standing-release-without-the-halt
+@check quux15_regread_quux_b2
+@file rtl/machine/quux15_core.sv
+@note `halt_rel` dropped from the release of a read granted before the halt
+@note began, its next word not yet in EX: held across the halt.  Only two
+@note bubbles put a read's grant ahead of its next word's EX by more than
+@note the drain's first clock (`haltslot-121-wrong`), so this is the two
+@note bubbles' check; with one, the halt that squashes the next word
+@note empties EX in the read's grant clock, and the grant's own `halt_rel`
+@note releases it.
+@old
+    n_rgr_v = rgr_v && !rgr_rel; n_rgr_rel = rgr_rel || commit || halt_rel;
+@new
+    n_rgr_v = rgr_v && !rgr_rel; n_rgr_rel = rgr_rel || commit;
+@end
+
+@mutation quux15-halt-does-not-release-a-register-write
+@check quux15_regread_quux
+@file rtl/machine/quux15_core.sv
+@note `halt_rel` dropped from `n_rgw_rel`: a register write whose next word
+@note the halt squashed is never taken, and the drain never ends; the trace
+@note names the clock it should have halted.
+@old
+    n_rgw_rel = rgw_rel || commit || halt_rel;
+    if (at_grant && s_device && st_write[0]) begin
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = md;
+      n_rgw_rel = commit || halt_rel;
+@new
+    n_rgw_rel = rgw_rel || commit;
+    if (at_grant && s_device && st_write[0]) begin
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = md;
+      n_rgw_rel = commit;
+@end
+
+@mutation quux15-input-pop-at-the-release
+@check quux15_regread_quux
+@file rtl/machine/quux15_input.sv
+@note 121's key word is taken at the grant but the FIFO pops at the read's
+@note release: a key word that comes between them finds the FIFO full and
+@note is dropped, the overflow set (the ruling's rejected deferral).
+@old
+  assign pop   = rd && rd_k == KBD_DATA && !empty;
+@new
+  logic pop_pend;
+  always_ff @(posedge clk) pop_pend <= !rst && ((rd && rd_k == KBD_DATA && !empty && !rd_release) || (pop_pend && !rd_release));
+  assign pop   = ((rd && rd_k == KBD_DATA && !empty) || pop_pend) && rd_release;
+@end
+
+@mutation quux15-input-clear-at-the-release
+@check quux15_regread_quux
+@file rtl/machine/quux15_input.sv
+@note 122's clear of 123's `<0>` is made at the read's release, not its
+@note grant: a move that comes between them is cleared unseen (the ruling's
+@note rejected deferral).
+@old
+  assign clear   = rd && rd_k == MOUSE;
+@new
+  logic clear_pend;
+  always_ff @(posedge clk) clear_pend <= !rst && ((rd && rd_k == MOUSE && !rd_release) || (clear_pend && !rd_release));
+  assign clear   = ((rd && rd_k == MOUSE) || clear_pend) && rd_release;
+@end
+
+@mutation quux15-input-read-holds-nothing
+@check quux15_regread_quux
+@file rtl/machine/quux15_input.sv
+@note The level a read lowers is not held: the word right after its start,
+@note reaching EX after the grant, sees it lowered.
+@old
+      held <= rd_release ? 2'b00 : held | lowered;
+@new
+      held <= rd_release ? 2'b00 : held & lowered;
+@end
+
 # ---------------------------------------------------------------------------
 # **REVISION 15'S BLOCK-DISK WITH A PACK** (contract G2 §4.2; G3 revision 15,
 # A15b.5, A15b.6, A15b.12, A15b.13): the walk and its block store
