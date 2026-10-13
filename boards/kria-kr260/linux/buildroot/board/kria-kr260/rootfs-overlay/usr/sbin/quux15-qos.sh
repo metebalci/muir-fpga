@@ -10,9 +10,11 @@
 # firmware leaves both 0.
 #
 # Run as root on the board after the bitstream is loaded and before the
-# machine is released.  It writes both registers, reads them back, and prints
-# one line for the board-run log; it exits non-zero when either reads back
-# other than 0xF.
+# machine is released.  The image runs it at every boot from
+# /etc/init.d/S78quux15-qos, which asks the fabric first and runs it on
+# revision 15 only; by hand it is for a fabric loaded since.  It writes both
+# registers, reads them back, and prints one line for the board-run log; it
+# exits non-zero when either reads back other than 0xF.
 
 set -u
 RDQOS=0xFD380008

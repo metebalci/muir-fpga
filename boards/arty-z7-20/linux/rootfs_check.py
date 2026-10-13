@@ -591,6 +591,41 @@ def packages_check(external):
           % (len(expected), count, len(named), scripts))
 
 
+def overlay_files(external, config):
+    """Every file of the root filesystem overlays the build's `.config` names
+    (BR2_ROOTFS_OVERLAY), as {path on the target: its bytes}.
+
+    **AN OVERLAY FILE IS NOT A GHOST.**  The Kria KR260's overlay carries
+    /etc/init.d/S78quux15-qos and /usr/sbin/quux15-qos.sh, whose names are
+    ours by `ours()` and which no package installs, so the ghost check below
+    would call them stale.  They are held instead: the target and the image
+    must carry each byte for byte as the overlay has it.  The overlay is
+    named as `$(BR2_EXTERNAL_<NAME>_PATH)/...`, and each tree's
+    `external.desc` says its name."""
+    m = re.search(r'^BR2_ROOTFS_OVERLAY="(.*)"$', open(config).read(), re.M)
+    if not m or not m.group(1).strip():
+        return {}
+    names = {}
+    for tree in external.split(":"):
+        desc = os.path.join(tree, "external.desc")
+        n = re.search(r"^name:\s*(\S+)", open(desc).read(), re.M) if os.path.isfile(desc) else None
+        if n:
+            names["BR2_EXTERNAL_%s_PATH" % n.group(1)] = os.path.abspath(tree)
+    out = {}
+    for word in m.group(1).split():
+        root = re.sub(r"\$\((BR2_EXTERNAL_\w+_PATH)\)",
+                      lambda v: names.get(v.group(1), v.group(0)), word)
+        if "$(" in root or not os.path.isdir(root):
+            die("the overlay %s names no directory this check can find (%s)" % (word, root))
+        for d, _, files in os.walk(root):
+            for f in files:
+                full = os.path.join(d, f)
+                rel = os.path.relpath(full, root)
+                out[rel] = open(full, "rb").read() if not os.path.islink(full) \
+                    else os.readlink(full).encode()
+    return out
+
+
 def target_bytes(target, path):
     full = os.path.join(target, path)
     if os.path.islink(full):
@@ -647,8 +682,23 @@ def main():
                            hashlib.sha256(got).hexdigest()[:16],
                            len(want), len(got)))
 
-    # And nothing of ours that no package installs: the image can carry a ghost
-    # the target tree no longer has, which is what a stale image IS.
+    # The overlays' files of ours, byte for byte in the target and the image.
+    overlay = overlay_files(external, config)
+    for path in sorted(p for p in overlay if ours(p) and p not in expected):
+        problem, want = target_bytes(target, path)
+        if problem or want != overlay[path]:
+            absent.append((path, "the overlay has it and the target tree's is "
+                                 + ("missing" if problem else "another file")))
+        elif path not in entries:
+            absent.append((path, "in the overlay and the target tree, NOT IN THE IMAGE"))
+        elif entries[path][1] != want:
+            got = entries[path][1]
+            differ.append((path, hashlib.sha256(want).hexdigest()[:16],
+                           hashlib.sha256(got).hexdigest()[:16], len(want), len(got)))
+
+    # And nothing of ours that no package installs and no overlay carries: the
+    # image can carry a ghost the target tree no longer has, which is what a
+    # stale image IS.
     # A directory of ours is not a ghost: `usr/share/cadr` is made by an
     # install, holds what the package puts in it, and its name would match.
     for path in sorted(entries):
@@ -656,7 +706,7 @@ def main():
         kind = entries[path][0] & 0o170000
         if kind not in (0o100000, 0o120000):
             continue
-        if ours(path) and path not in expected:
+        if ours(path) and path not in expected and path not in overlay:
             stale.append(path)
 
     if absent or differ or stale:
@@ -683,9 +733,11 @@ def main():
               "written last.", file=sys.stderr)
         sys.exit(1)
 
+    held = sorted(p for p in overlay if ours(p) and p not in expected)
     print("the image and the target: %d file(s) of %d package(s) "
-          "byte-identical in %s"
-          % (len(expected), packages, os.path.basename(image)))
+          "byte-identical in %s%s"
+          % (len(expected), packages, os.path.basename(image),
+             "" if not held else ", and the overlay's " + ", ".join("/" + p for p in held)))
 
 
 if __name__ == "__main__":

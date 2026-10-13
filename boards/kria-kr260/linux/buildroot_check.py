@@ -5,6 +5,7 @@
 # THE KRIA KR260's IMAGE IS BUILT FROM WHAT ITS FILES SAY, OR THE BUILD FAILS.
 #
 #     buildroot_check.py boot     <external tree>
+#     buildroot_check.py qos      <external tree>
 #     buildroot_check.py configs  <external tree> <Buildroot output directory>
 #     buildroot_check.py programs <external tree> <directory of programs>
 #
@@ -31,6 +32,16 @@
 #   - nothing writes the flash or the loader's environment: no `saveenv`,
 #     `env save`, `sf` or `fatwrite` anywhere in the script, the served file
 #     or the card's template.
+#
+# **`qos`: HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISION 15 AND ON NOTHING
+# ELSE.**  The overlay's /etc/init.d/S78quux15-qos is run under the host's
+# POSIX shells against a stub `devmem` and a stub `cadr-console`, with
+# cadr-common's real fault.sh and the overlay's real quux15-qos.sh: on
+# revision 15 both registers are written 0xF and read back; on the CADR,
+# revision 13, a fabric the console does not know, the fault bitstream and an
+# image with no console nothing is written.  And the overlay carries both
+# files, executable, the defconfig names the overlay, and the hook runs before
+# every package's init script.
 #
 # **`configs`, AFTER THE BUILD: every line we wrote holds**, the DE25-Nano's
 # reason: Kconfig drops a line it cannot satisfy without a word.  The
@@ -284,6 +295,7 @@ def configs(tree, out):
         if not os.path.isfile(os.path.join(out, "images", f)):
             die("no %s in %s/images" % (f, out))
     programs(tree, os.path.join(out, "target", "usr", "bin"))
+    qos_built(tree, out)
 
 
 def raster(tree):
@@ -361,15 +373,271 @@ def programs(tree, bindir):
              want["CADR_BOARD_TALLY"]))
 
 
+# ------------------------------------------------------------ HP0's QoS hook
+#
+# The overlay's init script and the script it runs, as installed on the
+# target, and the two registers (quux15-qos.sh's, UG1087's AFIFM2).
+OVERLAY = "board/kria-kr260/rootfs-overlay"
+QOS_HOOK = "etc/init.d/S78quux15-qos"
+QOS_SCRIPT = "usr/sbin/quux15-qos.sh"
+QOS_REGS = (0xFD380008, 0xFD38001C)
+# The tally's two EMIO words, which fault.sh reads (cadr_board.h's KR260
+# half), and the fault bitstream's word in them.
+QOS_TALLY = (0xFF0A006C, 0xFF0A0070)
+QOS_FALT = 0x46414C54
+
+# `devmem` as BusyBox's applet answers: a write with three arguments, a read
+# with two, printed as 0x and eight upper-case digits.  Each call is logged.
+# The state is one file a register; a register named in $QOS_STUCK keeps 0
+# whatever is written, which is a register that does not take the write.
+QOS_DEVMEM = r"""#!/bin/sh
+a=$(printf '%d' "$1") || exit 1
+f="$QOS_STATE/$a"
+if [ $# -ge 3 ]; then
+	echo "W $1 $3" >> "$QOS_STATE/log"
+	case " $QOS_STUCK " in *" $a "*) exit 0 ;; esac
+	printf '%d\n' "$3" > "$f"
+	exit 0
+fi
+echo "R $1" >> "$QOS_STATE/log"
+v=0
+[ -f "$f" ] && v=$(cat "$f")
+printf '0x%08X\n' "$v"
+"""
+
+# `cadr-console machine [cadr|quux [REVISION]]` as console_face.c's
+# cons_machine_word answers it, for the fabric $QOS_FABRIC names: `cadr`,
+# `quux 13`, `quux 15`, or `unknown` (entry 21 neither machine's).  The
+# identity line first, then 0 when the fabric is the machine asked for.
+QOS_CONSOLE = r"""#!/bin/sh
+echo "$*" >> "$QOS_STATE/console"
+[ "$1" = machine ] || exit 2
+want=${2:-} wrev=${3:-}
+set -- $QOS_FABRIC
+kind=$1 rev=${2:-}
+case "$kind" in
+cadr) echo "cadr-console: machine: CADR, 32-bit words; build 00000000 (commit 0000000, tree clean)" ;;
+quux) echo "cadr-console: machine: QUUX revision $rev, MACHINE-ID 515800${rev}0 (revision $rev, processor type 0), 40-bit words; build 00000000 (commit 0000000, tree clean)" ;;
+*) echo "cadr-console: machine: NOT KNOWN --- entry 21 reads 000000000000, neither QUUX's signature nor the CADR's answer"; exit 1 ;;
+esac
+[ -z "$want" ] && exit 0
+if [ "$want" = "$kind" ] && { [ -z "$wrev" ] || [ "$wrev" = "$rev" ]; }; then
+	exit 0
+fi
+echo "cadr-console: machine: NOT THE MACHINE ASKED FOR --- asked for $want $wrev, and the fabric is $kind $rev"
+exit 1
+"""
+
+
+def qos_shells():
+    """The shells the hook is run under, of those the build host has:
+    BusyBox's ash, which is the board's, dash, and bash as a POSIX shell.
+    **A BusyBox that prefers its own applets is left out and said**: it runs
+    its `devmem` applet, not the stub on the PATH (Ubuntu's does), so it
+    would test the build host's /dev/mem."""
+    import shutil
+    import subprocess
+    out, skipped = [], []
+    if shutil.which("busybox"):
+        r = subprocess.run([shutil.which("busybox"), "sh", "-c", "command -v devmem"],
+                           capture_output=True,
+                           text=True, env=dict(os.environ, PATH="/nonexistent"))
+        if r.stdout.strip() == "devmem":
+            skipped.append("busybox (it prefers its own devmem applet to the stub)")
+        else:
+            out.append(["busybox", "sh"])
+    if shutil.which("dash"):
+        out.append(["dash"])
+    if shutil.which("bash"):
+        out.append(["bash", "--posix"])
+    if not out:
+        die("no busybox, dash or bash on this host: the QoS hook cannot be run here")
+    for s in skipped:
+        print("buildroot-kr260: the QoS hook is not run under " + s)
+    return out
+
+
+def qos_run(tree, shell, fabric, console=True, stuck=(), action="start"):
+    """The overlay's hook run as `S78quux15-qos <action>` against a made-up
+    board: `devmem` and `cadr-console` stubs on the PATH, cadr-common's real
+    fault.sh with the KR260's tally, and the overlay's real quux15-qos.sh.
+    Returns (status, output, writes, registers, console calls)."""
+    import subprocess
+    import tempfile
+    overlay = os.path.join(tree, OVERLAY)
+    hook = open(os.path.join(overlay, QOS_HOOK)).read()
+    fault = os.path.join(tree, "..", "..", "..", "arty-z7-20", "linux", "buildroot",
+                         "package", "cadr-common", "src", "fault.sh")
+    with tempfile.TemporaryDirectory(prefix="kr260-qos-") as work:
+        state = os.path.join(work, "state")
+        bindir = os.path.join(work, "bin")
+        os.makedirs(state)
+        os.makedirs(bindir)
+        open(os.path.join(state, "log"), "w").close()
+        open(os.path.join(state, "console"), "w").close()
+        stubs = {"devmem": QOS_DEVMEM}
+        if console:
+            stubs["cadr-console"] = QOS_CONSOLE
+        for name, text in stubs.items():
+            p = os.path.join(bindir, name)
+            open(p, "w").write(text)
+            os.chmod(p, 0o755)
+        for a in QOS_TALLY:
+            open(os.path.join(state, str(a)), "w").write(
+                "%d\n" % (QOS_FALT if fabric == "fault" else 0x12345678))
+        # fault.sh as cadr-common's Makefile installs it for this board.
+        ftext = open(fault).read()
+        if ftext.count("CADR_FAULT_BOARD=@CADR_BOARD@\n") != 1:
+            die("%s: no single `CADR_FAULT_BOARD=@CADR_BOARD@` line to fill" % fault)
+        open(os.path.join(work, "fault.sh"), "w").write(
+            ftext.replace("CADR_FAULT_BOARD=@CADR_BOARD@\n", "CADR_FAULT_BOARD=kria-kr260\n"))
+        # The hook's two paths on the target, pointed into the sandbox.  Each
+        # must match exactly once, or this check names the line it lost.
+        for old, new in (("FAULT_SH=/usr/share/cadr/fault.sh\n",
+                          "FAULT_SH=%s/fault.sh\n" % work),
+                         ("QOS_SH=/%s\n" % QOS_SCRIPT,
+                          "QOS_SH=%s\n" % os.path.join(overlay, QOS_SCRIPT))):
+            if hook.count(old) != 1:
+                die("%s: the line %r is there %d time(s), wanting once"
+                    % (QOS_HOOK, old.strip(), hook.count(old)))
+            hook = hook.replace(old, new)
+        hpath = os.path.join(work, "hook")
+        open(hpath, "w").write(hook)
+        env = dict(os.environ, PATH=bindir + ":/usr/bin:/bin", QOS_STATE=state,
+                   QOS_FABRIC=fabric if fabric != "fault" else "cadr",
+                   QOS_STUCK=" ".join(str(a) for a in stuck),
+                   CADR_FAULT_SAID=os.path.join(work, "fault.said"))
+        r = subprocess.run(shell + [hpath, action], env=env, capture_output=True,
+                           text=True, timeout=60)
+        writes = [l.split()[1:] for l in open(os.path.join(state, "log")).read().splitlines()
+                  if l.startswith("W ")]
+        regs = {}
+        for a in QOS_REGS:
+            p = os.path.join(state, str(a))
+            regs[a] = int(open(p).read()) if os.path.isfile(p) else 0
+        calls = open(os.path.join(state, "console")).read().splitlines()
+        return r.returncode, r.stdout + r.stderr, writes, regs, calls
+
+
+def qos(tree):
+    """**HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISION 15 AND ON NOTHING
+    ELSE** (contract G3 revision 15, A15b.5): the overlay's init script, run
+    against stubs of `devmem` and of the fabric's identity, writes both
+    registers to 0xF when `cadr-console machine quux 15` says the fabric is
+    revision 15, and writes nothing at all on the CADR, on revision 13, on a
+    fabric the console does not know, on the fault bitstream, or with no
+    console program; and the image carries it, ahead of every daemon."""
+    overlay = os.path.join(tree, OVERLAY)
+    # The rootfs: the defconfig names this overlay, and the overlay holds the
+    # hook and the script it runs, both executable.
+    dc = settings(os.path.join(tree, DEFCONFIG))
+    if dc.get("BR2_ROOTFS_OVERLAY") != '"$(BR2_EXTERNAL_CADR_KR260_PATH)/%s"' % OVERLAY:
+        die("%s's BR2_ROOTFS_OVERLAY is %r, not this board's overlay"
+            % (DEFCONFIG, dc.get("BR2_ROOTFS_OVERLAY")))
+    for rel in (QOS_HOOK, QOS_SCRIPT):
+        p = os.path.join(overlay, rel)
+        if not os.path.isfile(p):
+            die("no /%s in the image: %s is not in the overlay, so HP0's QoS is written"
+                " at no fabric load" % (rel, p))
+        if not os.stat(p).st_mode & 0o100:
+            die("%s is not executable, and the overlay copies its mode to the target" % p)
+    # Before every daemon of ours: its number below every package's init script.
+    pkgs = os.path.join(tree, "..", "..", "..", "arty-z7-20", "linux", "buildroot", "package")
+    nums = sorted((int(m.group(1)), n) for d in os.listdir(pkgs)
+                  if os.path.isdir(os.path.join(pkgs, d))
+                  for n in os.listdir(os.path.join(pkgs, d))
+                  for m in [re.fullmatch(r"S(\d\d)[\w-]+", n)] if m)
+    mine = int(re.match(r"etc/init\.d/S(\d\d)", QOS_HOOK).group(1))
+    if not nums or mine >= nums[0][0]:
+        die("%s runs at S%02d, not before %s, the first of the machine's daemons"
+            % (QOS_HOOK, mine, nums[0][1] if nums else "(none found)"))
+
+    shells = qos_shells()
+    want15 = {a: 0xF for a in QOS_REGS}
+    zero = {a: 0 for a in QOS_REGS}
+    cases = 0
+    for sh in shells:
+        name = sh[0]
+        # Revision 15: both registers written 0xF, nothing else written,
+        # read back and said.
+        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15")
+        cases += 1
+        if regs != want15:
+            die("%s, QUUX revision 15: HP0's QoS reads %s, wanting 0xF on both:"
+                % (name, {hex(a): hex(v) for a, v in regs.items()}), out)
+        if sorted(int(a, 16) for a, _ in writes) != sorted(QOS_REGS) or \
+                any(int(v, 0) != 0xF for _, v in writes):
+            die("%s, QUUX revision 15: devmem wrote %s, wanting 0xF to each register once"
+                % (name, writes), out)
+        if "machine quux 15" not in calls:
+            die("%s, QUUX revision 15: the console was asked %s, not `machine quux 15`"
+                % (name, calls))
+        if "quux15-qos: HP0 RDQOS 0x0000000F WRQOS 0x0000000F" not in out:
+            die("%s, QUUX revision 15: the boot does not say what the registers read back:"
+                % name, out)
+        if "machine: QUUX revision 15" not in out:
+            die("%s, QUUX revision 15: the boot does not print the identity line:" % name, out)
+        if st != 0:
+            die("%s, QUUX revision 15: the hook exited %d" % (name, st), out)
+        # Every other fabric: nothing written, the registers still 0.
+        for fabric, console, why in (("cadr", True, "the CADR"),
+                                     ("quux 13", True, "QUUX revision 13"),
+                                     ("unknown", True, "a fabric the console does not know"),
+                                     ("fault", True, "the fault bitstream"),
+                                     ("quux 15", False, "no cadr-console on the image")):
+            st, out, writes, regs, calls = qos_run(tree, sh, fabric, console=console)
+            cases += 1
+            if writes or regs != zero:
+                die("%s, %s: devmem wrote %s and HP0's QoS reads %s; wanting nothing written"
+                    " and 0" % (name, why, writes, {hex(a): hex(v) for a, v in regs.items()}),
+                    out)
+            if st != 0:
+                die("%s, %s: the hook exited %d, and a boot goes on" % (name, why, st), out)
+            if fabric == "fault" and calls:
+                die("%s, the fault bitstream: the console was asked %s" % (name, calls))
+        # A register that does not take the write is said, loudly.
+        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15", stuck=(QOS_REGS[1],))
+        cases += 1
+        if "NOT 0xF" not in out:
+            die("%s, WRQOS not taking the write: the boot does not say so:" % name, out)
+        # `stop` writes nothing.
+        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15", action="stop")
+        cases += 1
+        if writes or st != 0:
+            die("%s, stop: devmem wrote %s, status %d" % (name, writes, st), out)
+    print("buildroot-kr260: /%s runs /%s at S%02d, before %s: HP0's QoS reads 0xF on QUUX"
+          " revision 15 and nothing is written on the CADR, revision 13, an unknown fabric,"
+          " the fault bitstream or with no console (%d cases, %s)"
+          % (QOS_HOOK, QOS_SCRIPT, mine, nums[0][1], cases,
+             " and ".join(s[0] for s in shells)))
+
+
+def qos_built(tree, out):
+    """The hook and its script in the built target, as the overlay has them."""
+    for rel in (QOS_HOOK, QOS_SCRIPT):
+        src = os.path.join(tree, OVERLAY, rel)
+        got = os.path.join(out, "target", rel)
+        if not os.path.isfile(got):
+            die("no /%s in %s/target" % (rel, out))
+        if open(got, "rb").read() != open(src, "rb").read():
+            die("/%s in %s/target is not the overlay's %s" % (rel, out, src))
+        if not os.stat(got).st_mode & 0o100:
+            die("/%s in %s/target is not executable" % (rel, out))
+    print("buildroot-kr260: the target carries /%s and /%s, as the overlay has them"
+          % (QOS_HOOK, QOS_SCRIPT))
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "boot":
         boot(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "qos":
+        qos(sys.argv[2])
     elif len(sys.argv) == 4 and sys.argv[1] == "configs":
         configs(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 4 and sys.argv[1] == "programs":
         programs(sys.argv[2], sys.argv[3])
     else:
-        die("usage: buildroot_check.py boot <tree> | configs <tree> <output> "
+        die("usage: buildroot_check.py boot <tree> | qos <tree> | configs <tree> <output> "
             "| programs <tree> <directory>")
 
 

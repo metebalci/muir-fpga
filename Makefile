@@ -5999,17 +5999,25 @@ BR_KR260_CHECK := boards/kria-kr260/linux/buildroot_check.py
 # address map, warnings as errors, and asked for that board's addresses and
 # ports in its own words, as `de25_linux.pass` does for the DE25-Nano.  This
 # is the only place the KR260's half of `cadr/cadr_board.h` is compiled before
-# a board build.
+# a board build.  And HP0's QoS hook in the image's overlay
+# (`buildroot_check.py qos`): run against a stub `devmem` and a stub
+# `cadr-console`, it writes 0xF on QUUX revision 15 and nothing on any other
+# fabric.
 KR260_LINUX_WORK := $(HOME)/.cache/muir-fpga-kr260-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
                            boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig \
                            boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd \
                            boards/kria-kr260/linux/buildroot/board/kria-kr260/uEnv.net \
+                           boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/etc/init.d/S78quux15-qos \
+                           boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/usr/sbin/quux15-qos.sh \
+                           $(COMMON_SRC)/fault.sh \
+                           $(wildcard $(BR_EXTERNAL)/package/*/S[0-9]*) \
                            $(wildcard $(BR_EXTERNAL)/package/*/src/*.c) \
                            $(wildcard $(BR_EXTERNAL)/package/*/src/*.h) \
                            $(wildcard $(BR_EXTERNAL)/package/*/src/Makefile) \
                            $(wildcard $(BR_EXTERNAL)/package/*/src/cadr/*.h) | $(BUILD)
 	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
+	@python3 $(BR_KR260_CHECK) qos boards/kria-kr260/linux/buildroot
 	@rm -rf $(KR260_LINUX_WORK) && mkdir -p $(KR260_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(KR260_LINUX_WORK)/package
 	@set -e; for p in $(DE25_LINUX_PROGRAMS) cadr-displayport; do \
@@ -6023,6 +6031,7 @@ $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
 
 buildroot-kr260-check: buildroot-packages-check
 	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
+	@python3 $(BR_KR260_CHECK) qos boards/kria-kr260/linux/buildroot
 
 buildroot-kr260: buildroot-kr260-check
 	@test -f $(BR_TARBALL) || { \
