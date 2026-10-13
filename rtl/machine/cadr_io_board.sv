@@ -408,8 +408,18 @@ module cadr_io_board (
 
   // `busint::IOB_CHAOS_BUFFER_NS` = 350: the transmit buffer's write and
   // START, through the transmitter's `-TSR.SSYN`, measured at every phase of
-  // the board's clocks.
+  // the board's clocks --- with the shift register empty, and as long after
+  // `TSREMPTY` when it was not (below, THE TRANSMITTER'S SHIFT REGISTER).
   localparam int unsigned CHAOS_BUF_T    = cadr_tick_pkg::ticks(350);
+
+  // `chaos::board::TSR_LOAD_NS` = 101 and `TSR_WORD_NS` = 2,000: the shift
+  // register loads at the first `FCLK^` at least 101 ns after a WRITE
+  // BUFFER's or a START's answer --- on the grid, the first edge whose tick
+  // is at least `ticks(101)` past it, which is `IoBoardTiming`'s
+  // `fclk_edge_at_or_after` under `TimingModel::Fpga` --- and shifts a word
+  // into the buffer in 2,000 ns, a whole number of ticks.
+  localparam int unsigned TSR_LOAD_T     = cadr_tick_pkg::ticks(101);
+  localparam int unsigned TSR_WORD_T     = cadr_tick_pkg::ticks(2000);
 
   // The Chaosnet receive buffer's read: `-MSYN` taken at the first `FCLK^`
   // edge AT LEAST `busint::IOB_RBUF_SETUP_NS` = 33 ns after it, the word out
@@ -949,6 +959,37 @@ module cadr_io_board (
   logic       fc_edge1;  // an `FCLK^` edge has fallen at or after `-MSYN` + 33 ns
   logic [6:0] t_fclk;    // ticks since it, saturating
 
+  // ------------------------------------------- the transmitter's shift register
+  //
+  // **THE CHAOSNET TRANSMITTER HOLDS THE UNIBUS WHILE ITS SHIFT REGISTER IS
+  // BUSY**, muir's `IoBoardTiming::answer_cycle`, measured on the netlist
+  // board (`a_word_written_while_the_last_shifts_is_answered_as_the_board_answers`
+  // in muir's `tests/chaos_netlist.rs`).  Every word written, and at START
+  // the source and check words, reaches the buffer through the register:
+  // it loads at the first `FCLK^` at least 101 ns after the cycle's answer
+  // (`UB>TSR`, `TSREMPTY` falling) and shifts each word in over 2,000 ns.
+  // A WRITE BUFFER or a START that comes while it is busy waits on
+  // `-TSR.SSYN`, and is answered `CHAOS_BUF_T` after `TSREMPTY` rises
+  // rather than after `-UB MSYN`.  MIT's microcode writes the second half
+  // of every 32-bit word, and START, sooner than that, so on the board
+  // each of them is held.
+  //
+  // Only this card's own Unibus cycles load it and wait on it: QUUX's
+  // register page reaches the interface through no Unibus, and muir's
+  // memory port has no such hold.  A Reset, a Clear Transmitter and
+  // `-UB INIT` leave it as it is, as muir's model does; whether they
+  // empty it on the board is not measured (`answer_cycle`'s note).
+  logic       tsr_arm;   // a WRITE BUFFER or a START answered, the load to come
+  logic       tsr_two;   // ...and it was START: two words to shift
+  logic [5:0] tsr_tl;    // ticks since that answer, saturating
+  logic [8:0] tsr_left;  // ticks until `TSREMPTY` rises, 0 once it has
+  logic [5:0] tsr_e;     // ticks since it rose, saturating
+  // Empty at least `CHAOS_BUF_T` ticks by now, less `lead` (`answer_at`).
+  function automatic logic tsr_empty_for(input logic lead);
+    return !tsr_arm && tsr_left == 9'd0
+        && {2'b0, tsr_e} >= 8'(CHAOS_BUF_T) - {7'd0, lead};
+  endfunction
+
   // **SATURATING, NEVER WRAPPING.**  `elapsed` in `cadr_busint_xbus.sv` was ten
   // bits and wrapped, and `-XBUS.RQ` fell for sixteen ticks in the middle of
   // any cycle that reached 1,024 of them; six checks and sixty-three mutations
@@ -983,8 +1024,9 @@ module cadr_io_board (
       // The first `FCLK^` edge at or after `-MSYN` plus 33 ns, then a TD250.
       return fc_edge1 && ({1'b0, t_fclk} >= 8'(STRAIGHT_T) - l);
     end else if (ch_buf) begin
-      // Through the transmitter's `-TSR.SSYN`.
-      return {1'b0, t_msyn} >= 8'(CHAOS_BUF_T) - l;
+      // Through the transmitter's `-TSR.SSYN`, which waits for the shift
+      // register to be empty.
+      return {1'b0, t_msyn} >= 8'(CHAOS_BUF_T) - l && tsr_empty_for(lead);
     end else begin
       return {1'b0, t_msyn} >= 8'(STRAIGHT_T) - l;
     end
@@ -1150,6 +1192,11 @@ module cadr_io_board (
       t_hu        <= 8'd0;
       fc_edge1    <= 1'b0;
       t_fclk      <= 7'd0;
+      tsr_arm     <= 1'b0;
+      tsr_two     <= 1'b0;
+      tsr_tl      <= 6'd0;
+      tsr_left    <= 9'd0;
+      tsr_e       <= 6'h3F;
 
       // The Chaosnet interface as at power-up: "all read/write bits are
       // initialized to zero", Transmit Done up so that the first
@@ -1445,6 +1492,31 @@ module cadr_io_board (
         scancode  <= kbd_code;
         kbd_ready <= 1'b1;
         if (boot_match) boot_t <= 10'(BOOT_T);
+      end
+
+      // --- the transmitter's shift register ------------------------------
+      // A WRITE BUFFER or a START answered on this tick, `-UB SSYN`'s
+      // instant: the load is at the first tick at least `TSR_LOAD_T` on
+      // whose `FCLK^` edge it is, and `TSREMPTY` rises one word's
+      // `TSR_WORD_T` after it for a write and two for START.  `tsr_left`
+      // reads `k` at the tick `k` before the rise, and `tsr_e` `k` at the
+      // tick `k` after it.
+      if (land && ch_buf) begin
+        tsr_arm <= 1'b1;
+        tsr_two <= !wr;
+        tsr_tl  <= 6'd1;
+      end else if (tsr_arm) begin
+        if (tsr_tl >= 6'(TSR_LOAD_T) && fclk_now) begin
+          tsr_arm  <= 1'b0;
+          tsr_left <= tsr_two ? 9'(2 * TSR_WORD_T - 1) : 9'(TSR_WORD_T - 1);
+        end else if (tsr_tl != 6'h3F) begin
+          tsr_tl <= tsr_tl + 6'd1;
+        end
+      end else if (tsr_left != 9'd0) begin
+        tsr_left <= tsr_left - 9'd1;
+        if (tsr_left == 9'd1) tsr_e <= 6'd0;
+      end else if (tsr_e != 6'h3F) begin
+        tsr_e <= tsr_e + 6'd1;
       end
 
       // --- the bus cycle ---------------------------------------------------

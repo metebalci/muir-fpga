@@ -129,6 +129,12 @@ constexpr long kRbufSetup = 33;
 constexpr long kHalfUsec = 500;
 constexpr long kHalfUsecPhase = 203;
 constexpr long kSerialNs = 750;
+// `chaos::board::TSR_LOAD_NS` and `TSR_WORD_NS`: the transmitter's shift
+// register loads at the first `FCLK^` at least 101 ns after a WRITE BUFFER's
+// or a START's answer and shifts a word in 2,000 ns; a WRITE BUFFER or START
+// that comes while it is busy is answered `kChaosBuf` after it empties.
+constexpr long kTsrLoad = 101;
+constexpr long kTsrWord = 2000;
 // `busint::UNIBUS_STROBE_NS`: a master holds `-UB MSYN` this long after it
 // sees `-UB SSYN` --- "MSYN OUT drops at SSYN T100" --- and the card's word
 // crosses on the edge after the one `-UB SSYN` rises on, so a master that
@@ -175,6 +181,15 @@ long HalfUsecEdgeAfter(long t) {
   return kHalfUsecPhase + k * kHalfUsec;
 }
 
+// `IoBoardTiming::answer_cycle`'s memory: when the transmitter's shift
+// register is next empty, `TSREMPTY` up, on the board's own nanoseconds, or
+// -1 before any load.  `held` counts the answers it held.
+struct Tsr {
+  long empty = -1;
+  long held = 0;
+};
+long Grid(long t) { return (t + kTick - 1) / kTick * kTick; }
+
 // `IoBoardTiming::answer` on the board's own time, rounded up to the grid,
 // which is muir's `IoBoardTiming` under `TimingModel::Fpga` and what the trace
 // carries.  THREE REGISTERS ANSWER OFF THE GRID ON THE BOARD: the counter's low
@@ -183,7 +198,7 @@ long HalfUsecEdgeAfter(long t) {
 // nanoseconds short of a 10 ns tick; and the Chaosnet receive buffer, 250 ns
 // after an `FCLK^` edge that is an odd multiple of 125 on every other one.
 // That is the trace's `slip`.
-long AnswerNs(unsigned reg, int write, long msyn) {
+long AnswerNs(unsigned reg, int write, long msyn, Tsr *tsr) {
   long exact;
   if (reg == kUsecLowReg) {
     exact = UsecEdgeAfter(msyn) + kUsecLow;
@@ -192,8 +207,21 @@ long AnswerNs(unsigned reg, int write, long msyn) {
   } else if (reg >= kSerialFirst && reg <= kSerialLast) {
     exact = HalfUsecEdgeAfter(msyn) + kSerialNs;
   } else if (reg == kChaosStart || (reg == kChaosWbuf && write)) {
-    // Through the transmitter's `-TSR.SSYN`.
-    exact = msyn + kChaosBuf;
+    // Through the transmitter's `-TSR.SSYN`, held while its shift register
+    // is busy: `IoBoardTiming::answer_cycle` under `TimingModel::Fpga`, the
+    // edge it empties on rounded up to the grid and the load taken at the
+    // first `FCLK^` whose tick is at least `kTsrLoad` on the grid past the
+    // answer.  A cycle this check runs alone, `tsr` null, finds it empty.
+    long ssyn = Grid(msyn + kChaosBuf);
+    if (tsr != nullptr) {
+      if (tsr->empty >= 0 && Grid(tsr->empty) + kChaosBuf > ssyn) {
+        ssyn = Grid(tsr->empty) + kChaosBuf;
+        ++tsr->held;
+      }
+      const long load = FclkEdgeAtOrAfter(ssyn + Grid(kTsrLoad) - (kTick - 1));
+      tsr->empty = load + (reg == kChaosStart ? 2 : 1) * kTsrWord;
+    }
+    return ssyn;
   } else if (reg == kChaosRbuf) {
     // The receive buffer's RAM on `FCLK^`, and then a TD250.
     exact = FclkEdgeAtOrAfter(msyn + kRbufSetup) + kStraight;
@@ -677,6 +705,8 @@ int main(int argc, char **argv) {
     size_t row;
   };
   std::vector<Cyc> cycs;
+  // The shift register as the trace's cycles leave it, one after another.
+  Tsr tsr_trace;
   for (size_t i = 0; i < rows.size(); ++i) {
     const Row &r = rows[i];
     if (r.tag != kCyc) continue;
@@ -695,10 +725,13 @@ int main(int argc, char **argv) {
     }
     // The testbench's own model of `IoBoardTiming` against the trace: if these
     // ever part, the decode sweep below would be checking the wrong instant.
-    if (c.answered && AnswerNs(r.reg_, r.write, r.ns) != r.ssyn) {
-      std::fprintf(stderr, "FAIL: row %ld: this check computes -UB SSYN at %ld and muir says %ld\n",
-                   r.n, AnswerNs(r.reg_, r.write, r.ns), r.ssyn);
-      return 1;
+    if (c.answered) {
+      const long mine = AnswerNs(r.reg_, r.write, r.ns, &tsr_trace);
+      if (mine != r.ssyn) {
+        std::fprintf(stderr, "FAIL: row %ld: this check computes -UB SSYN at %ld and muir says %ld\n",
+                     r.n, mine, r.ssyn);
+        return 1;
+      }
     }
     cycs.push_back(c);
   }
@@ -796,6 +829,7 @@ int main(int argc, char **argv) {
   long syn_writes = 0, syn_resets = 0, syn_wraps = 0;
 
   long answered = 0, unanswered = 0, reads = 0, writes = 0, slips = 0, serial_slips = 0;
+  long tsr_slips = 0;
   long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0, ctxs = 0, sres = 0;
   // `-BOOT*`, watched at EVERY tick of the run and not only where a row says
   // so: the card must pull it for the boot word and for nothing else, and
@@ -1019,6 +1053,14 @@ int main(int argc, char **argv) {
             if (r.slip != rbuf_short)
               Fail(t, r, "the receive buffer's answer is not where the grid puts it", r.slip,
                    rbuf_short);
+          } else if (r.reg_ == kChaosStart || (r.reg_ == kChaosWbuf && r.write)) {
+            // Held: `kChaosBuf` after `TSREMPTY`, an `FCLK^` edge and whole
+            // words of 2,000 ns, so off the grid on every odd edge.
+            ++tsr_slips;
+            const long tsr_short = (kTick - (kFclk + kChaosBuf) % kTick) % kTick;
+            if (r.slip != tsr_short)
+              Fail(t, r, "a held transmit buffer answer is not where the grid puts it", r.slip,
+                   tsr_short);
           } else {
             Fail(t, r, "an answer off the grid at a register that should be on it", r.reg_,
                  kUsecLowReg);
@@ -1158,6 +1200,8 @@ int main(int argc, char **argv) {
   // answer, and WHEN.  The instant is what tells the three timing groups
   // apart, and so tells `0o764130` from `0o764120`'s neighbors.
   Dut s;
+  // A card fresh from reset, its shift register empty.
+  Tsr tsr_sweep;
   s.d->chaos_address = (unsigned)want_h("chaos_address");
   long dec_answers = 0, dec_silent = 0;
   for (long u = 0; u < kUbAddresses && bad < 25; ++u) {
@@ -1165,7 +1209,7 @@ int main(int argc, char **argv) {
       const unsigned reg = dec[w][u];
       const long msyn_t = s.tick;
       const bool ours = (reg != kNoReg);
-      const long ssyn_t = ours ? AnswerNs(reg, w, msyn_t * kTick) / kTick : 0;
+      const long ssyn_t = ours ? AnswerNs(reg, w, msyn_t * kTick, &tsr_sweep) / kTick : 0;
       const long last_t = ours ? ssyn_t + 3 : msyn_t + kSweepHold;
 
       s.d->ub_msyn = 1;
@@ -1422,6 +1466,8 @@ int main(int argc, char **argv) {
   same("received frames ended", sres, want_h("sre_rows"));
   same("words streamed into the receive buffer", rx_words, want_h("crx_words"));
   same("answers off the grid at the serial port", serial_slips, want_h("offgrid_serial"));
+  same("answers the shift register held", tsr_trace.held, want_h("tsr_held"));
+  same("held answers off the grid", tsr_slips, want_h("offgrid_tsr"));
   same("directions nothing answers", dec_silent, 2 * kUbAddresses - trace_answers);
   for (const auto &kv : hdr_reads) same("reads of a register", saw_reads[kv.first], kv.second);
   for (const auto &kv : hdr_writes) same("writes of a register", saw_writes[kv.first], kv.second);

@@ -175,7 +175,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use muir::busint::{IoBoardTiming, UNIBUS_STROBE_NS};
+use muir::busint::{IOB_CHAOS_BUFFER_NS, IoBoardTiming, UNIBUS_STROBE_NS};
 use muir::clock::{self, TimingModel};
 use muir::ioboard::{
     self, BEEP, CLOCK, CLOCK_VECTOR, CSR, FIRST_USEC_EDGE_NS, GPIO, INTERVAL_TICK_NS, IoBoard,
@@ -196,6 +196,9 @@ use muir::terminal::mouse::MOUSE_STEP_NS;
 /// 255, which traps in `RESET-ROUTING-TABLE` --- with both bytes
 /// different and neither 0 nor 0o377.
 const CHAOS_ADDRESS: u16 = 0o003101;
+/// Another station's address, for a frame that goes nowhere: no cable is
+/// plugged in.
+const CHAOS_PEER: u16 = 0o003040;
 
 /// MIT's grid, the master clock's period. Every instant the trace hands the
 /// fabric is a multiple of this; `slip` says where the board's own is not.
@@ -305,6 +308,10 @@ struct Gen {
     far_slips: u64,
     /// Of [`Gen::slips`], the ones at the serial port's group.
     serial_slips: u64,
+    /// WRITE BUFFERs and STARTs the transmitter's shift register held past
+    /// their free answer, and of [`Gen::slips`] the ones among them.
+    tsr_held: u64,
+    tsr_slips: u64,
     /// Every Unibus ADDRESS a cycle was run at, which is not the same set as
     /// [`Gen::reads`]'s keys: those are the REGISTERS `answers` takes them
     /// to, and this card's two new groups have four aliases between them.
@@ -365,6 +372,8 @@ impl Gen {
             spl_rows: 0,
             far_slips: 0,
             serial_slips: 0,
+            tsr_held: 0,
+            tsr_slips: 0,
             addrs: BTreeSet::new(),
             boot_rows: 0,
             boot_codes: BTreeSet::new(),
@@ -488,14 +497,22 @@ impl Gen {
                 // The answer on the grid is muir's own, `IoBoardTiming` under
                 // `TimingModel::Fpga`; the board's is only to say how far the
                 // grid moved it, and that it moved it UP to the first tick.
-                let ssyn = self.io.answer(r, write, msyn);
-                let exact = self.board.answer(r, write, msyn);
+                // **Cycles run one after another**, `answer_cycle`: a WRITE
+                // BUFFER or a START is held while the transmitter's shift
+                // register is busy with the last (muir's `37cf490`).
+                let free = self.io.answer(r, write, msyn);
+                let ssyn = self.io.answer_cycle(r, write, msyn);
+                let exact = self.board.answer_cycle(r, write, msyn);
+                if ssyn != free {
+                    assert!(ssyn > free, "a held answer came before the free one at {r:o}");
+                    self.tsr_held += 1;
+                }
                 assert!(exact > msyn, "the card answered at or before -MSYN");
                 assert_eq!(ssyn % TICK_NS, 0, "muir's fpga model answered off the grid at {r:o}");
                 assert_eq!(ssyn, grid_at(exact), "the grid is not the board's answer rounded up at {r:o}");
                 let slip = ssyn - exact;
                 if slip != 0 {
-                    // **THREE REGISTERS ANSWER OFF THE GRID AND NO OTHERS.**  The
+                    // **FOUR REGISTERS ANSWER OFF THE GRID AND NO OTHERS.**  The
                     // microsecond counter's low half takes `IOB_USEC_LOW_NS` =
                     // 313 past its edge; EVERY address of the serial port's
                     // group answers 750 ns after a half-microsecond clock whose
@@ -503,7 +520,10 @@ impl Gen {
                     // so 953 + 500k, which is 3 modulo 10; and the Chaosnet
                     // receive buffer answers 250 ns after an `FCLK^` edge, which
                     // is a multiple of 125 and so off the grid on every odd
-                    // one.  All are counted apart, and rounding UP is the same
+                    // one, and so do the transmit buffer's write and START
+                    // when the shift register held them, 350 ns after its
+                    // `TSREMPTY`, which is an `FCLK^` edge and 2,000 ns a
+                    // word.  All are counted apart, and rounding UP is the same
                     // argument in each place: a register can only be read at a
                     // grid instant, so nothing falls between the board's answer
                     // and the tick.
@@ -513,6 +533,9 @@ impl Gen {
                         assert_eq!(slip, 7, "the serial port's answer is not seven short of a tick");
                     } else if r == USEC_LOW {
                         assert_eq!(slip, 7, "the counter's low half is not seven short of a tick");
+                    } else if ssyn != free && (r == chaos::START || (r == chaos::WRITE_BUFFER && write)) {
+                        self.tsr_slips += 1;
+                        assert_eq!(slip, 5, "a held transmit buffer answer is not five short of a tick");
                     } else {
                         assert_eq!(
                             r, chaos::READ_BUFFER,
@@ -932,6 +955,25 @@ fn empty_frame(g: &mut Gen, t: u64) {
     let idle = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
     g.cbl(idle, false);
     assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "an empty frame landed as a packet");
+}
+
+/// To the first microsecond from now at which a START would put its frame
+/// on the cable no sooner than `gap` after its answer: found on copies, as
+/// [`when`] finds the far end's instants.
+fn quiet_turn(g: &mut Gen, gap: u64) {
+    for _ in 0..1_000 {
+        let mut b = g.b.clone();
+        let mut io = g.io.clone();
+        let a = io.answer_cycle(chaos::START, false, g.now);
+        b.advance(a);
+        b.read(chaos::START, a);
+        let busy = when(&b, a, 2_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+        if busy >= a + gap {
+            return;
+        }
+        g.wait(1_000);
+    }
+    panic!("no START within a millisecond leaves {gap} ns before its turn");
 }
 
 /// The Chaosnet interface's CSR as the software reads it.
@@ -1826,6 +1868,10 @@ fn main() {
     for w in &long {
         g.write(chaos::WRITE_BUFFER, *w);
     }
+    // The turn must not come before Clear Transmitter does, which with the
+    // shift register's hold on the 300 writes is a matter of the turn
+    // timer's phase, so START waits for one that leaves room.
+    quiet_turn(&mut g, 30_000);
     assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
     g.ctx(&long[..256]);
     // Clear Transmitter stops it before the turn ever comes: the buffer
@@ -2371,6 +2417,113 @@ fn main() {
     g.look();
 
     // ------------------------------------------------------------------
+    // THE TRANSMITTER'S SHIFT REGISTER HOLDS THE BUS (muir's `37cf490`,
+    // `IoBoardTiming::answer_cycle`, measured on the netlist board).  Each
+    // word written, and at START the source and check words, reaches the
+    // buffer through the shift register: it loads at the first `FCLK^` at
+    // least `TSR_LOAD_NS` = 101 ns after the cycle's answer and shifts a
+    // word in `TSR_WORD_NS` = 2,000 ns, and a WRITE BUFFER or START that
+    // comes while it is busy is answered `IOB_CHAOS_BUFFER_NS` = 350 ns
+    // after `TSREMPTY` rises.  The earlier sections hold many cycles
+    // already; this one places them: a free answer at each of the 25 grid
+    // phases of `FCLK^`'s two periods with a word right behind it, so that
+    // the held answer names the edge the register loaded on; the word
+    // behind swept across the instant the register empties; and a START
+    // behind a word and a word behind a START, two words a load.
+    // ------------------------------------------------------------------
+    const FCLK2: u64 = 250;
+    g.wait(5_000);
+    g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER);
+    // To the next instant at or after now plus `room` whose answer, free,
+    // falls `p` nanoseconds into `FCLK^`'s two periods.
+    fn aim_answer(g: &mut Gen, room: u64, p: u64) {
+        let from = g.now + room;
+        let a = from + IOB_CHAOS_BUFFER_NS;
+        let t = from + (p + FCLK2 - a % FCLK2) % FCLK2;
+        g.at(t);
+    }
+    let mut phases = BTreeSet::new();
+    for p in (0..FCLK2).step_by(TICK_NS as usize) {
+        aim_answer(&mut g, 5_000, p);
+        g.write(chaos::WRITE_BUFFER, 0o100000 | p as u16);
+        phases.insert(g.landed % FCLK2);
+        let before = g.tsr_held;
+        g.write(chaos::WRITE_BUFFER, 0o40000 | p as u16);
+        assert_eq!(g.tsr_held, before + 1, "the word right behind another was not held");
+    }
+    assert_eq!(phases.len(), 25, "the free answers missed a phase of FCLK^");
+    g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER);
+    // The word behind, swept across the instant the register empties: held
+    // before it, free from it on.
+    let mut sides = [0u64; 2];
+    for p in [0u64, 30, 90, 150, 200] {
+        for k in 0..6u64 {
+            aim_answer(&mut g, 5_000, p);
+            g.write(chaos::WRITE_BUFFER, 0o20000 | (p as u16) << 3 | k as u16);
+            // The first instant from which a word is answered free.
+            let probe = g.io.clone();
+            let mut m0 = g.now;
+            while probe.clone().answer_cycle(chaos::WRITE_BUFFER, true, m0)
+                != m0 + IOB_CHAOS_BUFFER_NS
+            {
+                m0 += TICK_NS;
+            }
+            let m = m0 - 30 + TICK_NS * k;
+            g.at(m.max(g.now));
+            let before = g.tsr_held;
+            g.write(chaos::WRITE_BUFFER, 0o10000 | (p as u16) << 3 | k as u16);
+            sides[usize::from(g.tsr_held == before)] += 1;
+        }
+        g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER);
+    }
+    assert!(sides[0] >= 10 && sides[1] >= 10, "the sweep did not cross the register's emptying: {sides:?}");
+    // START behind a word, and a word behind START: the source and check
+    // words are two loads' worth, 4,000 ns.  The frame goes into the void
+    // with no cable and no Loop Back, so the far end has only its busy cable
+    // and its Transmit Done to give.  A phase whose turn would come before
+    // the rows below have run is moved on by two periods of `FCLK^` until
+    // one does not.
+    for (j, p) in [0u64, 60, 120, 180, 240].into_iter().enumerate() {
+        let words: Vec<u16> = vec![0o1000 + j as u16, CHAOS_PEER];
+        let mut room = 20_000;
+        loop {
+            aim_answer(&mut g, room, p);
+            let mut b = g.b.clone();
+            let mut io = g.io.clone();
+            let mut m = g.now;
+            for w in &words {
+                let a = io.answer_cycle(chaos::WRITE_BUFFER, true, m);
+                b.advance(a);
+                b.write(chaos::WRITE_BUFFER, *w, a);
+                m = a + UNIBUS_STROBE_NS;
+            }
+            let a = io.answer_cycle(chaos::START, false, m);
+            b.advance(a);
+            b.read(chaos::START, a);
+            let behind = io.answer_cycle(chaos::WRITE_BUFFER, true, a + UNIBUS_STROBE_NS);
+            let busy = when(&b, a, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+            if busy > behind + 8_000 {
+                break;
+            }
+            room = FCLK2;
+        }
+        let t = g.now;
+        for w in &words {
+            g.write(chaos::WRITE_BUFFER, *w);
+        }
+        let before = g.tsr_held;
+        assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+        assert_eq!(g.tsr_held, before + 1, "START right behind a word was not held");
+        g.write(chaos::WRITE_BUFFER, 0o2000 + j as u16);
+        assert_eq!(g.tsr_held, before + 2, "a word right behind START was not held");
+        g.ctx(&words);
+        empty_frame(&mut g, t);
+        g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER);
+    }
+    g.wait(8_000);
+    g.look();
+
+    // ------------------------------------------------------------------
     // What the program covered.
     // ------------------------------------------------------------------
     let end = g.now;
@@ -2550,6 +2703,8 @@ fn main() {
     println!("# spl_rows {}", g.spl_rows);
     println!("# far_offgrid {}", g.far_slips);
     println!("# offgrid_serial {}", g.serial_slips);
+    println!("# tsr_held {}", g.tsr_held);
+    println!("# offgrid_tsr {}", g.tsr_slips);
     println!("# ccsr_values {}", g.ccsr_seen.len());
     println!("# sstat_values {}", g.sstat_seen.len());
     println!("# last_ns {end}");

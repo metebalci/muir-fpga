@@ -117,6 +117,79 @@ and raise Transmit Done about 8 µs later. The cable and `cadr-chaosnet` are
 left as they are, so the seam stays unchanged. MIT's software never reads
 START with nothing written.
 
+## The shift register holds the transmit buffer's writes
+
+Every word written into the outgoing buffer, and at START the source and check
+words, reaches the buffer through the transmitter's shift register. On MIT's
+board the register loads at the first edge of the board's 8 MHz `FCLK` at
+least 101 ns after the cycle's answer, and shifts one word in over 2,000 ns. A
+WRITE BUFFER or a START that comes while it is busy waits on `-TSR.SSYN`, and
+is answered 350 ns after `TSREMPTY` rises rather than 350 ns after `-MSYN`.
+muir measures this on the netlist board and models it
+(`IoBoardTiming::answer_cycle`), and the CADR's card does the same. MIT's
+microcode writes the second half of every 32-bit word, and START, sooner than
+the register takes them, so on a board each of those cycles is held.
+
+Only the card's own Unibus cycles load the register and wait on it. Revisions
+13 and 14 reach the interface through QUUX's register page, which is no
+Unibus cycle, and muir holds nothing there either. A Reset, a Clear
+Transmitter and `-UB INIT` leave the register as it stands, as muir's model
+does. Whether they empty it on the board is not measured.
+
+`iob` holds the hold. Its program answers a word at each of the 25 grid
+phases of two periods of `FCLK`, with a second word right behind it, so that
+the second word's answer names the edge the register loaded on. It sweeps a
+word across the instant the register empties, and puts a START behind a word
+and a word behind a START. With the earlier sections, 370 of the program's
+answers are held, and 338 of them fall 5 ns short of a tick, because
+`TSREMPTY` is an `FCLK` edge and every second edge is off the 10 ns grid.
+
+On the CADR and on revisions 13 and 14, the same register also says when a
+frame is ready for its turn: at `TSREMPTY` after START, 4,101 to 4,225 ns
+after the answer by the clock's phase, where muir used a fixed 4,150 ns. The
+turn timer is the far end's, and the fabric keeps no such instant: Transmit
+Done rises at the far end's `chaos_tx_done`, which the checks play from
+muir's instants (the `iob` trace's `CTD` rows, and the `# chaos-txdone` lines
+of the machine traces on the CADR and on revisions 13 and 14). So no check of
+the fabric can tell this rule from the fixed delay, and none is meant to. On a
+board Transmit Done comes back when `cadr-chaosnet` takes the frame off
+`cadr_chaos_cable.sv`, on no turn timer. Revision 15's interface is QUUX's own
+and keeps its rule, START ready 4,150 ns after the read on the machine's clock
+grid.
+
+## The interface takes its own frame when it is for it
+
+MIT's board takes its own frame off the cable when it is for it. Its
+transceiver hears the whole cable, its own transmission included, and its
+receiver judges that frame by `DEST MATCH` as it judges any other. A frame to
+the board's own address, to zero, or to anyone under Spy lands in a free
+buffer. With the buffer full the frame is counted in Lost Count, and one to
+the board's own address is aborted by the board's own busy receiver and reads
+back as Transmit Abort. muir measures the cases on the netlist board and does
+the same, on every revision.
+
+In the fabric that is the cable's, and the cable is the far end. The CADR's
+card and revision 15's interface take their own frame through the seam as
+they take any other: its words on `chaos_rx_*`, the count on
+`chaos_rx_lost`, and the abort on `chaos_tx_done` with `chaos_tx_abort`.
+`quux15_chaos_module` holds it: its script now has the interface take its own
+frame to its address, to zero and under Spy, and abort its own frame into a
+full buffer, with the testbench playing the far end as muir's interface saw
+it. A frame that would come back longer than the 256-word buffer, its source
+and check word added, is not started in that script; under Loop Back the
+script already kept its frames to 254 words. That case is left unchecked, not
+settled: muir stores such a frame whole, the seam refuses a frame of more than
+256 words, the card drops words past the 256th, and what the board's 4,096-bit
+receive buffer does with it is not measured. MIT's software never writes more
+than 253 words into a frame.
+
+**On a board the far end does not hand the machine its own frame, and this is
+a known difference.** `cadr-chaosnet` routes a frame by its cable destination
+and never back to the station that sent it, Spy is not implemented, and
+`cadr_chaos_cable.sv` never raises Transmit Abort. MIT's network software
+never sends a frame to its own address or to zero; MIT's interface test
+`CHATST` does.
+
 ## What Linux sees
 
 Two register faces, each behind one header so that a change of address touches
@@ -965,9 +1038,9 @@ because a signal is not a setting.
 ## What the checks hold to
 
 `iob` compares the card against muir's model over a scripted trace at the
-Unibus: 41,290,024 ticks, 1,589 bus cycles, 55 directions answered and 524,233
+Unibus: 41,623,571 ticks, 1,742 bus cycles, 55 directions answered and 524,233
 silent over all 524,288 directions of an eighteen-bit address, read and
-written, a real bus cycle each. 68 mutation records name the check.
+written, a real bus cycle each. 81 mutation records name the check.
 
 It has a second configuration now. The 2651's parity and framing flags cannot
 be held to muir at all, because muir's behavioral chip raises neither, so that

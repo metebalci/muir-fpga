@@ -63,6 +63,7 @@ struct Seen {
     crc: bool,
     lost: u8,
     busy: bool,
+    xmit: Vec<u16>,
     rcv: Vec<u16>,
     bits: u64,
     ready: Option<Vec<u16>>,
@@ -84,7 +85,7 @@ fn seen(i: &Interface, t: u64) -> Seen {
         let rdone = r.bool()?;
         let crc = r.bool()?;
         let lost = r.u8()?;
-        r.u16s()?;
+        let xmit = r.u16s()?;
         let rcv = r.u16s()?;
         r.u64()?;
         let bits = r.u64()?;
@@ -114,7 +115,7 @@ fn seen(i: &Interface, t: u64) -> Seen {
         } else {
             None
         };
-        Ok(Seen { rdone, tdone, tabort, crc, lost, busy, rcv, bits, ready })
+        Ok(Seen { rdone, tdone, tabort, crc, lost, busy, xmit, rcv, bits, ready })
     };
     let s = parse(&mut r).expect("the interface's checkpoint");
     assert_eq!(i.csr() & 0o40000 != 0, s.crc || s.busy, "the CSR's bit 14 as its two halves");
@@ -131,6 +132,10 @@ struct Script {
     now: u64,
     busy: bool,
     counts: [u64; 8],
+    /// Until when a frame of more than 254 words this interface started
+    /// may still be on the cable or landing: Spy and Loop Back are not set
+    /// before then (see [`Script::read`]).
+    long_until: u64,
 }
 
 impl Script {
@@ -173,6 +178,28 @@ impl Script {
 
     fn read(&mut self, t: u64, k: u32) {
         self.look(t);
+        // **A FRAME THAT WOULD COME BACK LONGER THAN THE RECEIVE BUFFER IS
+        // NOT STARTED.** Under Loop Back, and since muir's `792653c` also
+        // off the cable when it is for this interface --- to its address,
+        // to 0, or under Spy (DEST MATCH on the netlist board) --- the frame
+        // comes back with its source and check word, so more than 254 words
+        // would land as more than the buffer's 256, which the seam refuses.
+        // The read is left out of the script.
+        if k == 0o145 {
+            let csr = self.i.csr();
+            let x = &self.last.xmit;
+            let back = csr & (chaos::csr::LOOP_BACK | chaos::csr::SPY) != 0
+                || matches!(x.last(), Some(&ME) | Some(&0));
+            if x.len() > 254 {
+                if back {
+                    self.counts[6] += 1;
+                    return;
+                }
+                // Its frame takes about 1.1 ms and waits at most a round of
+                // the turn timer: 3 ms is past its landing.
+                self.long_until = t + 3_000_000;
+            }
+        }
         let v = match register(k, false) {
             Some(r) => self.i.read(r, t),
             None => 0,
@@ -227,6 +254,7 @@ fn main() {
         now: 0,
         busy: false,
         counts: [0; 8],
+        long_until: 0,
     };
     let mut seed: u64 = 0x5155_000f_0140_0145;
     let mut next = move || {
@@ -301,12 +329,18 @@ fn main() {
                 if next() % 40 == 0 {
                     v |= chaos::csr::RESET;
                 }
+                // Not while a long frame of this interface's may still
+                // land: it would come back past the buffer's 256 words.
+                if t < s.long_until {
+                    v &= !(chaos::csr::LOOP_BACK | chaos::csr::SPY);
+                }
                 s.write(t, 0o140, v | (next() as u16 & 0o152200));
             }
             6 | 7 => {
                 // A frame's words, now and then past the buffer's 256.
                 // Under Loop Back the frame comes back with its source and
-                // check word, so at most 254 words fit the buffer.
+                // check word, so at most 254 words fit the buffer; a frame
+                // that comes back longer is not started (`Script::read`).
                 let long = if s.i.csr() & chaos::csr::LOOP_BACK != 0 { 250 + next() % 5 } else { 250 + next() % 12 };
                 let n = if next() % 30 == 0 { long } else { 1 + next() % 8 };
                 for j in 0..n {
@@ -350,7 +384,7 @@ fn main() {
     }
     s.look(t + 400_000);
     eprintln!(
-        "quux15_chaos: {ops} operations: {} frames in, {} lost, {} Transmit Dones, {} STARTs, {} nonzero buffer reads, {} RESET-DEVICES",
-        s.counts[0], s.counts[1], s.counts[2], s.counts[3], s.counts[4], s.counts[5]
+        "quux15_chaos: {ops} operations: {} frames in, {} lost, {} Transmit Dones, {} STARTs, {} nonzero buffer reads, {} RESET-DEVICES, {} STARTs left out",
+        s.counts[0], s.counts[1], s.counts[2], s.counts[3], s.counts[4], s.counts[5], s.counts[6]
     );
 }

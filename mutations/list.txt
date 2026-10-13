@@ -31577,3 +31577,97 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
       m_awvalid = w_req;
 @end
+
+# ---------------------------------------------------------------------------
+# **THE CHAOSNET TRANSMITTER'S SHIFT REGISTER HOLDS THE UNIBUS** (muir's
+# `IoBoardTiming::answer_cycle`, measured on the netlist board), held by `iob`:
+# its program places a free answer at every grid phase of `FCLK^`'s two
+# periods with a word behind it, sweeps a word across the instant the register
+# empties, and puts a START behind a word and a word behind a START.
+
+@mutation iob-tsr-no-hold
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A WRITE BUFFER or START is answered 350 ns after -MSYN however busy the
+@note transmitter's shift register is: the card answers before muir's board.
+@old
+      return {1'b0, t_msyn} >= 8'(CHAOS_BUF_T) - l && tsr_empty_for(lead);
+@new
+      return {1'b0, t_msyn} >= 8'(CHAOS_BUF_T) - l && (1'b1 || tsr_empty_for(lead));
+@end
+
+@mutation iob-tsr-loads-off-fclk
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The shift register loads 101 ns after the answer, on the grid, rather
+@note than at the first FCLK^ edge past it, so TSREMPTY is off the board's
+@note clock.
+@old
+        if (tsr_tl >= 6'(TSR_LOAD_T) && fclk_now) begin
+@new
+        if (tsr_tl >= 6'(TSR_LOAD_T) && (1'b1 || fclk_now)) begin
+@end
+
+@mutation iob-tsr-loads-at-100
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The shift register takes an FCLK^ edge whose tick is 100 ns past the
+@note answer, which the board's 101 ns leaves for the next edge: two of the
+@note 25 grid phases load an edge early.
+@old
+        if (tsr_tl >= 6'(TSR_LOAD_T) && fclk_now) begin
+@new
+        if (tsr_tl >= 6'(TSR_LOAD_T - 1) && fclk_now) begin
+@end
+
+@mutation iob-tsr-start-loads-one-word
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note START loads one word where it loads the source and the check word, so a
+@note word written behind it is answered 2,000 ns early.
+@old
+        tsr_two <= !wr;
+@new
+        tsr_two <= 1'b0 && !wr;
+@end
+
+@mutation iob-tsr-hold-a-tick-short
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A held cycle is answered 340 ns after TSREMPTY, not 350.
+@old
+        && {2'b0, tsr_e} >= 8'(CHAOS_BUF_T) - {7'd0, lead};
+@new
+        && {2'b0, tsr_e} >= 8'(CHAOS_BUF_T - 1) - {7'd0, lead};
+@end
+
+@mutation iob-tsr-word-a-tick-short
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A written word shifts in 1,990 ns, not 2,000.
+@old
+          tsr_left <= tsr_two ? 9'(2 * TSR_WORD_T - 1) : 9'(TSR_WORD_T - 1);
+@new
+          tsr_left <= tsr_two ? 9'(2 * TSR_WORD_T - 1) : 9'(TSR_WORD_T - 2);
+@end
+
+@mutation iob-tsr-start-words-a-tick-short
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note START's source and check words shift in 3,990 ns, not 4,000.
+@old
+          tsr_left <= tsr_two ? 9'(2 * TSR_WORD_T - 1) : 9'(TSR_WORD_T - 1);
+@new
+          tsr_left <= tsr_two ? 9'(2 * TSR_WORD_T - 2) : 9'(TSR_WORD_T - 1);
+@end
+
+@mutation iob-tsr-every-chaos-cycle-loads
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Every cycle of the Chaosnet's group loads the shift register, a read of
+@note the CSR among them, where only WRITE BUFFER and START go through it.
+@old
+      if (land && ch_buf) begin
+@new
+      if (land && chgrp) begin
+@end
