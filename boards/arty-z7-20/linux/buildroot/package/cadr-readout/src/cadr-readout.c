@@ -50,56 +50,8 @@
 #include "readout.h"
 
 // The memories, by the name a person types and the selector the fabric takes,
-// with their depth and width on each machine the window can be on: the CADR,
-// QUUX to revision 12, QUUX revision 13, whose words are 40 bits, whose
-// dispatch memory is 4,096 entries and whose map is 8,192 seven-bit level-1
-// entries over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1), and
-// QUUX revision 14, revision 13's with no map levels: a TLB, which no
-// checkpoint keeps (contract G3 revision 14, A14.14).
-enum { M_CADR, M_QUUX, M_QUUX13, M_QUUX14, M_MACHINES };
-static const char *const kMachineNames[M_MACHINES] = {
-	"the CADR", "QUUX to revision 12", "QUUX revision 13", "QUUX revision 14"
-};
-struct mem {
-	const char *name;
-	unsigned sel;
-	unsigned depth[M_MACHINES];
-	unsigned bits[M_MACHINES];
-	const char *what;
-};
-#define SAME(v) { v, v, v, v }
-static const struct mem kMems[] = {
-	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), SAME(48), "the control store" },
-	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), SAME(48), "the boot PROM" },
-	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40, 40 }, "the A memory" },
-	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40, 40 }, "the M memory" },
-	{ "pdl",   IMG_SEL_PDL,
-	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS }, { 32, 32, 40, 40 },
-	  "the pushdown buffer" },
-	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(19), "the micro-stack" },
-	{ "dmem",  IMG_SEL_DMEM, { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
-	  SAME(17),
-	  "the dispatch memory" },
-	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13, 0 },
-	  { 5, 6, 7, 0 },
-	  "the level-1 map" },
-	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13, 0 },
-	  { 24, 24, 28, 0 }, "the level-2 map" },
-	{ "opcs",  IMG_SEL_OPCS, SAME(IMG_OPCS), SAME(14), "the OPC shift register" },
-	{ "regs",  IMG_SEL_REGS, SAME(21), SAME(48), "the register table below" },
-	{ "audit", IMG_SEL_AUDIT, SAME(IMG_AUDIT_WORDS), SAME(48),
-	  "the transaction audit; --audit decodes it" },
-};
-#undef SAME
-static const unsigned kMemCount = sizeof(kMems) / sizeof(kMems[0]);
-
-// The register table's entries, in the order `cadr_microcycle.sv` numbers
-// them.  A name a person would recognize, and the machine's own.
-static const char *const kRegNames[21] = {
-	"PC", "LPC", "IR", "IWR", "L", "Q", "VMA", "MD", "ST", "LC",
-	"WADR", "PDL-POINTER", "PDL-INDEX", "SPCPTR", "RETA", "DC", "LVMO",
-	"MD-HELD", "PHYS", "SPEED", "FLAGS"
-};
+// with their depth and width on each machine the window can be on, are
+// `readout.c`'s `ro_mems`; the register table's names are `ro_reg_names`.
 
 // The flag word, bit by bit, in `ro_flags`'s own order.  The last three are
 // QUUX's: its memory port drained (contract Q6), a `MEMSTART` that is the
@@ -133,24 +85,20 @@ static void mem_write(struct readout *r, unsigned word, uint32_t v)
 	f->reg[word] = v;
 }
 
-static const struct mem *by_name(const char *name)
-{
-	for (unsigned i = 0; i < kMemCount; ++i)
-		if (!strcmp(name, kMems[i].name))
-			return &kMems[i];
-	return NULL;
-}
-
 static void list(void)
 {
 	say("the window reaches these, `--dump NAME` or `--word NAME:ADDR`, words by bits");
-	say("  on %s, %s, and %s:", kMachineNames[M_CADR], kMachineNames[M_QUUX],
-	    kMachineNames[M_QUUX13]);
-	for (unsigned i = 0; i < kMemCount; ++i)
-		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u   %s", kMems[i].name,
-		    kMems[i].depth[M_CADR], kMems[i].bits[M_CADR],
-		    kMems[i].depth[M_QUUX], kMems[i].bits[M_QUUX],
-		    kMems[i].depth[M_QUUX13], kMems[i].bits[M_QUUX13], kMems[i].what);
+	say("  on %s, %s, %s, %s, and %s:", ro_machine_names[RO_M_CADR],
+	    ro_machine_names[RO_M_QUUX], ro_machine_names[RO_M_QUUX13],
+	    ro_machine_names[RO_M_QUUX14], ro_machine_names[RO_M_QUUX15]);
+	for (unsigned i = 0; i < ro_mem_count; ++i)
+		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u   %s", ro_mems[i].name,
+		    ro_mems[i].depth[RO_M_CADR], ro_mems[i].bits[RO_M_CADR],
+		    ro_mems[i].depth[RO_M_QUUX], ro_mems[i].bits[RO_M_QUUX],
+		    ro_mems[i].depth[RO_M_QUUX13], ro_mems[i].bits[RO_M_QUUX13],
+		    ro_mems[i].depth[RO_M_QUUX14], ro_mems[i].bits[RO_M_QUUX14],
+		    ro_mems[i].depth[RO_M_QUUX15], ro_mems[i].bits[RO_M_QUUX15], ro_mems[i].what);
+	say("a depth of 0 is a memory the machine has not got.");
 	say("a word is read by writing the address to page 0's word 10 and");
 	say("reading words 10, 11 and 12; word 10 comes back as the address the");
 	say("word beside it was read at, and this program refuses any word whose");
@@ -246,19 +194,31 @@ static int print_audit(struct readout *r)
 
 // The register table, printed.  Octal as well as hex, because MIT's own
 // listings are octal and a PC compared against `ucadr.sym` has to be.
-static int print_registers(struct readout *r)
+// Revision 15's table is its own (`img_rg15`), its flags three bits.
+static int print_registers(struct readout *r, int machine)
 {
-	uint64_t v[21];
-	for (unsigned i = 0; i < 21; ++i)
-		if (ro_word(r, IMG_SEL_REGS, i, &v[i]) != 0) {
+	const struct ro_mem *regs = ro_mem_by_name("regs");
+	const char *const *names = ro_reg_names(machine);
+	uint64_t v[IMG_RG15_COUNT];
+	for (unsigned i = 0; i < regs->depth[machine]; ++i)
+		if (ro_mem_word(r, machine, regs, i, &v[i]) != 0) {
 			say("the readout gave back a word for an address that was "
 			    "not the one asked for: the window is not answering");
 			return -1;
 		}
+	if (machine == RO_M_QUUX15) {
+		for (unsigned i = 0; i < regs->depth[machine]; ++i)
+			say("  %-14s 0x%016llx  0o%llo", names[i],
+			    (unsigned long long)v[i], (unsigned long long)v[i]);
+		const uint64_t f = v[IMG_RG15_FLAGS];
+		say("  %-14s %s%s%s%s", "FLAGS up", f & 1u ? "OVERFLOW " : "",
+		    f & 2u ? "VMAOK " : "", f & 4u ? "NXM " : "", f & 7u ? "" : "(none)");
+		return 0;
+	}
 	for (unsigned i = 0; i < 21; ++i) {
 		if (i == IMG_RG_FLAGS)
 			continue;
-		say("  %-12s 0x%012llx  0o%llo", kRegNames[i],
+		say("  %-12s 0x%012llx  0o%llo", names[i],
 		    (unsigned long long)v[i], (unsigned long long)v[i]);
 	}
 	// The flags, named, and only the ones that are up: thirty-four names
@@ -374,8 +334,31 @@ int main(int argc, char **argv)
 		    "CADR's NONE: the window is not answering", IMG_RG_QUUX_ID);
 		return 1;
 	}
-	const int machine = rev == 14 ? M_QUUX14 : rev == 13 ? M_QUUX13 : rev == 12 ? M_QUUX : M_CADR;
-	say("the bitstream is %s", kMachineNames[machine]);
+	// **A REVISION THIS PROGRAM HAS NO LAYOUT FOR IS REFUSED BY NAME**, and
+	// never read with another machine's: revision 15's fell to the CADR's.
+	const int machine = ro_machine_of(rev);
+	if (machine < 0) {
+		say("the bitstream is QUUX revision %d, and this program has no layout "
+		    "of its window", rev);
+		if (was_running && !leave_halted)
+			ro_start(&r);
+		return 1;
+	}
+	say("the bitstream is %s", ro_machine_names[machine]);
+	// **REVISION 15'S HALT IS ITS DRAIN'S END** (`ro_found`): its core reads
+	// its memories only while halted, so a word read before the drain ends
+	// is whatever the port last read (`quux15_face.sv`).
+	if (machine == RO_M_QUUX15) {
+		struct ro_stand st;
+		if (ro_found(&r, 1, &st) != RO_FOUND_HALTED) {
+			char text[512];
+			ro_stand_text(&st, 1, text, sizeof text);
+			say("the machine has not halted: %s.  Nothing is read.", text);
+			if (was_running && !leave_halted)
+				ro_start(&r);
+			return 1;
+		}
+	}
 
 	int rc = 0;
 	if (audit) {
@@ -385,17 +368,17 @@ int main(int argc, char **argv)
 		unsigned addr = 0;
 		if (sscanf(word, "%15[^:]:%u", name, &addr) != 2)
 			usage();
-		const struct mem *m = by_name(name);
+		const struct ro_mem *m = ro_mem_by_name(name);
 		if (!m) {
 			say("no memory called %s; --list says what there is", name);
 			rc = 1;
 		} else if (addr >= m->depth[machine]) {
 			say("%s has %u words on %s and you asked for %u", m->name,
-			    m->depth[machine], kMachineNames[machine], addr);
+			    m->depth[machine], ro_machine_names[machine], addr);
 			rc = 1;
 		} else {
 			uint64_t w = 0;
-			if (ro_word(&r, m->sel, addr, &w) != 0) {
+			if (ro_mem_word(&r, machine, m, addr, &w) != 0) {
 				say("the echo was not the address asked for");
 				rc = 1;
 			} else {
@@ -404,7 +387,7 @@ int main(int argc, char **argv)
 			}
 		}
 	} else if (dump) {
-		const struct mem *m = by_name(dump);
+		const struct ro_mem *m = ro_mem_by_name(dump);
 		if (!m) {
 			say("no memory called %s; --list says what there is", dump);
 			rc = 1;
@@ -423,7 +406,7 @@ int main(int argc, char **argv)
 			// actually does with this.
 			for (unsigned a = 0; a < m->depth[machine] && rc == 0; ++a) {
 				uint64_t w = 0;
-				if (ro_word(&r, m->sel, a, &w) != 0) {
+				if (ro_mem_word(&r, machine, m, a, &w) != 0) {
 					say("%s[%u]: the echo was not the address "
 					    "asked for", m->name, a);
 					rc = 1;
@@ -442,7 +425,7 @@ int main(int argc, char **argv)
 	} else {
 		say("the machine's own registers, which the diagnostic bus has "
 		    "no register for:");
-		rc = print_registers(&r) == 0 ? 0 : 1;
+		rc = print_registers(&r, machine) == 0 ? 0 : 1;
 	}
 
 	say("%lu reads and %lu writes over the console's window, %lu refused "

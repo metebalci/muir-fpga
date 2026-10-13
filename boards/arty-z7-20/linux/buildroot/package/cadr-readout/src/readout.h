@@ -216,6 +216,43 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 // for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
 
+// **THE MEMORIES `cadr-readout --word` AND `--dump` REACH, BY MACHINE**,
+// with their depth and width on each layout the window has: the CADR; QUUX
+// to revision 12; revision 13, whose words are 40 bits, whose dispatch
+// memory is 4,096 entries and whose map is 8,192 seven-bit level-1 entries
+// over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1); revision 14,
+// revision 13's with no map levels, a TLB, which no checkpoint keeps
+// (contract G3 revision 14, A14.14); and revision 15, revision 14's sizes
+// behind its own window (A15b.13, `quux15_core.sv`'s readout): the control
+// store and the PROM at 64 bits, no transaction audit, and a register table
+// of its own (`img_rg15`).
+//
+// **`ro_machine_of` takes `ro_quux_revision`'s answer and returns -1 for a
+// revision it has no layout for**, so that a revision added to the fabric
+// is refused by name here and never read with another machine's layout.
+enum ro_machine { RO_M_CADR, RO_M_QUUX, RO_M_QUUX13, RO_M_QUUX14, RO_M_QUUX15, RO_MACHINES };
+extern const char *const ro_machine_names[RO_MACHINES];
+int ro_machine_of(int revision);
+struct ro_mem {
+	const char *name;
+	unsigned sel;
+	unsigned depth[RO_MACHINES];	/* 0: the machine has no such memory */
+	unsigned bits[RO_MACHINES];
+	const char *what;
+};
+extern const struct ro_mem ro_mems[];
+extern const unsigned ro_mem_count;
+const struct ro_mem *ro_mem_by_name(const char *name);
+// One word of `m` at `addr` on `machine`: revision 15's by `ro_word64`, whose
+// echo moves only when the word is there, and the others' by `ro_word`.  0,
+// or -1 for an echo that was not the address asked for.
+int ro_mem_word(struct readout *r, int machine, const struct ro_mem *m, unsigned addr,
+		uint64_t *word);
+// The register table's names on `machine`, `ro_mem_by_name("regs")`'s depth
+// of them: the CADR's order (`cadr_microcycle.sv`) on all but revision 15,
+// and `img_rg15`'s there.
+const char *const *ro_reg_names(int machine);
+
 // **HOW MUCH MAIN MEMORY THE MACHINE HAS**, out of `RO_BOARDS`, in 64K-word
 // units --- the CADR's memory boards, or QUUX's amount sixteen to a
 // megaword: 1 to 1,024, or 0 when the word carries no marker --- a fabric

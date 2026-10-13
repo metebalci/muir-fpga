@@ -369,6 +369,94 @@ int ro_quux_revision(struct readout *r)
 	     : (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
+const char *const ro_machine_names[RO_MACHINES] = {
+	"the CADR", "QUUX to revision 12", "QUUX revision 13", "QUUX revision 14",
+	"QUUX revision 15"
+};
+
+int ro_machine_of(int rev)
+{
+	switch (rev) {
+	case 0: return RO_M_CADR;
+	case 12: return RO_M_QUUX;
+	case 13: return RO_M_QUUX13;
+	case 14: return RO_M_QUUX14;
+	case 15: return RO_M_QUUX15;
+	default: return -1;
+	}
+}
+
+// `readout.h` says what each column is.  Revision 15's: `quux15_core.sv`'s
+// `rm_word`, the control store and the PROM 64 bits, A, M and the PDL buffer
+// `{24'd0, word}`, the micro-stack 19 bits, dispatch memory 17 over 4,096
+// entries, the OPCs 14, the register table `reg_field`'s 23 entries, and
+// `RO_NO_MEMORY` at the map levels' and the audit's selectors.
+#define SAME(v) { v, v, v, v, v }
+const struct ro_mem ro_mems[] = {
+	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), { 48, 48, 48, 48, 64 }, "the control store" },
+	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), { 48, 48, 48, 48, 64 }, "the boot PROM" },
+	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40, 40, 40 }, "the A memory" },
+	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40, 40, 40 }, "the M memory" },
+	{ "pdl",   IMG_SEL_PDL,
+	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS,
+	    IMG_QUUX_PDL_WORDS },
+	  { 32, 32, 40, 40, 40 },
+	  "the pushdown buffer" },
+	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(19), "the micro-stack" },
+	{ "dmem",  IMG_SEL_DMEM,
+	  { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
+	  SAME(17),
+	  "the dispatch memory" },
+	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13, 0, 0 },
+	  { 5, 6, 7, 0, 0 },
+	  "the level-1 map" },
+	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13, 0, 0 },
+	  { 24, 24, 28, 0, 0 }, "the level-2 map" },
+	{ "opcs",  IMG_SEL_OPCS, SAME(IMG_OPCS), SAME(14), "the OPC shift register" },
+	{ "regs",  IMG_SEL_REGS, { 21, 21, 21, 21, IMG_RG15_COUNT }, { 48, 48, 48, 48, 64 },
+	  "the register table below" },
+	{ "audit", IMG_SEL_AUDIT, { IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, 0 },
+	  { 48, 48, 48, 48, 0 },
+	  "the transaction audit; --audit decodes it" },
+};
+#undef SAME
+const unsigned ro_mem_count = sizeof ro_mems / sizeof ro_mems[0];
+
+const struct ro_mem *ro_mem_by_name(const char *name)
+{
+	for (unsigned i = 0; i < ro_mem_count; ++i)
+		if (!strcmp(name, ro_mems[i].name))
+			return &ro_mems[i];
+	return NULL;
+}
+
+int ro_mem_word(struct readout *r, int machine, const struct ro_mem *m, unsigned addr,
+		uint64_t *word)
+{
+	if (machine == RO_M_QUUX15)
+		return ro_word64(r, m->sel, addr, word);
+	return ro_word(r, m->sel, addr, word);
+}
+
+// The CADR's order, `cadr_microcycle.sv`'s, and revision 15's,
+// `quux15_core.sv`'s `reg_field`.
+static const char *const kRegNames[21] = {
+	"PC", "LPC", "IR", "IWR", "L", "Q", "VMA", "MD", "ST", "LC",
+	"WADR", "PDL-POINTER", "PDL-INDEX", "SPCPTR", "RETA", "DC", "LVMO",
+	"MD-HELD", "PHYS", "SPEED", "FLAGS"
+};
+static const char *const kRegNames15[IMG_RG15_COUNT] = {
+	"Q", "VMA", "MD", "LC", "PDL-POINTER", "PDL-INDEX", "SPCPTR",
+	"INT-CONTROL", "DC", "FLAGS", "OPC", "MACRO-DISPATCH", "MACRO-INDEX",
+	"BASES", "ARMED", "DIRECTORY", "TYPES", "REFUSED", "COPIES", "POSTED",
+	"CLOCKS", "ID", "COMMITTED"
+};
+
+const char *const *ro_reg_names(int machine)
+{
+	return machine == RO_M_QUUX15 ? kRegNames15 : kRegNames;
+}
+
 int ro_video(struct readout *r, struct cadr_video *v)
 {
 	return cadr_video_decode(r->read(r, RO_VIDEO), v);
