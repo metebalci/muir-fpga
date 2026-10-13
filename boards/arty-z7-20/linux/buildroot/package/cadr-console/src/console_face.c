@@ -884,10 +884,10 @@ void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine
 	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
 	m->revision = (low >> 4) & 0xFFu;
 	m->processor_type = low & 0xFu;
-	// Revision 13's words are 40 bits, and revision 15's.  A revision this
-	// program has not met has a width it does not know, and says so rather
-	// than guessing.
-	m->word_bits = m->revision == 13 || m->revision == 15 ? 40 : 0;
+	// Revision 13's words are 40 bits, and revisions 14's and 15's.  A
+	// revision this program has not met has a width it does not know, and
+	// says so rather than guessing.
+	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
 }
 
 int cons_read_machine_id(struct console *c, struct cons_machine_id *m)

@@ -2595,7 +2595,8 @@ static void check_display_sleep_word(void)
 // register table's entry 21 and the stamp.  Every value is the check's: the
 // CADR's answer; revision 13 at the Arty Z7-20's K of 5 with an L that is not
 // K, so that crossed fields show; revision 13 on a board whose console reads
-// no stamp; revision 12, whose entry carries no MACHINE-ID; a revision this
+// no stamp; revision 12, whose entry carries no MACHINE-ID; revisions 14
+// and 15, whose words are 40 bits as revision 13's are; a revision this
 // program has not met; and a word that is neither machine's.  Each line is
 // held whole, so a field taken from the wrong bits, or a width or a revision
 // guessed, reads wrong.
@@ -2623,7 +2624,10 @@ static void check_machine_word(void)
 		  "(commit 1234abc, tree modified)" },
 		{ 0x5155060000E5ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
-		  "words of a width not known here, microcycle K=6 L=0; build 0000000f, no git information" },
+		  "40-bit words, microcycle K=6 L=0; build 0000000f, no git information" },
+		{ 0x515506000104ull, 0x0000000Fu, 0,
+		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), "
+		  "words of a width not known here, period 3 ns; build 0000000f, no git information" },
 		{ 0x5155220000F4ull, 0x0E4E7450u, 0,
 		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
 		  "40-bit words, period 17 ns; build 0e4e7450 (commit 0e4e745, tree clean)" },
@@ -2660,6 +2664,11 @@ static void check_machine_word(void)
 		      id.build.commit == 0x078F0F67u,
 		      "revision 13's entry decoded as rev %u K %u L %u id %08x type %u width %u",
 		      id.revision, id.k, id.l, id.machine_id, id.processor_type, id.word_bits);
+		// Revision 14's own MACHINE-ID: its words are revision 13's.
+		cons_machine_id_of(0x5155050000E4ull, 0, &id);
+		CHECK(id.quux == 1 && id.revision == 14 && id.processor_type == 4 && id.word_bits == 40,
+		      "revision 14's entry decoded as rev %u type %u width %u", id.revision,
+		      id.processor_type, id.word_bits);
 		cons_machine_id_of(CONS_RO_NO_MEMORY, CONS_BUILD_NONE, &id);
 		CHECK(id.quux == 0 && id.known == 1 && id.revision == 0 && id.machine_id == 0 &&
 		      id.word_bits == 32 && !id.build.stamped, "the CADR's answer decoded as QUUX's");
