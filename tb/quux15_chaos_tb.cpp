@@ -15,8 +15,8 @@
 // After each line the interrupt, `irq` with the inputs idle and `irq_state`
 // after one more idle clock, must be muir's; and in a write's own clock
 // `irq`, the interrupt as the write leaves it.  At every clock, Receive Done
-// down must find the incoming buffer's pointer and length at 0: the module
-// leaves the pointer alone at a commit on that ground.  After a START the frame it
+// down must find the incoming buffer's pointer at 0 and no read taken: the
+// module leaves the pointer alone at a commit on that ground.  After a START the frame it
 // sent must come out whole, `chaos_tx_go` with its length at the read's
 // edge and its words a clock each after.  Nothing here keeps a model of the
 // interface.
@@ -71,11 +71,11 @@ int main(int argc, char **argv) {
     dut->eval();
     dut->clk = 1;
     dut->eval();
-    // **WITH RECEIVE DONE DOWN THE POINTER AND THE LENGTH ARE 0**, which is
-    // why a commit leaves the pointer where it is.
+    // **WITH RECEIVE DONE DOWN THE POINTER IS 0 AND NO READ IS TAKEN**,
+    // which is why a commit leaves the pointer where it is.
     const auto *r = dut->rootp;
     if (!dut->rst && !r->quux15_chaos__DOT__ch_rdone &&
-        (r->quux15_chaos__DOT__ch_rat != 0 || r->quux15_chaos__DOT__ch_rlen != 0))
+        (r->quux15_chaos__DOT__ch_rat != 0 || r->quux15_chaos__DOT__ch_read != 0))
       ++unread;
     if (dut->chaos_tx_go) {
       tx_len = dut->chaos_tx_len;
@@ -147,10 +147,14 @@ int main(int argc, char **argv) {
       ++resets;
       irq_check(v[0]);
     } else if (op == "f" && v.size() >= 4 && v.size() == 4 + v[2]) {
+      // The frame's length is on `chaos_rx_bits` from its first word to its
+      // done, as `cadr_chaos_cable.sv` holds it: the card places each word
+      // by it as it comes.
       for (unsigned j = 0; j < v[2]; ++j) {
         idle();
         dut->chaos_rx_valid = 1;
         dut->chaos_rx_word = v[3 + j];
+        dut->chaos_rx_bits = v[0];
         tick();
       }
       idle();
@@ -196,7 +200,7 @@ int main(int argc, char **argv) {
   }
   std::fclose(f);
   if (stray) fail("words sent with no START", stray, 0);
-  if (unread) fail("clocks with Receive Done down and the pointer or the length not 0", unread, 0);
+  if (unread) fail("clocks with Receive Done down and the pointer not 0 or a read taken", unread, 0);
   if (!bad && (reads == 0 || frames == 0 || losts == 0 || dones == 0 || sends == 0 || resets == 0 ||
                irq_up == 0 || busy_rows == 0)) {
     std::fprintf(stderr, "FAIL: the script reached too little: %ld reads, %ld frames in, %ld lost, %ld Transmit "

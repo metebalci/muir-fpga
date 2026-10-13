@@ -756,9 +756,13 @@ int main(int argc, char **argv) {
   // frame whole at one instant; the card's receive buffer is filled a word a
   // tick off the seam and committed by `chaos_rx_done`, which is where the
   // trace puts the instant.  So the words go in on the ticks before the
-  // `CRX` row and nothing of them is visible until it: `ch_rlen` is the
-  // committed length and the fill counter is separate.
-  std::vector<std::pair<long, unsigned>> rx_stream;
+  // `CRX` row and nothing of them is visible until it, the frame's length on
+  // `chaos_rx_bits` from its first word as `cadr_chaos_cable.sv` holds it.
+  struct RxWord {
+    long tick;
+    unsigned word, bits;
+  };
+  std::vector<RxWord> rx_stream;
   {
     long prev = -1;
     for (const auto &r : rows) {
@@ -778,7 +782,7 @@ int main(int argc, char **argv) {
                      w.size());
         return 1;
       }
-      for (size_t k = 0; k < w.size(); ++k) rx_stream.push_back({from + (long)k, w[k]});
+      for (size_t k = 0; k < w.size(); ++k) rx_stream.push_back({from + (long)k, w[k], (unsigned)r.bits});
       prev = r.cmp_tick;
     }
   }
@@ -883,9 +887,10 @@ int main(int argc, char **argv) {
     b.d->ser_rx_parity = 0;
     b.d->ser_rx_framing = 0;
     b.d->chaos_rx_valid = 0;
-    if (xi < rx_stream.size() && rx_stream[xi].first == t) {
+    if (xi < rx_stream.size() && rx_stream[xi].tick == t) {
       b.d->chaos_rx_valid = 1;
-      b.d->chaos_rx_word = rx_stream[xi].second;
+      b.d->chaos_rx_word = rx_stream[xi].word;
+      b.d->chaos_rx_bits = rx_stream[xi].bits;
       ++xi;
       ++rx_words;
     }

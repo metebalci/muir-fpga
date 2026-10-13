@@ -10749,34 +10749,34 @@ if {0 && $held ne $want} {
 @note card off by one hands `uc-chaos.lisp` a packet a word long or a word
 @note short.
 @old
-                                         : ch_less;
+  assign chaos_bits = ch_rdone ? ch_rbct - 12'd1 : 12'd0;
 @new
-                                         : ch_less + 12'd1;
+  assign chaos_bits = ch_rdone ? ch_rbct : 12'd0;
 @end
 
-@mutation iob-the-read-buffer-keeps-its-word-past-the-packet
+@mutation iob-the-read-buffer-gives-a-word-with-no-packet
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note `self.rcv.get(self.rcv_at).copied().unwrap_or(0)`: past the end of the
-@note packet, and after Clear Receiver, the buffer reads ZERO.  A card giving
-@note back whatever its RAM still held hands the software the last packet's
+@note With no packet --- before the first, and after Clear Receiver --- the
+@note buffer reads ZERO (`READ_BUFFER` with Receive Done down).  A card
+@note giving back whatever its RAM held hands the software the last packet's
 @note words again --- the DDR bridge's `rdata` lesson at a second buffer, and
 @note the trace reads exactly there.
 @old
-      2'd2:    ch_now = (ch_rat < ch_rlen) ? ch_rd : 16'd0;
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
 @new
-      2'd2:    ch_now = ch_rd;
+  assign ch_word = !ch_rdone ? ch_rd : (!ch_read ? (ch_tw & ch_low) : ch_rd);
 @end
 
-@mutation iob-the-read-pointer-runs-past-the-packet
+@mutation iob-a-read-with-no-packet-moves-the-pointer
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note The 25LS193s at LMRBUF stop where the packet does: a read past the end
-@note takes nothing and moves nothing, so the bit counter stays at `7777` and
-@note the next packet starts where it should.  A pointer that ran on would
-@note put the following packet's first read somewhere in the middle of it.
+@note A read of the buffer with no packet takes nothing and moves nothing
+@note (`READ_BUFFER` with Receive Done down reads 0 and leaves the count),
+@note so the next packet's first read is its first word.  A pointer that
+@note moved would start the next packet somewhere in the middle of it.
 @old
-        end else if (c_rbuf && ch_rat != ch_rlen) begin
+        end else if (c_rbuf && ch_rdone) begin
 @new
         end else if (c_rbuf) begin
 @end
@@ -10806,9 +10806,11 @@ if {0 && $held ne $want} {
 @note emptied, so a count that survived the emptying would grow to fifteen
 @note and stay there.
 @old
-                ch_lost  <= 4'd0;
+                ch_hi_set <= 1'b0;
+                ch_lost   <= 4'd0;
 @new
-                ch_lost  <= ch_lost;
+                ch_hi_set <= 1'b0;
+                ch_lost   <= ch_lost;
 @end
 
 @mutation iob-the-lost-count-stops-at-fifteen
@@ -10866,16 +10868,34 @@ if {0 && $held ne $want} {
         end else begin
 @end
 
-@mutation iob-the-transmit-buffer-is-twice-its-size
+@mutation iob-the-transmit-count-stops-at-the-end
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note The 2147 at LMTBUF 0C10 is 4,096 bits on `TBCT<11:0>`: 256 sixteen-bit
-@note words, and a word past that has nowhere to go.  The trace writes three
-@note hundred and the card must hand over two hundred and fifty-six.
+@note TBCT is twelve bits and goes round: a word written past the 256th goes
+@note over the first, so 300 words written send the last 44, the source and
+@note the check (muir's `Interface::write`, measured on the netlist board).
+@note A count that stopped at 255, as the card's did at 256 when it dropped
+@note words past the end, makes the frame of 300 written the check word
+@note alone.  Caught at the frame of 300 words written.
 @old
-              if (ch_wn != 9'd256) begin
+              ch_xn     <= ch_wn + 8'd1;
 @new
-              if (ch_wn != 9'd511) begin
+              ch_xn     <= (ch_wn == 8'd255) ? ch_wn : ch_wn + 8'd1;
+@end
+
+@mutation iob-the-check-word-is-of-the-words-left
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The 9401 takes EVERY word written as it goes in, so the check word of
+@note a frame written past the buffer's end is of words the buffer no longer
+@note holds, and the read-out at the far end fails it (muir's
+@note `xmit_check`).  A checker that started again at the wrap makes the
+@note check of the words left, a good frame the board never sent.  Caught at
+@note the frame of 300 words written.
+@old
+              ch_xcheck <= crc_word(ch_wcheck, c_wdata);
+@new
+              ch_xcheck <= crc_word((ch_wn == 8'd0) ? 16'd0 : ch_wcheck, c_wdata);
 @end
 
 @mutation iob-start-does-not-take-the-buffer
@@ -10895,33 +10915,37 @@ if {0 && $held ne $want} {
 @check iob
 @file rtl/machine/cadr_io_board.sv
 @note `Interface::start` takes the outgoing buffer (`mem::take`), so a second
-@note START with no word written in between sends an empty buffer.  The
-@note word count still holds the packet the first START took; a card that
-@note reads it at START re-sends that packet, and on a board the far end
-@note puts it on the cable a second time.
+@note START with no word written in between sends an empty buffer, the
+@note source and the check word.  The word count still holds the packet the
+@note first START took; a card that reads it at START re-sends that packet,
+@note and on a board the far end puts it on the cable a second time.
 @old
-          chaos_tx_len <= ch_wn;
-          ch_send      <= ch_wn;
-          ch_out       <= 9'd0;
-          ch_sending   <= (ch_wn != 9'd0);
+          chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+          ch_send      <= ch_wn + 8'd2;
+          ch_src_at    <= ch_wn;
+          ch_tcheck    <= crc_word(ch_wcheck, chaos_address);
+          ch_out       <= 8'd0;
+          ch_sending   <= (ch_wn + 8'd2 != 8'd0);
 @new
-          chaos_tx_len <= ch_xn;
-          ch_send      <= ch_xn;
-          ch_out       <= 9'd0;
-          ch_sending   <= (ch_xn != 9'd0);
+          chaos_tx_len <= {1'b0, ch_xn + 8'd2};
+          ch_send      <= ch_xn + 8'd2;
+          ch_src_at    <= ch_xn;
+          ch_tcheck    <= crc_word(ch_xcheck, chaos_address);
+          ch_out       <= 8'd0;
+          ch_sending   <= (ch_xn + 8'd2 != 8'd0);
 @end
 
 @mutation iob-the-second-start-tells-the-far-end-the-previous-length
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note The same in the length alone: the burst is empty and `chaos_tx_len`
-@note says the first packet's length.  `cadr_chaos_cable.sv` counts the
-@note burst by that length, so it waits in its word state for words that
-@note never come.
+@note The same in the length alone: the burst is the source and the check
+@note word and `chaos_tx_len` says the first packet's length.
+@note `cadr_chaos_cable.sv` counts the burst by that length, so it waits in
+@note its word state for words that never come.
 @old
-          chaos_tx_len <= ch_wn;
+          chaos_tx_len <= {1'b0, ch_wn + 8'd2};
 @new
-          chaos_tx_len <= ch_xn;
+          chaos_tx_len <= {1'b0, ch_xn + 8'd2};
 @end
 
 @mutation iob-an-empty-start-leaves-transmit-done-up
@@ -10934,6 +10958,209 @@ if {0 && $held ne $want} {
           ch_tdone     <= 1'b0;
 @new
           chaos_tx_go  <= 1'b1;
+@end
+
+@mutation iob-254-words-offer-256
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The frame is the buffer below the count, `(n + 2) mod 256` words for
+@note `n` written, so 254 words written send NOTHING: the source and the
+@note check word take the count round to 0 (muir's `Interface::start`,
+@note measured on the netlist board, TSTART and TDONE 218 ns apart and
+@note nothing on the line).  A length that did not wrap offers the far end
+@note 256 words, and 257 and 258 for 255 and 256 written.  Caught at
+@note "chaos_tx_len at START" for 254 words written.
+@old
+          chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+@new
+          chaos_tx_len <= {1'b0, ch_wn} + 9'd2;
+@end
+
+@mutation iob-254-words-stream-a-whole-buffer
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The same in the stream: with nothing to send no word goes, where a
+@note card that always streamed would put 256 words of the buffer on the
+@note seam for 254 written.  Caught at the words handed over for it.
+@old
+          ch_sending   <= (ch_wn + 8'd2 != 8'd0);
+@new
+          ch_sending   <= 1'b1;
+@end
+
+@mutation iob-the-check-word-leaves-the-source-out
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note The Fairchild 9401 at LMTBUF C09 divides over the buffer's words AND
+@note the source START puts in after them --- `packet::frame` pushes the
+@note source before it calls `check_word` --- so a check word over the
+@note buffer alone is a frame every peer rejects and nothing on this board
+@note would notice.  Caught against the same eight lines
+@note `chaos_test_packet.c` holds to the board's own 0135771, at "the check
+@note word the card made".
+@old
+          ch_tcheck    <= crc_word(ch_wcheck, chaos_address);
+@new
+          ch_tcheck    <= ch_wcheck;
+@end
+
+@mutation iob-the-receive-buffer-is-filled-from-word-zero
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The board's bits go in at RBCT from 0, check word first, so word k of a
+@note frame lands at `top - k`, `top` the word its last bit is in, and the
+@note buffer's places are the same for every frame: what a read past a
+@note frame's end gives is an earlier frame's words at their own places.  A
+@note buffer filled from word 0 in the order the words come holds each
+@note frame alone, and reads past it and round it give the wrong words.
+@note Caught at the first packet read out.
+@old
+    rcv_wa = ch_top - ch_fill[7:0];
+@new
+    rcv_wa = ch_fill[7:0];
+@end
+
+@mutation iob-the-receive-buffer-keeps-words-past-its-end
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **THE SEAM'S LIMIT.**  A frame longer than the buffer leaves its last
+@note 4,096 bits, the ones read first: the far end hands the words in the
+@note order they are read, so every word past the 256th is older and gone,
+@note and only the 257th's bits above a partial first word stay.  A card
+@note that stored words past the 257th puts them over the frame's own words
+@note 1 and on.  The trace hands such words as stand-ins muir never has.
+@note Caught at the frame of 258 words from another station.
+@old
+    end else if (rx_in && ch_fill != 9'd0 && ch_fill < 9'd256) begin
+@new
+    end else if (rx_in && ch_fill != 9'd0 && ch_fill != 9'd256) begin
+@end
+
+@mutation iob-the-257th-word-leaves-the-first-words-place-alone
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Past 4,096 bits the 257th word goes in at the first word's place
+@note before the first word's own bits go over it, so with a partial first
+@note word the bits above it are the 257th's (muir's `land`).  A merge that
+@note ignored it keeps an earlier frame's bits there, which read 256 shows.
+@note Caught at the wreckage of 270 words read round the buffer.
+@old
+  assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
+@new
+  assign rx_merged  = ((ch_hi_set ? ch_rd : ch_rd) & ~rx_low) | (ch_w0 & rx_low) | (ch_hi & 16'd0);
+@end
+
+@mutation iob-a-partial-first-word-is-written-whole
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The board stores bits, so a partial first word writes only its own
+@note bits and the place keeps what it held above them, which read 256
+@note shows (muir's `land`).  A card writing the whole word puts zeros
+@note there.  Caught at the wreckage over an earlier frame of ones, read 300
+@note times.
+@old
+  assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
+@new
+  assign rx_merged  = ch_w0 | (((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) & 16'd0);
+@end
+
+@mutation iob-a-partial-first-word-reads-what-is-above-it
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The first read takes a partial top word with ZEROS above its bits,
+@note though the buffer holds an earlier frame's bits there (muir's
+@note `rcv_word`, measured on the netlist board over a frame of ones).  A
+@note card that read the place whole hands the software the earlier frame's
+@note bits in the packet's first word.  Caught at the wreckage over the
+@note frame of ones.
+@old
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+@new
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd);
+@end
+
+@mutation iob-crc-error-is-the-verdict-at-landing
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note From the first read on, CRC Error is the check of the words READ, the
+@note read-out run through the 9401: up partway through a good frame, down
+@note at its end, and up after the read-out of a frame that lost its check
+@note word to the wrap (muir's `read`, measured on the netlist board).  A
+@note card that kept the verdict the frame landed with reads CRC Error clear
+@note all through.  Caught at the first packet read out.
+@old
+          ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
+@new
+          ch_crc    <= ch_crc;
+@end
+
+@mutation iob-the-read-out-is-not-checked-on-the-board-path
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note The same through the board's own path, the cable's window and stream:
+@note there the receiver's verdict is always good, the cable holding
+@note `chaos_rx_crc` low, so the receive 9401's check of the read-out (LMRBUF
+@note 0C07) is the only thing that can say a frame is bad, and the band
+@note discards a packet on it.  A card that kept the verdict at landing hands
+@note the band a bad frame as good.  Caught at "CRC Error after a frame with a
+@note bad check word is read out".
+@old
+          ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
+@new
+          ch_crc    <= ch_crc;
+@end
+
+@mutation iob-a-48-bit-run-is-taken
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A run of 48 bits or fewer --- check, source and destination and
+@note nothing after --- is taken by no receiver (muir's `arrive`, measured on
+@note the netlist board: 257 words written send 48 bits that do not land,
+@note 258 send 64 that do).  The bound one word low takes the 48-bit run.
+@note Caught at the run of 257 words written handed back.
+@old
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd32);
+@end
+
+@mutation iob-a-64-bit-frame-is-refused
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The same bound one word high: the 64 bits of 258 words written land on
+@note the netlist board, and a card refusing them never raises Receive Done
+@note nor counts one lost.  Caught first at the lost-count section's frames,
+@note which are 64 bits.
+@old
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd64);
+@end
+
+@mutation iob-the-bit-count-stops-at-7777
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note RBCT is twelve bits and keeps coming down sixteen a read past 7777,
+@note round and round (muir's `bit_count`, measured on the netlist board),
+@note where the card's count used to stop.  Caught at the reads past the
+@note packet's end.
+@old
+          ch_rbct   <= ch_read ? ch_rbct - 12'd16 : {ch_top, 4'd0};
+@new
+          ch_rbct   <= ch_read ? ((ch_rbct == 12'd0) ? 12'd0 : ch_rbct - 12'd16) : {ch_top, 4'd0};
+@end
+
+@mutation iob-the-receive-buffer-comes-up-zero
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Never written, the netlist's RAM reads as ones (muir's
+@note `NEVER_WRITTEN`), and reading round past the first packet shows them.
+@note A buffer that came up zero reads zeros there.  Caught at the reads
+@note past the first packet.
+@old
+  initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'hFFFF;
+@new
+  initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'h0000;
 @end
 
 @mutation machine-takes-the-far-ends-transmit-done-only-with-an-abort
@@ -11514,34 +11741,45 @@ if {0 && $held ne $want} {
             w_word <= w_word - 10'd1;
 @end
 
-@mutation chaos-cable-leaves-the-source-out-of-the-check-word
-@check gp0_split
+@mutation chaos-cable-offers-a-frame-of-48-bits
+@check chaos_cable
 @file rtl/plumbing/cadr_chaos_cable.sv
-@note The Fairchild 9401 at LMTBUF C09 divides over the buffer's words AND
-@note the source the hardware adds --- `packet::frame` pushes the source
-@note before it calls `check_word` --- so a check word over the buffer alone
-@note is a frame every peer rejects and nothing on this board would notice.
-@note Caught against the same eight lines `chaos_test_packet.c` holds to the
-@note board's own 0135771.
+@note A frame of three words or fewer is 48 bits that no receiver takes and
+@note has no cable destination for the program to route by: it is not
+@note offered, and the machine is let go at once.  The bound one word low
+@note offers the three words of 257 written, the destination the program
+@note takes the third word from the end.  Caught at "STAT's TX_VALID after a
+@note frame of 3 words".
 @old
-          tx_check <= crc_word(crc, r_myaddr);
+        if (chaos_tx_len <= 9'd3) begin
 @new
-          tx_check <= crc;
+        if (chaos_tx_len <= 9'd2) begin
+@end
+
+@mutation chaos-cable-drops-a-frame-of-64-bits
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The same bound one word high: four words are a frame, the 64 bits of
+@note 258 written that land on the netlist board, and are offered.  Caught
+@note at "STAT's TX_VALID after a frame of 4 words".
+@old
+        if (chaos_tx_len <= 9'd3) begin
+@new
+        if (chaos_tx_len <= 9'd4) begin
 @end
 
 @mutation chaos-cable-reports-the-length-without-the-trailer
 @check gp0_split
 @file rtl/plumbing/cadr_chaos_cable.sv
 @note `TXLEN` is the frame's words WITH the source and the check word, which
-@note is what the seam carries: reporting the buffer's own length hands the
-@note program a frame two words short, and the two words it drops are exactly
-@note the ones the peer checks.  The `+ 10'd0` keeps every bit of `tx_held`
-@note used, so lint has nothing to say.  Caught at "TXLEN, the frame's words
-@note with the trailer".
+@note the card puts in the frame on the seam: reporting it two short, as if
+@note the trailer were still to be added here, hands the program a frame two
+@note words short, and the two words it drops are exactly the ones the peer
+@note checks.  Caught at "TXLEN, the frame's words with the trailer".
 @old
-        10'd3:   rd_data = tx_valid ? {22'd0, {1'b0, tx_held} + 10'd2} : 32'd0;
+        10'd3:   rd_data = tx_valid ? {23'd0, tx_held} : 32'd0;
 @new
-        10'd3:   rd_data = tx_valid ? {22'd0, {1'b0, tx_held} + 10'd0} : 32'd0;
+        10'd3:   rd_data = tx_valid ? {23'd0, tx_held - 9'd2} : 32'd0;
 @end
 
 @mutation chaos-cable-counts-the-frame-it-took-and-not-the-one-it-refused
@@ -18554,13 +18792,14 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @mutation chaos-cable-bit-count-from-the-live-rxlen
 @check chaos_cable
 @file rtl/plumbing/cadr_chaos_cable.sv
-@note The other half of the same defect: the card loads its bit counter from
-@note this on the done tick, so the right words with the next give's bit count
-@note are still a wrong frame.  Caught at "chaos_rx_bits at the done".
+@note The other half of the same defect: the card places each word by this
+@note from the first word and loads its bit counter from it on the done
+@note tick, so the right words with the next give's bit count are still a
+@note wrong frame.  Caught at "chaos_rx_bits at the done".
 @old
-  assign chaos_rx_bits  = {x_len, 4'b0000};     // sixteen bits a word
+  assign chaos_rx_bits  = {x_len, 4'b0000};
 @new
-  assign chaos_rx_bits  = {r_rxlen, 4'b0000};   // sixteen bits a word
+  assign chaos_rx_bits  = {r_rxlen, 4'b0000};
 @end
 
 @mutation chaos-cable-counts-a-malformed-commit-as-lost
@@ -30903,25 +31142,24 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-net-read-buffer-a-word-late
 @check quux15_network_quux
 @file rtl/machine/quux15_chaos.sv
-@note A read of 142 gives the word before the pointer's: each word a read
-@note late, the first a stale one.
+@note A read of 142 gives the word before the pointer's: each word after the
+@note first a read late.
 @old
-      ch_rd <= ch_rcv[ch_rat_n[7:0]];
+  assign rcv_ra = ch_top - ch_rat_n;
 @new
-      ch_rd <= ch_rcv[ch_rat_n[7:0] - 8'd1];
+  assign rcv_ra = ch_top - ch_rat_n + 8'd1;
 @end
 
-@mutation quux15-net-start-before-the-last-word
+@mutation quux15-net-start-a-word-short
 @check quux15_network_quux
 @file rtl/machine/quux15_chaos.sv
-@note START sends the buffer without the last word written into it, its
-@note destination.
+@note START sends the frame without its last word, the check word.
 @old
-        chaos_tx_len <= ch_wn;
-        ch_send      <= ch_wn;
+        chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+        ch_send      <= ch_wn + 8'd2;
 @new
-        chaos_tx_len <= ch_wn - 9'd1;
-        ch_send      <= ch_wn - 9'd1;
+        chaos_tx_len <= {1'b0, ch_wn + 8'd1};
+        ch_send      <= ch_wn + 8'd1;
 @end
 
 @mutation quux15-net-interrupt-enables-ignored
@@ -30986,12 +31224,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_chaos.sv
 @note Clear Receiver leaves the lost count, which muir's clears.
 @old
-              ch_fill  <= 9'd0;
-              ch_lost  <= 4'd0;
+              ch_hi_set <= 1'b0;
+              ch_lost   <= 4'd0;
             end
             if (wdata[8]) begin   // Clear Transmitter
 @new
-              ch_fill  <= 9'd0;
+              ch_hi_set <= 1'b0;
             end
             if (wdata[8]) begin   // Clear Transmitter
 @end
@@ -31046,17 +31284,22 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @check quux15_chaos_module_quux
 @file rtl/machine/quux15_chaos.sv
 @note A START after a START sends the first's length again, where muir's
-@note buffer went with the first and the second sends none.
+@note buffer went with the first and the second sends the source and the
+@note check word alone.
 @old
-        chaos_tx_len <= ch_wn;
-        ch_send      <= ch_wn;
-        ch_out       <= 9'd0;
-        ch_sending   <= (ch_wn != 9'd0);
+        chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+        ch_send      <= ch_wn + 8'd2;
+        ch_src_at    <= ch_wn;
+        ch_tcheck    <= crc_word(ch_wcheck, chaos_address);
+        ch_out       <= 8'd0;
+        ch_sending   <= (ch_wn + 8'd2 != 8'd0);
 @new
-        chaos_tx_len <= ch_xn;
-        ch_send      <= ch_xn;
-        ch_out       <= 9'd0;
-        ch_sending   <= (ch_xn != 9'd0);
+        chaos_tx_len <= {1'b0, ch_xn + 8'd2};
+        ch_send      <= ch_xn + 8'd2;
+        ch_src_at    <= ch_xn;
+        ch_tcheck    <= crc_word(ch_xcheck, chaos_address);
+        ch_out       <= 8'd0;
+        ch_sending   <= (ch_xn + 8'd2 != 8'd0);
 @end
 
 @mutation quux15-net-empty-start-leaves-transmit-done-up
@@ -31086,38 +31329,18 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-net-frame-lands-a-clock-late
 @check quux15_network_quux
 @file rtl/machine/quux15_chaos.sv
-@note The far end's commit is held a clock, in the fill's top bit, before
-@note Receive Done rises: the frame lands a clock after muir's grid has it.
+@note The far end's commit is held a clock before Receive Done rises: the
+@note frame lands a clock after muir's grid has it.
 @old
-      if (chaos_rx_done) begin
-        ch_fill <= 9'd0;
-        if (ch_rdone) begin
-          ch_lost <= ch_lost + 4'd1;
-        end else begin
-          ch_rlen  <= ch_fill;
-          ch_rbits <= chaos_rx_bits;
-          ch_left  <= chaos_rx_bits;
-          ch_crc   <= chaos_rx_crc;
-          ch_rdone <= 1'b1;
-        end
-      end
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
 @new
-      if (ch_fill[8] && !chaos_rx_valid) begin
-        ch_fill  <= 9'd0;
-        ch_rlen  <= {1'b0, ch_fill[7:0]};
-        ch_rdone <= 1'b1;
-      end
-      if (chaos_rx_done) begin
-        if (ch_rdone) begin
-          ch_fill <= 9'd0;
-          ch_lost <= ch_lost + 4'd1;
-        end else begin
-          ch_fill  <= {1'b1, ch_fill[7:0]};
-          ch_rbits <= chaos_rx_bits;
-          ch_left  <= chaos_rx_bits;
-          ch_crc   <= chaos_rx_crc;
-        end
-      end
+  logic        done_q;
+  logic [12:0] bits_q;
+  always_ff @(posedge clk) begin
+    done_q <= chaos_rx_done;
+    bits_q <= chaos_rx_bits;
+  end
+  assign taken_now  = done_q && (bits_q > 13'd48);
 @end
 
 @mutation quux15-net-clear-receiver-keeps-the-pointer
@@ -31126,18 +31349,198 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note Clear Receiver leaves the read pointer where a partly read frame left
 @note it, so the next frame reads from there, not from its first word.
 @old
-              ch_rlen  <= 9'd0;
-              ch_rat   <= 9'd0;
-              ch_left  <= 13'd0;
-              ch_rbits <= 13'd0;
-              ch_fill  <= 9'd0;
-              ch_lost  <= 4'd0;
+              ch_rdone  <= 1'b0;
+              ch_crc    <= 1'b0;
+              ch_rat    <= 8'd0;
 @new
-              ch_rlen  <= 9'd0;
-              ch_left  <= 13'd0;
-              ch_rbits <= 13'd0;
-              ch_fill  <= 9'd0;
-              ch_lost  <= 4'd0;
+              ch_rdone  <= 1'b0;
+              ch_crc    <= 1'b0;
+@end
+
+@mutation quux15-net-the-transmit-count-stops-at-the-end
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note TBCT goes round: a word written past the 256th goes over the first
+@note (muir's `Interface::write`, measured on the netlist board).  A count
+@note that stopped at 255 makes every frame written past it the check word
+@note alone, where the board sends 32 and 64 bits for 256 and 258 written.
+@note Caught at the frame of 256 words written.
+@old
+            ch_xn     <= ch_wn + 8'd1;
+@new
+            ch_xn     <= (ch_wn == 8'd255) ? ch_wn : ch_wn + 8'd1;
+@end
+
+@mutation quux15-net-the-check-word-is-of-the-words-left
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The 9401 takes every word written, so the check word of a frame
+@note written past the buffer's end is of words no longer in it.  A checker
+@note that started again at the wrap makes the check of the words left.
+@note Caught at the frames of 257 and 258 words written.
+@old
+            ch_xcheck <= crc_word(ch_wcheck, wdata);
+@new
+            ch_xcheck <= crc_word((ch_wn == 8'd0) ? 16'd0 : ch_wcheck, wdata);
+@end
+
+@mutation quux15-net-the-check-word-leaves-the-source-out
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The check word is of every word written AND the source START puts in
+@note after them (`packet::frame`, muir's `Interface::start`).  Over the
+@note words alone it is a frame every peer rejects.  Caught at every frame
+@note sent.
+@old
+        ch_tcheck    <= crc_word(ch_wcheck, chaos_address);
+@new
+        ch_tcheck    <= ch_wcheck;
+@end
+
+@mutation quux15-net-254-words-offer-256
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The frame is `(n + 2) mod 256` words for `n` written, so 254 written
+@note send nothing.  A length that did not wrap offers 256 words for 254.
+@note Caught at the frame START sent for 254 words written.
+@old
+        chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+@new
+        chaos_tx_len <= {1'b0, ch_wn} + 9'd2;
+@end
+
+@mutation quux15-net-254-words-stream-a-whole-buffer
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The same in the stream: with nothing to send no word goes, where a
+@note module that always streamed puts 256 words on the seam for 254
+@note written.  Caught at the words of the frame START sent.
+@old
+        ch_sending   <= (ch_wn + 8'd2 != 8'd0);
+@new
+        ch_sending   <= 1'b1;
+@end
+
+@mutation quux15-net-the-receive-buffer-is-filled-from-word-zero
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note Word k of a frame lands at `top - k`, the same places for every frame,
+@note so a read past a frame's end gives an earlier frame's words at their
+@note own places.  A buffer filled from word 0 in the order the words come
+@note gives the wrong ones.  Caught at the script's first frame read out.
+@old
+    rcv_wa = ch_top - ch_fill[7:0];
+@new
+    rcv_wa = ch_fill[7:0];
+@end
+
+@mutation quux15-net-the-receive-buffer-keeps-words-past-its-end
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note **THE SEAM'S LIMIT.**  Words handed past the 257th are older bits the
+@note buffer has lost, and stand-ins in the script.  A module storing them
+@note puts them over the frame's words 1 and on.  Caught at the frame of 258
+@note words from another station and the wreckage of 270.
+@old
+    end else if (rx_in && ch_fill != 9'd0 && ch_fill < 9'd256) begin
+@new
+    end else if (rx_in && ch_fill != 9'd0 && ch_fill != 9'd256) begin
+@end
+
+@mutation quux15-net-the-257th-word-leaves-the-first-words-place-alone
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note Past 4,096 bits, with a partial first word, the bits above it are the
+@note 257th word's (muir's `land`).  A merge that ignored it keeps an earlier
+@note frame's bits there, which read 256 shows.  Caught at the wreckage of
+@note 270 words read round the buffer.
+@old
+  assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
+@new
+  assign rx_merged  = ((ch_hi_set ? ch_rd : ch_rd) & ~rx_low) | (ch_w0 & rx_low) | (ch_hi & 16'd0);
+@end
+
+@mutation quux15-net-a-partial-first-word-is-written-whole
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A partial first word writes only its own bits, and the place keeps
+@note what it held above them, which read 256 shows.  Caught at the
+@note wreckage over the frame of ones, read 300 times.
+@old
+  assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
+@new
+  assign rx_merged  = ch_w0 | (((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) & 16'd0);
+@end
+
+@mutation quux15-net-a-partial-first-word-reads-what-is-above-it
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The first read takes a partial top word with zeros above its bits.  A
+@note module reading the place whole shows the earlier frame's ones.  Caught
+@note at the wreckage over the frame of ones.
+@old
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+@new
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd);
+@end
+
+@mutation quux15-net-crc-error-is-the-verdict-at-landing
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note From the first read on, CRC Error is the check of the words read.  A
+@note module that kept the verdict the frame landed with reads it clear
+@note through every read-out.  Caught at the CSR reads among the reads.
+@old
+        ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
+@new
+        ch_crc    <= ch_crc;
+@end
+
+@mutation quux15-net-a-48-bit-run-is-taken
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A run of 48 bits or fewer is taken by no receiver.  The bound one word
+@note low takes the 48-bit runs the script hands back.  Caught at those
+@note runs.
+@old
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd32);
+@end
+
+@mutation quux15-net-a-64-bit-frame-is-refused
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The same bound one word high refuses the 64 bits of 258 words
+@note written, which land on the netlist board.  Caught at those frames.
+@old
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd64);
+@end
+
+@mutation quux15-net-the-bit-count-stops-at-7777
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note RBCT keeps coming down sixteen a read past 7777, round and round.  A
+@note count that stopped there reads 7777 for ever.  Caught at the reads
+@note round the buffer.
+@old
+        ch_rbct   <= ch_read ? ch_rbct - 12'd16 : {ch_top, 4'd0};
+@new
+        ch_rbct   <= ch_read ? ((ch_rbct == 12'd0) ? 12'd0 : ch_rbct - 12'd16) : {ch_top, 4'd0};
+@end
+
+@mutation quux15-net-the-receive-buffer-comes-up-zero
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note Never written, the buffer reads as ones, the netlist's.  A buffer that
+@note came up zero reads zeros past the first frame.  Caught at the script's
+@note first frame read past its end.
+@old
+  initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'hFFFF;
+@new
+  initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'h0000;
 @end
 
 # ---------------------------------------------------------------------------

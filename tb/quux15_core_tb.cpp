@@ -1483,11 +1483,15 @@ int run_trace(const char *path, const Run &run, int seed) {
       chaos_why = "a frame at clock " + std::to_string(f.clock) + " whose words would come before clock 1";
       break;
     }
+    // The frame's length is on the seam from its first word to its done,
+    // as `cadr_chaos_cable.sv` holds it: the interface places each word by
+    // it as it comes.
     for (uint64_t j = 0; j < n; ++j) {
       Seam &c = seam[f.clock - 1 - n + j];
       if (c.rx_valid) chaos_why = "two frames' words in clock " + std::to_string(f.clock - 1 - n + j);
       c.rx_valid = true;
       c.rx_word = f.words[j];
+      c.rx_bits = f.bits;
     }
     Seam &c = seam[f.clock - 1];
     if (c.rx_done) chaos_why = "two frames at clock " + std::to_string(f.clock);

@@ -1168,8 +1168,9 @@ int main(int argc, char **argv) {
     // Reading START is what sends it.
     const unsigned started = b.UbRead(UB_CH_START);
     if (started != kMyAddr) Fail("a read of START, which is MY ADDRESS again", started, kMyAddr);
-    // The card bursts the buffer out a word a tick from the tick after; the
-    // cable takes it, appends the source and the check word and offers it.
+    // The card bursts the frame out a word a tick from the tick after, the
+    // source and the check word its 9401 made after the words; the cable
+    // takes it and offers it.
     long waited = 0;
     while (!(b.Read(CHAOS_PAGE + 4) & 1u) && waited < 40) ++waited;
     if (!(b.Read(CHAOS_PAGE + 4) & 1u)) Fail("STAT's TX_VALID after a START", 0, 1);
@@ -1185,8 +1186,8 @@ int main(int argc, char **argv) {
       const uint32_t got = b.Read(CHAOS_PAGE + 4 * (CH_TX_WIN + k));
       if (got != all[k]) {
         const char *what = k + 2 < all.size() ? "a word of the frame the machine transmitted"
-                         : (k + 2 == all.size() ? "the source address the cable inserted"
-                                                : "the check word the cable computed");
+                         : (k + 2 == all.size() ? "the source address the card put in"
+                                                : "the check word the card made");
         FailAt(CHAOS_PAGE + 4 * (CH_TX_WIN + k), what, got, all[k]);
       }
     }
@@ -1234,6 +1235,13 @@ int main(int argc, char **argv) {
     }
     const unsigned drained = b.UbRead(UB_CH_BITS);
     if (drained != 07777u) Fail("the bit counter once the packet is read out", drained, 07777u);
+    // **CRC ERROR AFTER THE READ-OUT IS THE RECEIVE 9401'S CHECK OF THE WORDS
+    // READ** (muir's `read`; the 9401 at LMRBUF 0C07), and a good frame's
+    // words check to zero.  This is the path every packet a board receives
+    // takes: the cable's window, its stream, the card's buffer and the
+    // Unibus read.  The band discards a packet whose CRC Error is up here.
+    const unsigned crc_good = b.UbRead(UB_CH_CSR);
+    if (crc_good & 040000u) Fail("CRC Error after a good frame is read out", crc_good, crc_good & ~040000u);
 
     // --- a frame given while the machine has not emptied its buffer is
     // refused and counted, which is the only way the program can tell.
@@ -1275,6 +1283,34 @@ int main(int argc, char **argv) {
     for (unsigned k = 0; k < in.size(); ++k) (void)b.UbRead(UB_CH_RDBUF);
     b.UbWrite(UB_CH_CSR, 010u);
     b.Idle(4);
+
+    // --- and a frame whose check word has one bit wrong, the same path: the
+    // receiver's verdict is not on this seam (the cable holds `chaos_rx_crc`
+    // low), so only the read-out's own check can say it, and it must.
+    {
+      std::vector<uint16_t> bad = in;
+      bad.back() ^= 0x0100u;
+      for (unsigned k = 0; k < bad.size(); ++k)
+        b.Write(CHAOS_PAGE + 4 * (CH_RX_WIN + k), bad[k]);
+      b.Write(CHAOS_PAGE + 4 * 4, (uint32_t)bad.size());
+      b.Write(CHAOS_PAGE + 4 * 5, 2u);
+      b.Idle(600);
+      ++frames_in;
+      const unsigned landed = b.UbRead(UB_CH_CSR);
+      if (!(landed & 0100000u)) Fail("Receive Done for the frame with a bad check word", landed, 0100000u);
+      for (unsigned k = 0; k < bad.size(); ++k) {
+        const unsigned got = b.UbRead(UB_CH_RDBUF);
+        if (got != bad[k]) Fail("a word of the frame with a bad check word", got, bad[k]);
+      }
+      const unsigned crc_bad = b.UbRead(UB_CH_CSR);
+      if (!(crc_bad & 040000u))
+        Fail("CRC Error after a frame with a bad check word is read out", crc_bad, crc_bad | 040000u);
+      b.UbWrite(UB_CH_CSR, 010u);
+      b.Idle(4);
+      // Clear Receiver takes the verdict away with the packet.
+      const unsigned cleared = b.UbRead(UB_CH_CSR);
+      if (cleared & 040000u) Fail("CRC Error after Clear Receiver", cleared, cleared & ~040000u);
+    }
 
     // ------------------------------------------------------------------
     // THE CARD'S FOUR BITS: A RUN OF REFUSALS, THE SATURATION, AND THE TWO

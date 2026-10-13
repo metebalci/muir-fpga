@@ -60,19 +60,26 @@
 //!
 //!   # chaos-address <address>                 the switches
 //!   # chaos-busy <clock> <level>              the cable busy from that row
-//!   # chaos-rx <clock> <bits> <crc> <n> <words>  a frame in the buffer
+//!   # chaos-rx <clock> <bits> <crc> <n> <words>  a frame in the buffer, its
+//!                                             words as the far end hands
+//!                                             them (`quux15_chaos.rs`'s
+//!                                             `handed`)
 //!   # chaos-lost <clock>                      a frame counted lost
 //!   # chaos-txdone <clock> <abort>            Transmit Done
 //!   # chaos-tx <clock> <n> <words>            START taken at that clock:
-//!                                             the buffer the fabric sends
+//!                                             the frame the fabric sends,
+//!                                             the source and the check
+//!                                             word with it
 //!
 //! The busy level is bit 14 of muir's CSR, which its model raises while a
-//! frame is on the cable; every frame here has a good check word, so the
-//! bit is the cable's alone.  `micro` is not run: what a run ends with
+//! frame is on the cable, less CRC Error; every frame here lands with a
+//! good check word, and CRC Error after is the check of the words read,
+//! which the interface makes itself.  `micro` is not run: what a run ends with
 //! depends on the cable's instants, which `micro` keeps otherwise.
 
 use muir::chaos::board::Interface;
 use muir::chaos::ether::{BUSY_ABORT_NS, Ether};
+use muir::chaos::packet::check_word;
 use muir::engine::Engine;
 use muir::isa::asm::{
     ADD, ALU, AND, JUMP, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ, START_WRITE, SUB, a_dest,
@@ -188,9 +195,19 @@ fn seen(i: &Interface) -> Seen {
             r.u16()?;
             r.u64()?;
         }
+        // The frame START made ready, as `Turn::save` writes it: the words
+        // written when it is a frame of them, its source and check word to
+        // be made again; otherwise the line itself and 512 words more.
         let ready = if r.bool()? {
             r.u64()?;
-            Some(r.u16s()?)
+            let mut v = r.u16s()?;
+            if v.len() >= 512 {
+                v.truncate(v.len() - 512);
+            } else {
+                v.push(ME);
+                v.push(check_word(&v));
+            }
+            Some(v)
         } else {
             None
         };
@@ -362,22 +379,26 @@ impl Net {
 
     /// The cable's events between `a` and `b`, at clock `k`.
     fn events(&mut self, k: u64, a: &Seen, b: &Seen) -> Result<(), String> {
-        if b.crc {
+        // CRC Error is the frame's verdict when it lands, and from the
+        // first read on the check of the words read, which is up partway
+        // through any good frame.
+        if !a.rdone && b.rdone && b.crc {
             return Err(format!("clock {k}: a frame with a bad check word, which no frame here has"));
         }
         if a.rdone && !b.rdone || a.tdone && !b.tdone {
             return Err(format!("clock {k}: Receive Done or Transmit Done fell with no write"));
         }
         if !a.rdone && b.rdone {
-            let words: Vec<String> = b.rcv.iter().map(|w| format!("{w:x}")).collect();
-            self.lines.push(format!(
-                "# chaos-rx {k:x} {:x} {:x} {:x} {}",
-                b.bits,
-                b.crc as u8,
-                b.rcv.len(),
-                words.join(" ")
-            ));
-            self.rx.push((k, b.rcv.len()));
+            // The frame as the far end hands it: the buffer, which muir keeps
+            // whole in the order it is read, cut to the frame's words; every
+            // frame here is whole words and fits it.
+            let n = b.bits.div_ceil(16) as usize;
+            if b.rcv.len() != 256 || b.bits % 16 != 0 || n > 256 {
+                return Err(format!("clock {k}: a frame of {} bits, which no frame here is", b.bits));
+            }
+            let words: Vec<String> = b.rcv[..n].iter().map(|w| format!("{w:x}")).collect();
+            self.lines.push(format!("# chaos-rx {k:x} {:x} {:x} {n:x} {}", b.bits, b.crc as u8, words.join(" ")));
+            self.rx.push((k, n));
         }
         let lost = b.lost.wrapping_sub(a.lost) & 0o17;
         if lost > 1 {

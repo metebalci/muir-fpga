@@ -18,13 +18,14 @@
 //                     where the CADR's board aliases 764150, 764156 and a
 //                     write of 764152)
 //
-// **THE REGISTERS AND THE TWO BUFFERS ARE THIS MODULE'S AND THE CABLE IS
-// NOT**, as on the CADR's card: the turn timer, the frame, the check word
-// and the transceiver are `cadr-chaosnet`'s on a board, behind
-// `cadr_chaos_cable.sv`, whose seam this module keeps port for port
-// (`chaos_*`), so that program runs unchanged.  **SO NOTHING HERE KEEPS
-// TIME**: the network's times (MP2b ruling Q19) are the far end's, which
-// says when a frame lands, when one is away and when the cable is busy.
+// **THE REGISTERS, THE TWO BUFFERS AND THE CHECKER ARE THIS MODULE'S AND
+// THE CABLE IS NOT**, as on the CADR's card: the turn timer, the
+// transceiver and the receiver's verdict on a frame are `cadr-chaosnet`'s
+// on a board, behind `cadr_chaos_cable.sv`, whose seam this module keeps
+// port for port (`chaos_*`), so that program runs unchanged.  **SO NOTHING
+// HERE KEEPS TIME**: the network's times (MP2b ruling Q19) are the far
+// end's, which says when a frame lands, when one is away and when the cable
+// is busy.
 // The CADR's card times only its Unibus answers (`CHAOS_BUF_T` and the
 // receive buffer's `FCLK^`), which revision 15 does not have.
 //
@@ -54,6 +55,17 @@
 // `-UB INIT`), both AIM-628's "as at power up", and `chaos_reset` tells the
 // far end.  The console's `-RESET` and `-BOOT` do not reach it, as muir's
 // pipeline's do not.
+//
+// **5. BOTH BUFFERS GO ROUND** (muir's `chaos::board`, measured on the
+// netlist board; `cadr_io_board.sv` has the long account).  Each is a 2147,
+// 4K by 1, on a twelve-bit count that wraps: a word written past the 256th
+// goes over the first, and START sends `(16n + 32) mod 4096` bits for `n`
+// words written, the source and the check word put in at the count like
+// the words --- nothing at all for 254.  A frame longer than the incoming
+// buffer leaves its last 4,096 bits, the ones read first; reads go on round
+// the buffer for ever, the bit count with them in twelve bits; CRC Error
+// from the first read on is the check of the words read; and a run of 48
+// bits or fewer is taken by nobody.
 //
 // The receive buffer's word is read off its RAM a clock ahead, at the
 // pointer the edge leaves, so that a read in any clock after a commit or a
@@ -92,7 +104,7 @@ module quux15_chaos (
     // --- the cable's seam, `cadr_io_board.sv`'s and `cadr_chaos_cable.sv`'s
     input  var logic [15:0] chaos_address,  // the switches: MY ADDRESS
     output var logic        chaos_tx_go,    // START was read: this frame is to go
-    output var logic [8:0]  chaos_tx_len,   // how many words of it, 0 to 256
+    output var logic [8:0]  chaos_tx_len,   // how many words of it, 0 to 255
     output var logic        chaos_tx_valid, // one word of it, in order, from the clock after
     output var logic [15:0] chaos_tx_word,
     output var logic        chaos_tx_clear, // Clear Transmitter: drop a frame not yet away
@@ -101,7 +113,7 @@ module quux15_chaos (
     input  var logic        chaos_rx_valid, // one word into the receive buffer
     input  var logic [15:0] chaos_rx_word,
     input  var logic        chaos_rx_done,  // that was the packet
-    input  var logic [12:0] chaos_rx_bits,  // its length, what the bit counter loads
+    input  var logic [12:0] chaos_rx_bits,  // its length, from its first word to its done
     input  var logic        chaos_rx_crc,   // its check word failed
     input  var logic        chaos_rx_lost,  // a frame for this interface found the buffer busy
     input  var logic        chaos_tx_done,  // the frame is away
@@ -117,27 +129,71 @@ module quux15_chaos (
   localparam logic [2:0] K_BITS  = 3'd3;   // 143
   localparam logic [2:0] K_START = 3'd5;   // 145
 
-  // The 2147s at LMTBUF 0C10 and LMRBUF 0C04: 256 words each.
+  // The two checkers, Fairchild 9401s: the one at LMTBUF 0C09 makes the
+  // check word as the words are written, the one at LMRBUF 0C07 checks the
+  // read-out.  muir's
+  // `packet::check_word`, CRC-16 `x^16 + x^15 + x^2 + 1` from a cleared
+  // register, a word most significant bit first, stage k in bit k.  One
+  // word a step, `check_on`'s step.
+  localparam logic [15:0] CRC_TAPS = 16'h8005;   // 1 | 1<<2 | 1<<15
+  function automatic logic [15:0] crc_word(input logic [15:0] crc_in, input logic [15:0] crc_w);
+    logic [15:0] crc_q;
+    logic        crc_fb;
+    crc_q = crc_in;
+    for (int crc_k = 15; crc_k >= 0; crc_k--) begin
+      crc_fb = crc_w[crc_k] ^ crc_q[15];
+      crc_q  = {crc_q[14:0], 1'b0};
+      if (crc_fb) crc_q = crc_q ^ CRC_TAPS;
+    end
+    return crc_q;
+  endfunction
+
+  // The 2147s at LMTBUF 0C10 and LMRBUF 0C04: 256 words each, on counts that
+  // wrap.  The incoming one comes up all ones, which is what the netlist's
+  // RAM reads as never written (muir's `NEVER_WRITTEN`); what a real 2147
+  // holds at power-up is not known.
+  // On a board "power-up" is configuration: a reboot that does not load the
+  // bitstream again keeps the old words, as muir's Reset keeps its buffer.
   logic [15:0] ch_xmit [CH_WORDS];
   logic [15:0] ch_rcv  [CH_WORDS];
-  logic [8:0]  ch_xn;        // words in the transmit buffer, 0 to 256
-  logic        ch_taken;     // START took it: the next write starts again at 0
-  logic [8:0]  ch_fill;      // words the far end has put in for the next packet
-  logic [8:0]  ch_rlen;      // words the packet in the buffer has
-  logic [8:0]  ch_rat;       // the read pointer
-  logic [12:0] ch_rbits;     // what the bit counter was loaded with
-  logic [12:0] ch_left;      // bits not yet read out
+  initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'hFFFF;
+
+  // --- the transmitter
+  logic [7:0]  ch_xn;        // TBCT in words: the words written, mod 256
+  logic [15:0] ch_xcheck;    // the check of every word written
+  logic        ch_taken;     // START took them: the next write starts again at 0
+  logic [7:0]  ch_out, ch_send;  // the frame's word going out, and its length
+  logic [7:0]  ch_src_at;    // where the source is in it; the check word after
+  logic [15:0] ch_tcheck;    // the check word START made
+  logic        ch_sending;
+  logic [15:0] ch_xq;        // the transmit buffer's word at `ch_out`
+  logic        ch_q_src, ch_q_chk;   // ...or the source, or the check word, instead
+  // --- the receiver
+  logic [8:0]  ch_fill;      // words of the frame coming in so far, held at 257
+  logic [7:0]  ch_top;       // the word its last bit is in: where read 0 is
+  logic [15:0] ch_w0;        // its first word, as handed
+  logic [15:0] ch_hi;        // its 257th, whose bits above a partial first word stay
+  logic        ch_hi_set;
+  logic [15:0] ch_tw;        // the first word as the buffer holds it once landed
+  logic [3:0]  ch_rlow;      // the frame's bits mod 16: the first word's bits
+  logic [7:0]  ch_rat;       // reads taken, mod 256: the 25LS193s at LMRBUF
+  logic        ch_read;      // ...and whether any has been since it landed
+  logic [11:0] ch_rbct;      // RBCT
+  logic [15:0] ch_rcheck;    // the check of the words read
   logic [5:0]  ch_wbits;     // the five bits a write reaches, `chaos::board::WRITABLE`
   logic        ch_tdone, ch_tabort, ch_rdone, ch_crc;
   logic [3:0]  ch_lost;
   logic [15:0] ch_rd;        // the buffer's word at the pointer
-  logic [8:0]  ch_out, ch_send;
-  logic        ch_sending;
 
-  // Where the next word of a packet goes: one write port, the mux on its
-  // address (`cadr_io_board.sv` says why).
-  logic [8:0] ch_wn;
-  assign ch_wn = ch_taken ? 9'd0 : ch_xn;
+  // Where the next word of a packet goes, and the check it carries on.
+  logic [7:0]  ch_wn;
+  logic [15:0] ch_wcheck;
+  assign ch_wn     = ch_taken ? 8'd0 : ch_xn;
+  assign ch_wcheck = ch_taken ? 16'd0 : ch_xcheck;
+
+  // The word the frame's stream gives: the buffer's, or in their places the
+  // source and the check word, which on the board go in at the count.
+  assign chaos_tx_word = ch_q_src ? chaos_address : (ch_q_chk ? ch_tcheck : ch_xq);
 
   // The CSR as read: bits 13, 8 and 3 are write-only commands and read 0;
   // bit 14 is the check word's verdict, with the cable's busy ORed in as
@@ -145,25 +201,26 @@ module quux15_chaos (
   assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
                       ch_tdone, ch_tabort, ch_wbits};
 
-  // "The number of bits in the incoming packet buffer, minus one.  After the
-  // whole packet has been read out, it will contain 7777."
-  logic [12:0] ch_top, ch_step;
-  logic [11:0] ch_less;
-  assign ch_top  = ch_rbits - {(ch_rlen - 9'd1), 4'd0};
-  assign ch_step = (ch_rat == 9'd0) ? ch_top : 13'd16;
-  assign ch_less = ch_left[11:0] - 12'd1;
-  assign chaos_bits = !ch_rdone          ? 12'd0
-                    : (ch_left == 13'd0) ? 12'o7777
-                                         : ch_less;
+  // "The number of bits in the incoming packet buffer, minus one": RBCT
+  // less one in twelve bits, 0 with no packet (muir's `bit_count`).
+  assign chaos_bits = ch_rdone ? ch_rbct - 12'd1 : 12'd0;
+
+  // The first word's bits, the rest above them: what the first read shows.
+  logic [15:0] ch_low;
+  assign ch_low = (ch_rlow == 4'd0) ? 16'hFFFF : ~(16'hFFFF << ch_rlow);
+
+  // The word a read of the buffer gives: the first with zeros above the
+  // frame's last bit, each after it the buffer's own, round and round; 0
+  // with no packet.
+  logic [15:0] ch_word;
+  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
 
   // The word a read gives.
   always_comb begin
     unique case (rd_k)
       K_CSR:          rd_word = chaos_csr;
       K_ADDR, K_START: rd_word = chaos_address;
-      // Past the packet's words the buffer reads 0, never the RAM's stale
-      // word (`self.rcv.get(self.rcv_at).copied().unwrap_or(0)`).
-      K_RBUF:         rd_word = (ch_rat < ch_rlen) ? ch_rd : 16'd0;
+      K_RBUF:         rd_word = ch_word;
       K_BITS:         rd_word = {4'd0, chaos_bits};
       default:        rd_word = 16'd0;
     endcase
@@ -174,7 +231,7 @@ module quux15_chaos (
   assign csr_w     = wr && wr_k == K_CSR;
   assign buf_w     = wr && wr_k == K_ADDR;
   assign start_r   = rd && rd_k == K_START;
-  assign rbuf_r    = rd && rd_k == K_RBUF && ch_rat != ch_rlen;
+  assign rbuf_r    = rd && rd_k == K_RBUF && ch_rdone;
   assign reset_now = dev_reset || (csr_w && wdata[13]);
 
   // **THE INTERRUPT AS THIS CLOCK'S WRITE LEAVES IT.**
@@ -187,11 +244,64 @@ module quux15_chaos (
   assign irq_state = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5]);
 
   // The pointer the edge leaves, for the buffer's read a clock ahead.
-  logic [8:0] ch_rat_n;
+  logic [7:0] ch_rat_n;
   always_comb begin
     ch_rat_n = ch_rat;
-    if (rbuf_r) ch_rat_n = ch_rat + 9'd1;
-    if ((csr_w && wdata[3]) || reset_now) ch_rat_n = 9'd0;
+    if (rbuf_r) ch_rat_n = ch_rat + 8'd1;
+    if ((csr_w && wdata[3]) || reset_now) ch_rat_n = 8'd0;
+  end
+
+  // **A FRAME COMES IN A WORD A CLOCK IN THE ORDER THE SOFTWARE READS IT,
+  // ITS LENGTH ON `chaos_rx_bits` FROM THE FIRST WORD**, and the words go
+  // where the board's RBCT puts their bits.  On the cable the check word
+  // comes first and the bits go in at RBCT from 0, so word k of a frame of
+  // `bits` bits lands at the buffer's word `top - k`, `top` the word its last
+  // bit is in; past the 4,096th bit the count wraps and the newer bits go
+  // over the older.  So the first 256 words read are the frame's first 256
+  // and every one past them is older and gone, but for the 257th's bits
+  // above a partial first word, which share its place (muir's `land`).  The
+  // first word goes in last, merged over what the place held, at the done.
+  logic        rx_in, rx_first, taken_now, commit;
+  logic [11:0] rx_top_bit;    // the frame's last bit, in twelve bits
+  logic [15:0] rx_low, rx_merged;
+  assign rx_in      = chaos_rx_valid && !ch_rdone;
+  assign rx_first   = rx_in && ch_fill == 9'd0;
+  assign rx_top_bit = chaos_rx_bits[11:0] - 12'd1;
+  // A run of 48 bits or fewer --- the check, source and destination words
+  // and nothing after them --- is taken by no receiver, its destination
+  // matching or not: no Receive Done and no Lost Count (muir's `arrive`).
+  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign commit     = taken_now && !ch_rdone;
+  assign rx_low     = (chaos_rx_bits[3:0] == 4'd0) ? 16'hFFFF : ~(16'hFFFF << chaos_rx_bits[3:0]);
+  assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
+
+  // The incoming buffer's one write: a word of the frame at its place, or
+  // the first word merged at the done.
+  logic        rcv_we;
+  logic [7:0]  rcv_wa, rcv_ra;
+  logic [15:0] rcv_wd;
+  always_comb begin
+    rcv_we = 1'b0;
+    rcv_wa = ch_top - ch_fill[7:0];
+    rcv_wd = chaos_rx_word;
+    if (commit) begin
+      rcv_we = 1'b1;
+      rcv_wa = ch_top;
+      rcv_wd = rx_merged;
+    end else if (rx_in && ch_fill != 9'd0 && ch_fill < 9'd256) begin
+      rcv_we = 1'b1;
+    end
+  end
+  assign rcv_ra = ch_top - ch_rat_n;
+
+  // The two buffers' own processes, nothing but an address and a datum.
+  always_ff @(posedge clk) begin
+    if (rcv_we) ch_rcv[rcv_wa] <= rcv_wd;
+    ch_rd <= ch_rcv[rcv_ra];
+  end
+  always_ff @(posedge clk) begin
+    if (buf_w) ch_xmit[ch_wn] <= wdata;
+    ch_xq <= ch_xmit[ch_out];
   end
 
   always_ff @(posedge clk) begin
@@ -204,21 +314,30 @@ module quux15_chaos (
       ch_rdone    <= 1'b0;
       ch_crc      <= 1'b0;
       ch_lost     <= 4'd0;
-      ch_xn       <= 9'd0;
+      ch_xn       <= 8'd0;
+      ch_xcheck   <= 16'd0;
       ch_taken    <= 1'b0;
       ch_fill     <= 9'd0;
-      ch_rlen     <= 9'd0;
-      ch_rat      <= 9'd0;
-      ch_rbits    <= 13'd0;
-      ch_left     <= 13'd0;
-      ch_rd       <= 16'd0;
-      ch_out      <= 9'd0;
-      ch_send     <= 9'd0;
+      ch_top      <= 8'd0;
+      ch_w0       <= 16'd0;
+      ch_hi       <= 16'd0;
+      ch_hi_set   <= 1'b0;
+      ch_tw       <= 16'd0;
+      ch_rlow     <= 4'd0;
+      ch_rat      <= 8'd0;
+      ch_read     <= 1'b0;
+      ch_rbct     <= 12'd0;
+      ch_rcheck   <= 16'd0;
+      ch_out      <= 8'd0;
+      ch_send     <= 8'd0;
+      ch_src_at   <= 8'd0;
+      ch_tcheck   <= 16'd0;
+      ch_q_src    <= 1'b0;
+      ch_q_chk    <= 1'b0;
       ch_sending  <= 1'b0;
       chaos_tx_go    <= 1'b0;
       chaos_tx_len   <= 9'd0;
       chaos_tx_valid <= 1'b0;
-      chaos_tx_word  <= 16'd0;
       chaos_tx_clear <= 1'b0;
       chaos_reset    <= 1'b0;
     end else begin
@@ -228,35 +347,46 @@ module quux15_chaos (
       chaos_tx_valid <= 1'b0;
 
       // --- the far end, first: what a write in this clock does stands.
-      // The transmit buffer streams out from the clock after START, a word
-      // a clock.
+      // The frame streams out from the clock after START, a word a clock.
       if (ch_sending) begin
         chaos_tx_valid <= 1'b1;
-        chaos_tx_word  <= ch_xmit[ch_out[7:0]];
-        ch_out         <= ch_out + 9'd1;
-        if (ch_out + 9'd1 == ch_send) ch_sending <= 1'b0;
+        ch_q_src       <= ch_out == ch_src_at;
+        ch_q_chk       <= ch_out == ch_src_at + 8'd1;
+        ch_out         <= ch_out + 8'd1;
+        if (ch_out + 8'd1 == ch_send) ch_sending <= 1'b0;
       end
-      // The receive buffer fills a word at a time and commits whole; a
-      // packet committed on a full buffer is dropped whole and counted.
-      // **A COMMIT LEAVES THE POINTER WHERE IT IS, AT 0**: with Receive
-      // Done down the pointer and the length are 0, since only power-on,
-      // Clear Receiver and Reset take Receive Done down and each zeroes
-      // them, and a read steps the pointer only below the length.  The
-      // module's testbench holds that at every clock.
-      if (chaos_rx_valid && !ch_rdone && ch_fill != 9'd256) begin
-        ch_rcv[ch_fill[7:0]] <= chaos_rx_word;
-        ch_fill              <= ch_fill + 9'd1;
+      // The frame coming in.  **A COMMIT LEAVES THE POINTER WHERE IT IS, AT
+      // 0**: with Receive Done down the pointer is 0, since only power-on,
+      // Clear Receiver and Reset take Receive Done down and each zeroes it,
+      // and a read steps it only with Receive Done up.  The module's
+      // testbench holds that at every clock.
+      if (rx_in) begin
+        if (rx_first) begin
+          ch_top <= rx_top_bit[11:4];
+          ch_w0  <= chaos_rx_word;
+        end
+        if (ch_fill == 9'd256) begin
+          ch_hi     <= chaos_rx_word;
+          ch_hi_set <= 1'b1;
+        end
+        if (ch_fill != 9'd257) ch_fill <= ch_fill + 9'd1;
       end
       if (chaos_rx_done) begin
-        ch_fill <= 9'd0;
+        ch_fill   <= 9'd0;
+        ch_hi_set <= 1'b0;
+      end
+      if (taken_now) begin
+        // A packet committed on a full buffer is dropped whole and counted.
         if (ch_rdone) begin
           ch_lost <= ch_lost + 4'd1;
         end else begin
-          ch_rlen  <= ch_fill;
-          ch_rbits <= chaos_rx_bits;
-          ch_left  <= chaos_rx_bits;
-          ch_crc   <= chaos_rx_crc;
-          ch_rdone <= 1'b1;
+          ch_rdone  <= 1'b1;
+          ch_crc    <= chaos_rx_crc;
+          ch_rbct   <= chaos_rx_bits[11:0];
+          ch_rlow   <= chaos_rx_bits[3:0];
+          ch_tw     <= rx_merged;
+          ch_read   <= 1'b0;
+          ch_rcheck <= 16'd0;
         end
       end
       // A frame the far end had for this interface with the buffer busy:
@@ -267,7 +397,6 @@ module quux15_chaos (
         ch_tdone  <= 1'b1;
         ch_tabort <= chaos_tx_abort;
       end
-      ch_rd <= ch_rcv[ch_rat_n[7:0]];
 
       // --- this clock's access
       if (wr) begin
@@ -275,17 +404,19 @@ module quux15_chaos (
           K_CSR: begin
             ch_wbits <= {wdata[5:4], 1'b0, wdata[2:0]};
             if (wdata[3]) begin   // Clear Receiver
-              ch_rdone <= 1'b0;
-              ch_crc   <= 1'b0;
-              ch_rlen  <= 9'd0;
-              ch_rat   <= 9'd0;
-              ch_left  <= 13'd0;
-              ch_rbits <= 13'd0;
-              ch_fill  <= 9'd0;
-              ch_lost  <= 4'd0;
+              ch_rdone  <= 1'b0;
+              ch_crc    <= 1'b0;
+              ch_rat    <= 8'd0;
+              ch_read   <= 1'b0;
+              ch_rbct   <= 12'd0;
+              ch_rcheck <= 16'd0;
+              ch_fill   <= 9'd0;
+              ch_hi_set <= 1'b0;
+              ch_lost   <= 4'd0;
             end
             if (wdata[8]) begin   // Clear Transmitter
-              ch_xn          <= 9'd0;
+              ch_xn          <= 8'd0;
+              ch_xcheck      <= 16'd0;
               ch_taken       <= 1'b0;
               ch_sending     <= 1'b0;
               ch_tdone       <= 1'b1;
@@ -295,14 +426,11 @@ module quux15_chaos (
           end
           K_ADDR: begin
             // "A word into the outgoing packet buffer.  The last word
-            // written is the destination address."  A 257th has nowhere
-            // to go.
-            if (ch_wn != 9'd256) begin
-              ch_xmit[ch_wn[7:0]] <= wdata;
-              ch_xn               <= ch_wn + 9'd1;
-            end else begin
-              ch_xn <= ch_wn;
-            end
+            // written is the destination address."  It goes in at TBCT,
+            // which goes round: a word past the 256th goes over the first.
+            // The transmit 9401 takes it as it goes in.
+            ch_xn     <= ch_wn + 8'd1;
+            ch_xcheck <= crc_word(ch_wcheck, wdata);
             ch_taken  <= 1'b0;
             ch_tdone  <= 1'b0;
             ch_tabort <= 1'b0;
@@ -311,28 +439,38 @@ module quux15_chaos (
         endcase
       end
       if (start_r) begin
-        // START: the buffer goes, and the next write starts a new packet.
-        // **A START AFTER A START SENDS AN EMPTY BUFFER**, the words having
-        // gone with the first (muir's `mem::take`), so its length is the
-        // next write's place, not the count the first left.  **AND IT
-        // LOWERS TRANSMIT DONE** (MIT's TRESET, muir's `Interface::start`):
-        // with no word written since the last frame or a Reset it is up,
-        // and an empty frame, the source and the check word, still goes;
-        // the far end's `chaos_tx_done` raises it again.  After words were
-        // written it is down already.
+        // START: the source and the check word go in at the count after
+        // the words, the check of every word written and the source, and
+        // the frame is what the buffer holds below the count, `(n + 2) mod
+        // 256` words for `n` written: the words, the source and the check
+        // up to 253, nothing for 254, and from 255 the check word and what
+        // the wrap left below it (muir's `Interface::start`).  The words
+        // go with it, and the next write starts a new packet.  **A START
+        // AFTER A START SENDS AN EMPTY BUFFER**, the source and the check
+        // word.  **AND IT LOWERS TRANSMIT DONE** (MIT's TRESET); the far
+        // end's `chaos_tx_done` raises it again, for a frame of nothing
+        // too.
         chaos_tx_go  <= 1'b1;
         ch_tdone     <= 1'b0;
-        chaos_tx_len <= ch_wn;
-        ch_send      <= ch_wn;
-        ch_out       <= 9'd0;
-        ch_sending   <= (ch_wn != 9'd0);
+        chaos_tx_len <= {1'b0, ch_wn + 8'd2};
+        ch_send      <= ch_wn + 8'd2;
+        ch_src_at    <= ch_wn;
+        ch_tcheck    <= crc_word(ch_wcheck, chaos_address);
+        ch_out       <= 8'd0;
+        ch_sending   <= (ch_wn + 8'd2 != 8'd0);
         ch_taken     <= 1'b1;
       end
       if (rbuf_r) begin
-        // A word out of the incoming buffer, and the bit counter down by
-        // what the read took.
-        ch_rat  <= ch_rat + 9'd1;
-        ch_left <= (ch_left > ch_step) ? (ch_left - ch_step) : 13'd0;
+        // A word out of the incoming buffer, through the receive 9401: CRC
+        // Error is from now the check of the words read, up partway
+        // through a good frame and down at its end (muir's `read`).  RBCT
+        // comes down to the word boundary below the frame's last bit at
+        // the first read and sixteen a read after, round and round.
+        ch_rat    <= ch_rat + 8'd1;
+        ch_read   <= 1'b1;
+        ch_rcheck <= crc_word(ch_rcheck, ch_word);
+        ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
+        ch_rbct   <= ch_read ? ch_rbct - 12'd16 : {ch_top, 4'd0};
       end
 
       // --- Reset, last: it subsumes both clears.
@@ -343,22 +481,24 @@ module quux15_chaos (
         ch_rdone    <= 1'b0;
         ch_crc      <= 1'b0;
         ch_lost     <= 4'd0;
-        ch_xn       <= 9'd0;
+        ch_xn       <= 8'd0;
+        ch_xcheck   <= 16'd0;
         ch_taken    <= 1'b0;
         ch_fill     <= 9'd0;
-        ch_rlen     <= 9'd0;
-        ch_rat      <= 9'd0;
-        ch_rbits    <= 13'd0;
-        ch_left     <= 13'd0;
+        ch_hi_set   <= 1'b0;
+        ch_rat      <= 8'd0;
+        ch_read     <= 1'b0;
+        ch_rbct     <= 12'd0;
+        ch_rcheck   <= 16'd0;
         ch_sending  <= 1'b0;
         chaos_reset <= 1'b1;
       end
     end
   end
 
-  // The pointer's ninth bit names no word of the RAM.
+  // The last bit's place inside its word names no word of the buffer.
   logic unused;
-  assign unused = ch_rat_n[8];
+  assign unused = ^rx_top_bit[3:0];
 
 endmodule
 

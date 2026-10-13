@@ -22,13 +22,14 @@ rule and it decides everything here.
 
 So the fabric has the registers the machine reads and writes: the Chaosnet
 interface's five registers from AIM-628 section 7, its two packet buffers of
-256 words each, its bit counter and its lost count, and the serial port's four
-2651 registers with their mode pointer and status byte. Nothing above that is
-in fabric.
+256 words each, its two 9401s, the one at LMTBUF 0C09 that makes the check
+word and the one at LMRBUF 0C07 that checks the read-out, its bit counter and
+its lost count, and the serial port's four 2651 registers with their mode
+pointer and status byte. Nothing above that is in fabric.
 
-Linux has the rest: the cable, the frame, the check word, routing, the turn
-timer, the baud-rate generator and the line. What crosses the boundary is a
-buffer and a status register, and nothing more.
+Linux has the rest: the cable, the receiver's verdict on a frame, routing,
+the turn timer, the baud-rate generator and the line. What crosses the
+boundary is a frame and a status register, and nothing more.
 
 **Nothing on either side of that boundary answers a service.** A CADR has no
 file or time server in it. The section on `ED-FILE` below says where that
@@ -110,12 +111,16 @@ the read changes nothing. MIT's microcode and Lisp write at least one word
 before every START, so no system run sees the difference.
 
 **On a board the far end does not send the empty frame, and this is a known
-difference.** `cadr_chaos_cable.sv` answers a START with an empty buffer by
-giving `chaos_tx_done` back the next clock, and nothing goes on the cable.
-muir and MIT's board send the 33-cell frame, the source and its check word,
-and raise Transmit Done about 8 µs later. The cable and `cadr-chaosnet` are
-left as they are, so the seam stays unchanged. MIT's software never reads
-START with nothing written.
+difference.** `cadr_chaos_cable.sv` answers a frame of three words or fewer,
+the empty frame's source and check word among them, by giving
+`chaos_tx_done` back the next clock, and nothing goes on the cable. No
+receiver takes a run of 48 bits or fewer (below), and CHUDP has no datagram
+for a frame of fewer than eleven words. For one and two words the rule is
+required as well: `cadr-chaosnet` routes a frame by its third word from the
+end and has no guard for a shorter one, and the card makes frames of one and
+two words from 255 and 256 words written. muir and MIT's board send the
+33-cell frame and raise Transmit Done about 8 µs later. MIT's software never
+reads START with nothing written.
 
 ## The shift register holds the transmit buffer's writes
 
@@ -175,13 +180,80 @@ they take any other: its words on `chaos_rx_*`, the count on
 `quux15_chaos_module` holds it: its script now has the interface take its own
 frame to its address, to zero and under Spy, and abort its own frame into a
 full buffer, with the testbench playing the far end as muir's interface saw
-it. A frame that would come back longer than the 256-word buffer, its source
-and check word added, is not started in that script; under Loop Back the
-script already kept its frames to 254 words. That case is left unchecked, not
-settled: muir stores such a frame whole, the seam refuses a frame of more than
-256 words, the card drops words past the 256th, and what the board's 4,096-bit
-receive buffer does with it is not measured. MIT's software never writes more
-than 253 words into a frame.
+it. Frames of any length are started, the next section says what becomes of
+one written past the buffer's end.
+
+## Both buffers go round
+
+Each packet buffer is a 2147, 4K by 1: the outgoing one at LMTBUF 0C10 on
+the twelve bits of `TBCT`, the incoming one at LMRBUF 0C04 on `RBCT`.
+Neither count stops at the end. muir measured what follows on the netlist
+board and holds its model to it on every revision (`tests/chaos_rtl.rs`),
+and the CADR's card and revision 15's interface do the same.
+
+**Transmit.** Each word written goes in at `TBCT`, so a word past the 256th
+goes over the first. START puts the source and the check word in at the
+count after the words, and the check word is of every word written and the
+source, overwritten words included: the board's 9401 at LMTBUF 0C09 takes
+each word as it goes in. The frame on the cable is what the buffer holds below
+the count, `(16n + 32) mod 4096` bits for `n` words written. Up to 253 words
+that is the whole frame, 4,080 bits at most. At 254 nothing goes: Transmit
+Done comes back 218 ns after the turn, and the cable is never busy. From 255
+the frame is 16, 32, 48, 64 bits and on: the check word and what the wrap left
+below it. So the check word has to be made where the buffer is, and the card
+makes it: the frame on `chaos_tx_*` carries the source and the check word,
+and `cadr_chaos_cable.sv` offers it as it comes.
+
+**Receive.** A frame comes check word first and its bits go in at `RBCT` from
+0, so past the 4,096th bit the newer bits go over the older and the buffer
+keeps the frame's last 4,096: the words the software reads first. Reading
+goes on round the buffer for every frame. `RBCT` keeps coming down sixteen a
+read in twelve bits past `7777`, and the words are whatever the buffer holds
+there: an earlier frame's, or, never written, what the netlist's RAM holds at
+power-up, which reads as all ones. What a real 2147 holds at power-up is not
+known, and the fabric's buffer comes up all ones as the netlist's does. On a
+board power-up is configuration: a reboot that does not load the bitstream
+again keeps the old words, as muir's Reset keeps its buffer. The first read
+takes a partial top word with zeros above its bits, though the buffer keeps
+what it held there, and read 256 shows it.
+
+**CRC Error from the first read on is the check of the words read so far.**
+The read-out runs the buffer through the second 9401, at LMRBUF 0C07, which
+AIM-628 section 7 makes right "when the packet has been completely read
+out". So the bit is up partway through a good frame and down at its end, and
+up after the read-out of a frame that lost its check word to the wrap. Before
+the first read it is the receiver's verdict on the frame, which the far end
+hands the card.
+
+**A run of 48 bits or fewer is taken by no receiver**, its destination
+matching or not: the check, source and destination words and nothing after
+them. The board's own frame of 257 words written, 48 bits, does not land, and
+one of 258, 64 bits, does. The card and revision 15's interface take no such
+run, with no Receive Done and no Lost Count.
+
+**The seam carries a frame in the order the software reads it.** The far end
+hands the card the frame's words a word a clock, the first word read first,
+with the frame's length on `chaos_rx_bits` from the first word to the done.
+The card puts word `k` where the board's bits would be, `top - k`, `top`
+being the word the frame's last bit is in, and the first word last, over
+only its own bits. Every word past the 256th is older than the ones before it
+and gone from the buffer; only the 257th's bits above a partial first word
+stay, since the two share a place. So the card keeps the first 256 words a
+frame hands it, takes the 257th's high bits, and drops the rest. The length
+is 13 bits wide, so the seam carries a frame of up to 8,191 bits. On a board
+the far end is `cadr_chaos_cable.sv`, whose window holds 256 words and whose
+frames are whole words, so a partial word and a frame past 4,096 bits come
+only from the checks.
+
+`iob` holds the card: frames of 254 to 258 and 300 words written, sent under
+Loop Back, the runs that do not land handed back to it anyway, and frames
+from another station on a cable of 256 to 258 words and two of wreckage, one
+over an earlier frame of ones and one past 4,096 bits, each read round the
+buffer with the bit count and the CSR at every read. `quux15_chaos_module`
+holds revision 15's interface to the same cases and to frames of 253 to 258
+words written on the cable to its own address. `chaos_cable` holds the
+cable's offer, and `gp0_split` the frame the machine sends coming out of the
+cable's window with the check word muir makes.
 
 **On a board the far end does not hand the machine its own frame, and this is
 a known difference.** `cadr-chaosnet` routes a frame by its cable destination
@@ -293,8 +365,9 @@ one would mean handing the machine a check word this program made for it,
 which would say the frame arrived whole when it did not.
 
 **The fabric keeps its own check word, and the conversion is at the UDP edge.**
-`cadr_chaos_cable.sv` computes the 9401's CRC-16 on transmit and streams the
-trailer's three words into the machine's buffer as they are given on receipt.
+The card's 9401 makes the CRC-16 on transmit, and `cadr_chaos_cable.sv`
+streams the trailer's three words into the machine's buffer as they are given
+on receipt.
 So the frame that crosses the register face carries the CADR's check word in
 both directions. `chudp_wrap` puts the Internet checksum in its place on the
 way out, and `chudp_unwrap` verifies the Internet checksum and makes the CRC

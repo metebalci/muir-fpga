@@ -16,38 +16,34 @@
 // backpressure at all.  So this holds one frame each way and presents them
 // as two windows.
 //
-// **THE FRAME ON THIS SEAM CARRIES THE HARDWARE TRAILER, AND THAT IS THE
-// DECISION `chaos_face.h` ASKED FOR.**  It assumed "that the fabric appends
-// the source address and the check word on transmit, as the board's
-// Fairchild 9401 at LMTBUF C09 does, and takes them as given on receive",
-// and said the alternative was a three-line change on its side.  Measured,
-// the card does NOT append them: `chaos_tx_*` is the buffer the software
-// wrote and nothing else, while `chaos_rx_*` must be given the buffer AND
-// the source AND the check word, because that is what the machine reads back
+// **THE FRAME ON THIS SEAM CARRIES THE HARDWARE TRAILER BOTH WAYS, AND THAT
+// IS THE DECISION `chaos_face.h` ASKED FOR.**  It assumed "that the fabric
+// appends the source address and the check word on transmit, as the board's
+// Fairchild 9401 at LMTBUF C09 does, and takes them as given on receive".
+// The receive direction settles it: the machine reads the trailer back
 // (AIM-628: "the last three words read are the destination address, the
-// source address, and the checksum").  **The receive direction therefore
-// settles it**: the trailer has to be on the seam there, because the source
-// of an arriving frame is the PEER's address and the fabric cannot know it.
-// A seam that carried the trailer one way and not the other would be a seam
-// with two frame formats, so this appends the two words on transmit and the
-// assumption stands with nothing in the program changing.
+// source address, and the checksum"), and the source of an arriving frame is
+// the PEER's address, which the fabric cannot know.  On transmit the card
+// makes the trailer itself, as the board does: its 9401 takes every word
+// written and then the source, and START puts the two in its buffer at the
+// count after the words.  **IT HAS TO BE THE CARD AND NOT THIS MODULE**,
+// because the buffer goes round (`rtl/machine/cadr_io_board.sv`): written
+// past its 256th word, what goes out is what the wrap left and a check word
+// over words no longer in it, which nothing past the card could make.  So
+// `chaos_tx_*` is the frame as it goes on the cable, `(16n + 32) mod 4096`
+// bits for `n` words written, and this module takes it as it comes.
 //
-// So the check word is computed here, which is what the 9401 is:
-// `muir::chaos::packet::check_word`, CRC-16 `x^16 + x^15 + x^2 + 1` from a
-// cleared register over the buffer's words and then the source, each word
-// most significant bit first --- "not read off a document; it is the one
-// arrangement that reproduces the word the netlist board itself produced".
-// One word a tick, a sixteen-step linear function in `crc_word` below, which
-// is what the burst's rate demands: there is nowhere to put back-pressure.
-//
-// **A FRAME TOO LONG FOR THE WINDOW IS OFFERED AND REFUSED, NOT
-// TRUNCATED.**  The card's buffer holds 256 words, so `TXLEN` can read 258
-// with the trailer while the window is 256 and `CHAOS_MAX_WORDS` is 255.
-// `chaos_face_take` already answers that case --- it drops such a frame, says
-// which half is at fault and lets the machine's transmitter go --- so
-// `TXLEN` reports the true length and the words past 255 are simply not
-// readable.  Reporting a length that fits would be the worse failure: a
-// frame silently missing its check word.
+// **A FRAME OF 48 BITS OR FEWER IS NOT OFFERED, AND THE MACHINE IS LET GO AT
+// ONCE.**  Three words or fewer --- 254 words written send nothing at all,
+// 255 to 257 send 16 to 48 bits, and an empty START sends the source and
+// the check word --- is a run that no receiver takes, muir's `arrive`
+// measured on the netlist board, and CHUDP has no datagram for a frame of
+// fewer than eleven words (`chudp_wrap`).  **For one and two words the rule
+// is required**: `cadr-chaosnet` routes a frame it takes by the third word
+// from the end, `words[n - 3]`, with no guard for a shorter one, and the card
+// now makes frames of one and two words (255 and 256 written).  So nothing
+// waits for Linux and Transmit Done comes back on the next tick.  Every
+// frame offered is four to 255 words, so the window always holds it whole.
 //
 // **A COMMIT IS REFUSED BY LOOKING AT THE CARD'S OWN Receive Done, AND THE
 // REFUSAL IS COUNTED IN `LOST`.**  `chaos_face_give` tells a stored frame
@@ -147,10 +143,11 @@
 //               be folded away unread, and a status word with sixteen spare
 //               bits is the right place for them
 //    2  MYADDR  the sixteen address switches at LMMYNM D10 and D12: what
-//               the machine reads at `MY_ADDRESS` and the source word this
-//               module inserts.  Written by Linux, there being no switch
-//    3  TXLEN   read only: words in the waiting frame, the trailer counted,
-//               or 0 when none waits
+//               the machine reads at `MY_ADDRESS` and the source word the
+//               card puts in its frames.  Written by Linux, there being no
+//               switch
+//    3  TXLEN   read only: words in the waiting frame, the trailer in it,
+//               4 to 255, or 0 when none waits
 //    4  RXLEN   how many words the frame about to be committed has.  Read
 //               back so a driver can check it.  A commit takes its own
 //               copy, so a write here while a frame streams does not
@@ -177,8 +174,10 @@
 //               emptied the incoming buffer.  A 1 written clears the bit
 //    8  IRQEN   the mask over IRQ; `IRQ_F2P` is the OR under it
 //  +0x400      TX window, 256 words: word k of the waiting frame at +4k,
-//              read only, bits 15:0.  Word `TXLEN-2` is the source this
-//              module inserted and `TXLEN-1` the check word it computed
+//              read only, bits 15:0.  Word `TXLEN-2` is the source the card
+//              put in and `TXLEN-1` the check word its 9401 at
+//              LMTBUF 0C09 made, for any frame of 253 words written or
+//              fewer
 //  +0x800      RX window, 256 words: word k of the frame being built,
 //              written, bits 15:0.  Readable too, except while a commit is
 //              streaming, when the word a read gives is whichever the
@@ -208,15 +207,15 @@
 // NO muir REFERENCE EXISTS FOR THE REGISTER FACE, as none exists for
 // `cadr_axi_master.sv`: nothing in MIT's drawings is an AXI slave.  The
 // CABLE has one and this is held to it: `packet::check_word` for the check
-// word, `packet::frame`'s `buffer ++ [source] ++ [check]` for the frame's
-// word order, and `board::Interface::arrive` for a frame refused on a full
-// buffer.  `tb/cadr_gp0_split_tb.cpp` drives the card through the Unibus on
-// one side and this face through the splitter on the other: the frame the
-// machine transmitted must come out of the TX window with the source and
-// check word muir computes, and the frame written into the RX window must
-// come back out of the card word for word with the bit counter AIM-628
-// names.  That is read-back across the whole seam, which no check in the
-// tree had before.
+// word the card makes, `packet::frame`'s `buffer ++ [source] ++ [check]`
+// for the frame's word order, and `board::Interface::arrive` for a frame
+// refused on a full buffer.  `tb/cadr_gp0_split_tb.cpp` drives the card
+// through the Unibus on one side and this face through the splitter on the
+// other: the frame the machine transmitted must come out of the TX window
+// with the source and check word muir computes, and the frame written into
+// the RX window must come back out of the card word for word with the bit
+// counter AIM-628 names.  That is read-back across the whole seam, which no
+// check in the tree had before.
 
 `default_nettype none
 
@@ -270,7 +269,8 @@ module cadr_chaos_cable #(
     // --- the card's cable seam, as `cadr_io_board.sv` presents it --------
     output var logic [15:0] chaos_address,  // the switches at LMMYNM
     input  var logic        chaos_tx_go,    // one tick: START was read
-    input  var logic [8:0]  chaos_tx_len,   // words of it, 0 to 256
+    input  var logic [8:0]  chaos_tx_len,   // words of it, 0 to 255, the
+                                            // source and the check word in it
     input  var logic        chaos_tx_valid, // one word a tick, from the tick after
     input  var logic [15:0] chaos_tx_word,
     input  var logic        chaos_tx_clear, // Clear Transmitter
@@ -291,29 +291,6 @@ module cadr_chaos_cable #(
     // --- to the processing system's `IRQ_F2P` -----------------------------
     output var logic        irq
 );
-
-  // ------------------------------------------------------------------------
-  // The check word: `muir::chaos::packet::check_word`, a word at a time.
-  // Stage k of the 9401's register in bit k, the word shifted in most
-  // significant bit first, the taps at 0, 2 and 15.  Sixteen steps of a
-  // linear function, so every output bit is an exclusive-or of at most
-  // thirty-two inputs --- two levels of LUT6 --- and the burst can be
-  // absorbed at its own rate of one word a tick.
-  // ------------------------------------------------------------------------
-  localparam logic [15:0] CRC_TAPS = 16'h8005;   // 1 | 1<<2 | 1<<15
-
-  function automatic logic [15:0] crc_word(input logic [15:0] r0,
-                                           input logic [15:0] w);
-    logic [15:0] r;
-    logic        fb;
-    r = r0;
-    for (int k = 15; k >= 0; k--) begin
-      fb = w[k] ^ r[15];
-      r = {r[14:0], 1'b0};
-      if (fb) r = r ^ CRC_TAPS;
-    end
-    return r;
-  endfunction
 
   // ------------------------------------------------------------------------
   // The AXI3 face
@@ -368,7 +345,6 @@ module cadr_chaos_cable #(
   logic [15:0] r_myaddr;
   logic [8:0]  r_rxlen;
   logic [8:0]  tx_held;        // words the card handed over
-  logic [15:0] tx_check;       // the check word over them and the source
   logic        tx_valid;       // a frame is waiting for Linux
   logic        tx_seen;        // ...and Linux has read its `TXLEN`
   logic        rd_q;           // `rd` a tick ago: the tick a read is sampled
@@ -379,12 +355,11 @@ module cadr_chaos_cable #(
   logic        txv_was;
 
   // The transmit capture, and the receive stream.
-  typedef enum logic [1:0] { C_IDLE, C_WORDS, C_SRC } cstate_e;
+  typedef enum logic [1:0] { C_IDLE, C_WORDS, C_HELD } cstate_e;
   typedef enum logic [2:0] { X_IDLE, X_PRIME, X_STREAM, X_GAP, X_DONE } xstate_e;
   cstate_e cst;
   xstate_e xst;
   logic [8:0]  cap_at, cap_len;
-  logic [15:0] crc;
   logic [8:0]  sent;
   logic [8:0]  x_len;          // the streaming frame's words, taken at its commit
 
@@ -400,7 +375,9 @@ module cadr_chaos_cable #(
   assign chaos_rx_valid = (xst == X_STREAM);
   assign chaos_rx_word  = rx_q;
   assign chaos_rx_done  = (xst == X_DONE);
-  assign chaos_rx_bits  = {x_len, 4'b0000};     // sixteen bits a word
+  // Sixteen bits a word, and from the first word of the stream on: the
+  // card places each word by it as it comes.
+  assign chaos_rx_bits  = {x_len, 4'b0000};
 
   assign irq = |(irq_q & irqen);
 
@@ -414,16 +391,13 @@ module cadr_chaos_cable #(
                       chaos_csr[15], tx_valid};
   assign ctl_word  = {resets, 8'd0};
 
-  // Where the trailer sits in the transmit window: the source at `tx_held`
-  // and the check word after it.
+  // The transmit window: the frame's words, and zero past them.
   logic [8:0] win_at;
   assign win_at = {1'b0, r_word[7:0]};
   always_comb begin
     if (in_tx_win) begin
       if (!tx_valid) rd_data = 32'd0;
       else if (win_at < tx_held) rd_data = {16'd0, tx_q};
-      else if (win_at == tx_held) rd_data = {16'd0, r_myaddr};
-      else if (win_at == tx_held + 9'd1) rd_data = {16'd0, tx_check};
       else rd_data = 32'd0;
     end else if (in_rx_win) begin
       rd_data = {16'd0, rx_q};
@@ -432,7 +406,7 @@ module cadr_chaos_cable #(
         10'd0:   rd_data = IDENT;
         10'd1:   rd_data = stat_word;
         10'd2:   rd_data = {16'd0, r_myaddr};
-        10'd3:   rd_data = tx_valid ? {22'd0, {1'b0, tx_held} + 10'd2} : 32'd0;
+        10'd3:   rd_data = tx_valid ? {23'd0, tx_held} : 32'd0;
         10'd4:   rd_data = {23'd0, r_rxlen};
         10'd5:   rd_data = ctl_word;
         10'd6:   rd_data = lost;
@@ -509,7 +483,6 @@ module cadr_chaos_cable #(
       r_myaddr    <= 16'd0;
       r_rxlen     <= 9'd0;
       tx_held     <= 9'd0;
-      tx_check    <= 16'd0;
       tx_valid    <= 1'b0;
       tx_seen     <= 1'b0;
       rd_q        <= 1'b0;
@@ -523,7 +496,6 @@ module cadr_chaos_cable #(
       xst         <= X_IDLE;
       cap_at      <= 9'd0;
       cap_len     <= 9'd0;
-      crc         <= 16'd0;
       sent        <= 9'd0;
       x_len       <= 9'd0;
       stream_at   <= 8'd0;
@@ -551,16 +523,11 @@ module cadr_chaos_cable #(
       unique case (cst)
         C_IDLE: ;
         C_WORDS: if (chaos_tx_valid) begin
-          crc <= crc_word(crc, chaos_tx_word);
-          if (cap_at + 9'd1 == cap_len) cst <= C_SRC;
+          if (cap_at + 9'd1 == cap_len) cst <= C_HELD;
           else cap_at <= cap_at + 9'd1;
         end
-        // The source the hardware adds, stepped into the check word on its
-        // own tick: the burst has ended, so the tick is free, and chaining
-        // two word-steps into one tick would double the depth of the only
-        // arithmetic here.
-        C_SRC: begin
-          tx_check <= crc_word(crc, r_myaddr);
+        // The frame is whole: offered on the tick after its last word.
+        C_HELD: begin
           tx_held  <= cap_len;
           tx_valid <= 1'b1;
           tx_seen  <= 1'b0;
@@ -572,11 +539,13 @@ module cadr_chaos_cable #(
       if (chaos_tx_go) begin
         cap_len <= chaos_tx_len;
         cap_at  <= 9'd0;
-        crc     <= 16'd0;
-        if (chaos_tx_len == 9'd0) begin
-          // START on an empty buffer: nothing goes on the cable, and the
-          // machine is let go at once rather than waiting for a Transmit
-          // Done that would never come.
+        if (chaos_tx_len <= 9'd3) begin
+          // A frame of 48 bits or fewer, nothing at all among them: no
+          // receiver takes it, CHUDP carries none, and one of one or two
+          // words would send the program below its first word looking for
+          // the destination.  Nothing is offered, and the machine is let
+          // go at once rather than waiting for a Transmit Done that would
+          // never come.
           cst           <= C_IDLE;
           chaos_tx_done <= 1'b1;
         end else begin

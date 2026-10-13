@@ -27,6 +27,11 @@
 //   - `LOST` survives the card's own Reset and is cleared by this module's
 //     reset input, which is what the header now says.
 //
+// And the frame the card sends is the frame as it goes on the cable, the
+// source and the check word in it, which this face offers as it comes; one
+// of three words or fewer, 48 bits that no receiver takes, is not offered at
+// all and the machine is let go at once.
+//
 // The card is modeled only as far as this face sees it: its Receive Done is
 // raised on `chaos_rx_done` and dropped when the test says the machine has
 // read the frame out, and its transmitter is driven directly.
@@ -305,7 +310,7 @@ int main(int argc, char **argv) {
     Reset(); Clear();
     transmit(7, 9);
     if (!(Reg(STAT) & 1)) Fail("STAT's TX_VALID after a frame", 0, 1);
-    if (Reg(TXLEN) != 11) Fail("TXLEN", Reg(TXLEN), 11);
+    if (Reg(TXLEN) != 9) Fail("TXLEN", Reg(TXLEN), 9);
     for (unsigned k = 0; k < 9; ++k)
       if (Read(TX_WIN + 4 * k) != Word(7, k)) Fail("a word of the TX window", Read(TX_WIN + 4 * k), Word(7, k));
     SetReg(CTL, 1);
@@ -320,7 +325,7 @@ int main(int argc, char **argv) {
     // The take the program then writes is for A, and must not drop B.
     Reset(); Clear();
     transmit(8, 9);
-    if (Reg(TXLEN) != 11) Fail("TXLEN of frame A", Reg(TXLEN), 11);
+    if (Reg(TXLEN) != 9) Fail("TXLEN of frame A", Reg(TXLEN), 9);
     (void)Read(TX_WIN);
     t->chaos_tx_clear = 1; Step(); t->chaos_tx_clear = 0;
     transmit(9, 5);
@@ -331,7 +336,7 @@ int main(int argc, char **argv) {
       Fail("Transmit Done pulses for a take of a frame already cleared", tx_done_n - done_before, 0);
     if (!(Reg(STAT) & 1)) Fail("STAT's TX_VALID for frame B after a take meant for A", 0, 1);
     // And B is then taken the ordinary way.
-    if (Reg(TXLEN) != 7) Fail("TXLEN of frame B", Reg(TXLEN), 7);
+    if (Reg(TXLEN) != 5) Fail("TXLEN of frame B", Reg(TXLEN), 5);
     if (Read(TX_WIN) != Word(9, 0)) Fail("word 0 of frame B", Read(TX_WIN), Word(9, 0));
     SetReg(CTL, 1);
     Idle(2);
@@ -353,13 +358,35 @@ int main(int argc, char **argv) {
       Idle(off);
       unsigned len = 0;
       for (int i = 0; i < 20 && len == 0; ++i) len = Reg(TXLEN);
-      if (len != 8) Fail("TXLEN seen by a poll", len, 8);
+      if (len != 6) Fail("TXLEN seen by a poll", len, 6);
       SetReg(CTL, 1);
       Idle(2);
       if (tx_done_n != 1) Fail("Transmit Done pulses for a polled take", tx_done_n, 1);
       if (Reg(STAT) & 1) Fail("STAT's TX_VALID after a polled take", 1, 0);
       ++cases;
     }
+  }
+
+  // ====================================================================
+  // A FRAME OF 48 BITS OR FEWER IS NOT OFFERED
+  // ====================================================================
+  // Nothing at all (254 words written), 16 to 48 bits (255 to 257, and an
+  // empty START's source and check word): no receiver takes it and CHUDP
+  // carries none, and the program, which routes by the third word from the
+  // end, must never be handed one of one or two words.  Nothing waits for
+  // the program and Transmit Done comes at once.  Four words are a frame
+  // and wait.
+  for (unsigned n : {0u, 1u, 2u, 3u, 4u}) {
+    Reset(); Clear();
+    transmit(11, n);
+    char what[80];
+    std::snprintf(what, sizeof what, "STAT's TX_VALID after a frame of %u words", n);
+    if (((Reg(STAT) & 1) != 0) != (n > 3)) Fail(what, Reg(STAT) & 1, n > 3);
+    std::snprintf(what, sizeof what, "Transmit Done pulses for a frame of %u words, untaken", n);
+    if (tx_done_n != (n > 3 ? 0 : 1)) Fail(what, tx_done_n, n > 3 ? 0 : 1);
+    std::snprintf(what, sizeof what, "TXLEN for a frame of %u words", n);
+    if (Reg(TXLEN) != (n > 3 ? n : 0)) Fail(what, Reg(TXLEN), n > 3 ? n : 0);
+    ++cases;
   }
 
   t->final();
@@ -369,6 +396,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("ok: %ld cases: the length is taken at the commit, a malformed commit is "
-              "counted nowhere, a take counts only for the frame it read\n", cases);
+              "counted nowhere, a take counts only for the frame it read, a frame of 48 bits "
+              "or fewer is not offered\n", cases);
   return 0;
 }

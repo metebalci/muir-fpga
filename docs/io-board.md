@@ -906,16 +906,21 @@ exempt and both say nothing is.
 
 **What is in fabric is the register face and not the protocol.** For the
 Chaosnet that means AIM-628 section 7's five registers, both 256-word packet
-buffers, the bit counter's arithmetic, the lost count and the priority chain.
-For the serial port it means the 2651's four registers, its two pointers, its
-status byte and its holding registers. Everything else crosses a seam.
+buffers on counts that wrap, the 9401 at LMTBUF 0C09 that makes the check
+word and the one at LMRBUF 0C07 that checks the read-out, the bit counter's
+arithmetic, the lost count and the priority chain. For the serial port it
+means the 2651's four registers, its two pointers, its status byte and its
+holding registers. Everything else crosses a seam.
 
 The Chaosnet's cable is the `cadr-chaosnet` program's. So are the turn timer
-at LMTURN, the frame, the check word, the transceiver and the collision that
-makes a transmit abort. A frame goes out as a burst: a read of START pulses
-`chaos_tx_go` with the word count, and the card streams the buffer a word a
-tick from the tick after. A frame comes in the same way, with
-`chaos_rx_done` committing it.
+at LMTURN, the receiver's verdict on a frame, the transceiver and the
+collision that makes a transmit abort. A frame goes out as a burst: a read of
+START pulses `chaos_tx_go` with the frame's length, and the card streams the
+frame a word a tick from the tick after, the source and the check word in
+it. A frame comes in the same way, in the order the software reads it, with
+its length from the first word and `chaos_rx_done` committing it.
+`docs/chaosnet.md`'s "Both buffers go round" says what a frame written or
+received past the buffer's end becomes.
 
 A frame the far end had for this interface and the buffer had no room for
 crosses as `chaos_rx_lost` instead. The card counts it in its Lost Count and
@@ -960,9 +965,10 @@ one word a tick for up to 256 ticks with no backpressure at all, which is not
 something a program can be handed.
 
 `rtl/plumbing/cadr_chaos_cable.sv` holds one frame each way. It takes the
-words on `chaos_tx_valid` after a `chaos_tx_go`, appends the source address
-and the check word as the Fairchild 9401 at LMTBUF C09 does, and offers the
-frame in a window; it drops a frame on `chaos_tx_clear` or `chaos_reset`, and
+words on `chaos_tx_valid` after a `chaos_tx_go`, the source address and the
+check word among them, and offers the frame in a window, or lets the machine
+go at once for a frame of 48 bits or fewer, which no receiver takes; it drops
+a frame on `chaos_tx_clear` or `chaos_reset`, and
 pulses `chaos_tx_done` when the program says it has taken one. Coming back it
 streams the program's words on `chaos_rx_valid` and pulses `chaos_rx_done`
 with the bit count. It holds `chaos_address` from what the program wrote,
