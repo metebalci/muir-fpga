@@ -53,11 +53,26 @@ KRCARD="$TREE/boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/
 MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
 
+# **THE CALLER'S MACHINE AND REVISION DO NOT REACH THE CASES.**  The card
+# scripts' blocks lifted below read both from the environment, and `make
+# check MACHINE=cadr` exports MACHINE to this script: a case that lays out a
+# revision 13 card under it was refused as "REVISION=13 is QUUX's", and under
+# MACHINE=quux every CADR card was.  Each case names its own.
+unset MACHINE REVISION
+
 fails=0
 cases=0
 
+# **A SIGNAL ENDS THE CHECK, WITH ITS STATUS.**  The trap used to clean up
+# and return, and the shell went on: the sandbox was gone under the case that
+# was running, that case failed for want of its files, and the next one made
+# a new sandbox and passed.  A `timeout` around the check sent the signal and
+# the log read as a few cases failing, with the run otherwise whole.  Now the
+# run stops where it was signalled and says so.
 cleanup() { rm -rf "$WORK"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'echo "fpgarc: stopped by SIGINT after $cases cases" >&2; exit 130' INT
+trap 'echo "fpgarc: stopped by SIGTERM after $cases cases" >&2; exit 143' TERM
 
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
 ok()   { echo "  ok: $*"; }
