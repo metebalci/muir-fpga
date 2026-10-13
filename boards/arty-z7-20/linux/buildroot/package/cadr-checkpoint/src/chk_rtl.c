@@ -1887,6 +1887,8 @@ const char *chk_rtl_mutation(void)
 	return "the video controller's buffer sized at 1280x1024 whatever the bitstream says";
 #elif CHK_MUTATE == 40
 	return "the resume line without the video controller's size";
+#elif CHK_MUTATE == 51
+	return "the sidecar's resume line naming the checkpoint by the board's path";
 #else
 	return NULL;
 #endif

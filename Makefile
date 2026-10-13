@@ -5050,6 +5050,13 @@ CHECKPOINT_MEMORY_MUTANTS := 35 36 37
 # must fail there: the counter alone taken as the halt, and revision 15's
 # halt read off SRUN, which follows RUN whether or not the drain ends.
 CHECKPOINT_HALT_MUTANTS := 49 50
+# **THE SIDECAR'S RESUME LINE, AND ITS MUTANT, 51.**  The sidecar travels
+# with the checkpoint, so its resume line names the checkpoint as `./<name>`,
+# beside it, as it names a pack (`pack_bind.c`'s `bind_write`).  The host
+# check writes a sidecar for a checkpoint in a directory and reads the line
+# back, and the mutant, the line naming the board's path again, must fail
+# there.
+CHECKPOINT_SIDECAR_MUTANTS := 51
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -5151,6 +5158,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the halt: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the halt's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_SIDECAR_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the sidecar's resume line --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^the sidecar's resume line names the checkpoint as ./x.chk is " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the sidecar's resume line: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the sidecar's resume line --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 

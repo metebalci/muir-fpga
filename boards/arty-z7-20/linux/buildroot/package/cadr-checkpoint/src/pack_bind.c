@@ -393,8 +393,20 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 				b->u[u].read_only ? "yes" : "no", b->u[u].sha256,
 				b->u[u].path);
 	}
-	char cmd[4096];
+	// **THE LINE NAMES THE CHECKPOINT BESIDE THIS FILE**, as `./<name>`,
+	// the way a pack is named: the sidecar travels with the checkpoint, and
+	// the directory it had on the board is wrong once both are copied
+	// elsewhere.  The `checkpoint:` line above keeps the board's path, and
+	// the console's `To resume:` line, spoken on the board, keeps it too.
+	char cmd[4096], beside[sizeof b->checkpoint + 2];
+	const char *slash = strrchr(b->checkpoint, '/');
+	snprintf(beside, sizeof beside, "./%s", slash ? slash + 1 : b->checkpoint);
+#if CHK_MUTATE == 51
+	(void)beside;
 	bind_resume_command(b, b->checkpoint, cmd, sizeof cmd);
+#else
+	bind_resume_command(b, beside, cmd, sizeof cmd);
+#endif
 	fprintf(f, "resume: %s\n", cmd);
 	const int ok = !ferror(f);
 	if (fclose(f) != 0 || !ok) {

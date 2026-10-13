@@ -1354,6 +1354,64 @@ int main(int argc, char **argv)
 			fail("a CADR sidecar read back as QUUX's", 1, 0);
 		remove(side);
 
+		// **THE SIDECAR'S RESUME LINE NAMES THE CHECKPOINT BESIDE IT.**  The
+		// sidecar travels with the checkpoint, so its line names the file
+		// as `./<name>`, as it names a pack, and never by the directory it
+		// had on the board.  A checkpoint whose path has a directory, read
+		// back from the file.
+		{
+			char sub[300], chk[340], sside[360], line[8192];
+			snprintf(sub, sizeof sub, "%s/sub", work);
+			mkdir(sub, 0755);
+			snprintf(chk, sizeof chk, "%s/x.chk", sub);
+			snprintf(sside, sizeof sside, "%s%s", chk, BIND_SUFFIX);
+			struct binding xb;
+			bind_init(&xb);
+			xb.quux = 1;
+			xb.boards = 512;
+			xb.revision = 15;
+			xb.sync_k = 38;
+			xb.u[0].present = 1;
+			snprintf(xb.u[0].path, sizeof xb.u[0].path, "./disk-pack-0.img");
+			xb.present = 1;
+			snprintf(xb.checkpoint, sizeof xb.checkpoint, "%s", chk);
+			int resumes = 0, right = 0, checkpoint_kept = 0;
+			if (bind_write(&xb, sside, err, sizeof err) != 0) {
+				fail("the sidecar of a checkpoint in a directory was not written", 1, 0);
+			} else {
+				FILE *sf = fopen(sside, "r");
+				while (sf && fgets(line, sizeof line, sf)) {
+					line[strcspn(line, "\n")] = '\0';
+					char want_chk[400];
+					snprintf(want_chk, sizeof want_chk, "checkpoint: %s", chk);
+					checkpoint_kept += strcmp(line, want_chk) == 0;
+					if (strncmp(line, "resume: ", 8) != 0)
+						continue;
+					++resumes;
+					static const char tail[] = " --resume ./x.chk";
+					const size_t ll = strlen(line), tl = strlen(tail);
+					const char *at = strstr(line, " --resume ");
+					// Ends in `--resume ./x.chk`, and the only `/` in
+					// the checkpoint's name is the one of `./`.
+					right = ll >= tl && strcmp(line + ll - tl, tail) == 0 && at &&
+						strchr(at + 10, '/') == at + 11 &&
+						strchr(at + 12, '/') == NULL;
+					if (!right)
+						fprintf(stderr, "the sidecar's resume line is [%s]\n", line);
+				}
+				if (sf)
+					fclose(sf);
+			}
+			if (resumes != 1 || !right)
+				fail("the sidecar's resume line names the checkpoint as ./x.chk",
+				     (uint64_t)resumes * 10 + (unsigned)right, 11);
+			if (checkpoint_kept != 1)
+				fail("the sidecar's checkpoint line keeps the checkpoint's path",
+				     (unsigned)checkpoint_kept, 1);
+			remove(sside);
+			rmdir(sub);
+		}
+
 		// **QUUX's MAIN MEMORY IS AN AMOUNT, NEVER BOARDS; THE CADR KEEPS
 		// ITS BOARDS.**  What the program says, what its flags take and what
 		// its sidecar records, each machine in its own words.  Every
