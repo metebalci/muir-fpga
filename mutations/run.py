@@ -2814,6 +2814,37 @@ CHECKS["quux15_mainsize_quux"] = dict(
     flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GMAIN_WORDS=33554432", "-CFLAGS", "-DQUUX15_MAIN_UNITS=512"],
     golden=["quux15_mainsize.quux.p%d.golden" % _q for _q in (20, 36)])
 
+# **AND ON EACH BOARD** (the Makefile's `quux15_<group>.quux.<board>.pass`):
+# the memory side's groups on the core built with the board's
+# `CACHE_WORDS` and the testbench built for it, at the board's period,
+# `mainsize` at 32M words as well.  The groups, the boards, their caches
+# and their periods are the Makefile's `QUUX15_MEMSIDE`, `QUUX15_BOARDS`,
+# `QUUX15_CACHE_<board>` and `QUUX15_PERIOD_<board>`, read from it here, so
+# that a board's period moves in one place.  The Kria's traces are the
+# default build's and carry no board in their names.
+def _makefile_var(name):
+    with open(os.path.join(REPO, "Makefile")) as f:
+        found = re.findall(r"^%s := (.*)$" % re.escape(name), f.read(), re.M)
+    if len(found) != 1:
+        raise SystemExit("mutations/run.py: the Makefile sets %s %d times, not once" % (name, len(found)))
+    return found[0].split()
+
+
+QUUX15_MEMSIDE = _makefile_var("QUUX15_MEMSIDE")
+QUUX15_BOARDS = _makefile_var("QUUX15_BOARDS")
+for _b in QUUX15_BOARDS:
+    (_c,) = _makefile_var("QUUX15_CACHE_" + _b)
+    (_q,) = _makefile_var("QUUX15_PERIOD_" + _b)
+    for _p in QUUX15_MEMSIDE:
+        _flags = list(CHECKS["quux15_alu_quux"]["flags"])
+        if _p == "mainsize":
+            _flags += ["-GMAIN_WORDS=33554432", "-CFLAGS", "-DQUUX15_MAIN_UNITS=512"]
+        if _b != "kria":
+            _flags += ["-GCACHE_WORDS=" + _c, "-CFLAGS", "-DQUUX15_CACHE_WORDS=" + _c]
+        CHECKS["quux15_%s_quux_%s" % (_p, _b)] = dict(
+            CHECKS["quux15_alu_quux"], flags=_flags,
+            golden=["quux15_%s.quux.p%s%s.golden" % (_p, _q, "" if _b == "kria" else "." + _b)])
+
 # Revision 15's Kria KR260 top level, linted as `build/quux15_kr260.pass`
 # lints it (`quux15_kr260_check`): its elaboration checks, the DDR map's
 # bases and main memory's size against the board's reservation, among them.
@@ -3078,8 +3109,11 @@ def parse(path):
             die("%s:%d: `%s` names no check `%s`"
                 % (path, m.line, m.name, m.check))
         # A mutation to a file its check does not build would run a clean
-        # design and be reported as caught or survived on no evidence.
+        # design and be reported as caught or survived on no evidence.  The
+        # check's testbench is built from the mutant's copy too, so a record
+        # may aim at it.
         built = CHECKS[m.check]["sources"] + CHECKS[m.check].get("clib", {}).get("sources", [])
+        built = built + [CHECKS[m.check]["tb"]] if CHECKS[m.check].get("tb") else built
         if m.path not in built:
             die("%s:%d: `%s` mutates %s, which `%s` does not build"
                 % (path, m.line, m.name, m.path, m.check))
@@ -3966,6 +4000,12 @@ def check_makefile():
     for prog in (programs.group(1).split() if programs else []):
         for name in (groups.group(1).split() if groups and prog == "$(QUUX15_GROUPS)" else [prog]):
             names |= {"quux15_" + name + "_quux", "quux15_" + name + "_quux_b2"}
+    # And on each board, its memory side's groups.
+    memside = re.search(r"^QUUX15_MEMSIDE := (.*)$", text, re.M)
+    boards = re.search(r"^QUUX15_BOARDS := (.*)$", text, re.M)
+    for board in (boards.group(1).split() if boards else []):
+        for name in (memside.group(1).split() if memside else []):
+            names |= {"quux15_%s_quux_%s" % (name, board)}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

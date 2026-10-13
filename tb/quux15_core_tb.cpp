@@ -208,6 +208,14 @@ constexpr uint64_t kMainWords = uint64_t(QUUX15_MAIN_UNITS) << 16;
 #define QUUX15_VIDEO_H 1024
 #endif
 constexpr uint64_t kVideoW = QUUX15_VIDEO_W, kVideoH = QUUX15_VIDEO_H;
+// The cache's words, as the core's `CACHE_WORDS` is built: the Kria's
+// 65,536 unless the build says a board's (`QUUX15_CACHE_WORDS`; the
+// DE25-Nano's 16,384 and the Arty Z7-20's 4,096, the Makefile's
+// `quux15_<group>.quux.<board>.pass`).
+#ifndef QUUX15_CACHE_WORDS
+#define QUUX15_CACHE_WORDS 65536
+#endif
+constexpr uint64_t kCacheWords = QUUX15_CACHE_WORDS;
 constexpr uint64_t kFbWords = kVideoW / 32 * kVideoH;
 constexpr uint64_t kDisplayBase = 0x0A000000;
 
@@ -307,6 +315,9 @@ struct Run {
   // Main memory's 64K-word units, as the trace's machine has them: 32
   // unless its `# main-units` line says otherwise.
   uint64_t main_units = 32;
+  // The cache's words, the Kria's 65,536 unless its `# cache` line says
+  // otherwise (another board's).
+  uint64_t cache_words = 65536;
   // The video controller's size, 1280 by 1024 unless its `# video` line
   // says otherwise; and muir's mode and frame buffer at the end, where the
   // trace gives them (`# endbow`, `# endfb`).
@@ -562,6 +573,10 @@ int read_trace(const char *path, std::vector<Run> &runs) {
       }
       if (w.size() == 2 && w[0] == "main-units") {
         runs.back().main_units = std::strtoull(w[1].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "cache") {
+        runs.back().cache_words = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
       }
       if (w.size() == 3 && w[0] == "video") {
@@ -861,6 +876,16 @@ class Bench {
         l.byte = a;
         l.total = win ? 4 : 5;
         l.first_beats = static_cast<int>(d->m_arlen) + 1;
+        // **A FILL UNDER THIS PORT'S FLOOR IS REFUSED**: the first beat comes
+        // a clock after the address at the soonest, so the line takes its
+        // beats and the clock it lands in.  A trace that asks for less is
+        // of a port no fabric has.
+        if (run_.read < d->axi_read_clocks + static_cast<uint64_t>(l.total)) {
+          why = "the trace's fill is " + std::to_string(run_.read) + " clocks, under this port's floor of " +
+                std::to_string(d->axi_read_clocks + static_cast<uint64_t>(l.total)) +
+                ": the trace is refused";
+          return false;
+        }
         if (!lines_.empty()) {
           why = "a line read while another is answered";
           return false;
@@ -898,6 +923,13 @@ class Bench {
       cont_addr_ = d->m_awaddr + 8;
       w.ready = t + 1;
       w.ready1 = t + 1;
+      // **AND A WRITE ANSWERED UNDER ITS FLOOR**: the B a clock after the
+      // accept at the soonest, and the write landing after it.
+      if (run_.write < d->axi_write_clocks + 1) {
+        why = "the trace's write is " + std::to_string(run_.write) + " clocks, under this port's floor of " +
+              std::to_string(d->axi_write_clocks + 1) + ": the trace is refused";
+        return false;
+      }
       const uint64_t r = t + run_.write + late();
       w.error = errors_ > 0;
       if (errors_ > 0) --errors_;
@@ -1405,6 +1437,15 @@ int run_trace(const char *path, const Run &run, int seed) {
                  "core are built for %llu (QUUX15_MAIN_UNITS, MAIN_WORDS)\n", path, run.name.c_str(),
                  static_cast<unsigned long long>(run.main_units),
                  static_cast<unsigned long long>(kMainWords >> 16));
+    return 1;
+  }
+  // **AND A TRACE OF ANOTHER CACHE**: the core's sets, tags, sweep and
+  // valid bits are built for this testbench's size, and a run's clocks are
+  // its cache's.
+  if (run.cache_words != kCacheWords) {
+    std::fprintf(stderr, "FAIL: %s run %s is of a cache of %llu words, and this testbench and its core are "
+                 "built for %llu (QUUX15_CACHE_WORDS, CACHE_WORDS)\n", path, run.name.c_str(),
+                 static_cast<unsigned long long>(run.cache_words), static_cast<unsigned long long>(kCacheWords));
     return 1;
   }
   // **AND A TRACE OF ANOTHER VIDEO CONTROLLER**: the core's feature words

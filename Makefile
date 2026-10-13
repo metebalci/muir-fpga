@@ -288,7 +288,8 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # **REVISION 15** (contract G3 revision 15 with its appendix A15b): the
 # programs of `golden/src/quux15.rs`, traced A ROW A CLOCK on muir's
 # pipeline (`golden/src/trace15.rs`) with the Kria's memory timing and
-# cache, each at each of its periods in units of 0.5 ns: 20, the Kria's
+# cache, and the memory side's groups with each board's as well
+# (`QUUX15_BOARDS`, below), each at each of its periods in units of 0.5 ns: 20, the Kria's
 # design period (10 ns), and 17 (8.5 ns); `time`, which reads time, at
 # A15b.12's 7, 8, 11 and 19 ns as well.  `quux15_replay.quux.pass` holds the
 # testbench the core is held to, `tb/quux15_core_tb.cpp`, on a stand-in that
@@ -359,6 +360,31 @@ QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at
 # 10 ns.
 QUUX15_PERIODS_redirect := 36 20
+# **AND ON EACH BOARD** (`quux15_<group>.quux.<board>.pass`, below): the
+# memory side's groups at each board's cache, memory timing and period,
+# `golden/src/quux15.rs`'s `--board`, on the core built with the board's
+# `CACHE_WORDS`.  The Kria KR260's are muir's defaults, so its traces carry
+# no board in their names; another board's do, `.p<P>.<board>.golden`.
+# The periods are in units of 0.5 ns: the Kria's 19 ns, its binding fit's;
+# the Arty Z7-20's 48 ns, its trial fit's; and the DE25-Nano's 27 ns,
+# PROVISIONAL: the trial fit's on the A5EB028, a part of its family,
+# package and grade, until its own binding fit sets it.  A board's period
+# moves here and nowhere else.  `boardcache` is the board's cache at its own
+# size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
+# that differ in the set's top bit alone, and the completion's sweep under
+# a loop of reads.
+QUUX15_MEMSIDE := memory ports walk window filedev bdisk bdmix matrixmem randmem storeret checkpoints mainsize boardcache
+QUUX15_BOARDS := kria de25 arty
+QUUX15_CACHE_kria := 65536
+QUUX15_CACHE_de25 := 16384
+QUUX15_CACHE_arty := 4096
+QUUX15_PERIOD_kria := 38
+QUUX15_PERIOD_de25 := 54
+QUUX15_PERIOD_arty := 96
+quux15_board_tag = $(if $(filter kria,$(1)),,.$(1))
+QUUX15_BOARD_TRACES = $(foreach b,$(QUUX15_BOARDS),$(foreach g,$(QUUX15_MEMSIDE),\
+                        $(BUILD)/quux15_$(g).quux.p$(QUUX15_PERIOD_$(b))$(call quux15_board_tag,$(b)).golden))
+QUUX15_BOARD_PASSES = $(foreach b,$(QUUX15_BOARDS),$(QUUX15_MEMSIDE:%=$(BUILD)/quux15_%.quux.$(b).pass))
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
@@ -394,6 +420,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
+       $(QUUX15_BOARD_PASSES) \
        $(BUILD)/quux15_videosize.quux.pass $(BUILD)/quux15_halt_probe.quux.pass \
        $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/quux15_fd_face.pass \
@@ -1560,8 +1587,9 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux14 -- --program $* --prom > $@
 
 # Revision 15's programs (`QUUX15_PROGRAMS`): a trace's name carries its
-# period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
-# every period.  `quux15_<program>.quux.p<P>.b2.golden` is the same program
+# period, `quux15_<program>.quux.p<P>.golden`, and a board's other than the
+# Kria's its board, `quux15_<program>.quux.p<P>.<board>.golden`, and the
+# PROM image is one at every period.  `quux15_<program>.quux.p<P>.b2.golden` is the same program
 # with two bubbles, A15b.14's fallback (`--bubbles 2`), which `make
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
@@ -1575,7 +1603,8 @@ $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
 	mkdir -p $(BUILD)/quux15_ckpt
 	QUUX15_CHECKPOINTS=$(abspath $(BUILD))/quux15_ckpt \
 	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
-	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) $(if $(filter b2,$(subst ., ,$*)),--bubbles 2) > $@
+	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) $(if $(filter b2,$(subst ., ,$*)),--bubbles 2) \
+	    $(addprefix --board ,$(filter $(QUUX15_BOARDS),$(subst ., ,$*))) > $@
 $(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program $* --prom > $@
 # A trace with a fault planted in muir's pipeline, which moves clocks and no
@@ -1696,6 +1725,38 @@ $(BUILD)/obj_quux15_core_hd/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.c
 	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_hd \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 $(eval $(call QUUX15_CORE_RULE,videosize,_hd,))
+
+# **AND ON EACH BOARD** (`QUUX15_BOARDS`, above): the memory side's groups,
+# `QUUX15_MEMSIDE`, traced at the board's cache, memory timing and period,
+# each held to the core built with the board's `CACHE_WORDS` and the
+# testbench built for it (`QUUX15_CACHE_WORDS`), `mainsize` at 32M words as
+# well; each trace of another board than the Kria names its cache in its
+# `# cache` line, and a testbench built for another refuses it.  The Kria's
+# build is the one every other check uses; the DE25-Nano's and the Arty
+# Z7-20's are their own.
+define QUUX15_BOARD_BUILD
+$$(BUILD)/obj_quux15_core$(1)/Vquux15_core: $$(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $$(BUILD)/q15chk/libq15chk.a | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) $$(QUUX15_CORE_FLAGS) $(2) -GCACHE_WORDS=$(3) -CFLAGS -DQUUX15_CACHE_WORDS=$(3) \
+	    -O2 -CFLAGS -O2 -Mdir $$(BUILD)/obj_quux15_core$(1) \
+	    --top-module quux15_core $$(QUUX15_CORE_SRC) $$(abspath tb/quux15_core_tb.cpp)
+endef
+QUUX15_MAIN32 := -GMAIN_WORDS=33554432 -CFLAGS -DQUUX15_MAIN_UNITS=512
+$(foreach b,de25 arty,$(eval $(call QUUX15_BOARD_BUILD,_$(b),,$(QUUX15_CACHE_$(b)))))
+$(foreach b,de25 arty,$(eval $(call QUUX15_BOARD_BUILD,_32m_$(b),$(QUUX15_MAIN32),$(QUUX15_CACHE_$(b)))))
+# The build a board's group runs on: the Kria's are the default build's and
+# the 32M one's.
+quux15_board_obj = $(if $(filter mainsize,$(1)),_32m)$(if $(filter kria,$(2)),,_$(2))
+define QUUX15_BOARD_RULE
+$$(BUILD)/quux15_$(1).quux.$(2).pass: $$(BUILD)/obj_quux15_core$$(call quux15_board_obj,$(1),$(2))/Vquux15_core \
+        $$(BUILD)/quux15_$(1).quux.p$$(QUUX15_PERIOD_$(2))$$(call quux15_board_tag,$(2)).golden
+	@for s in $$(QUUX15_SEEDS); do \
+	   QUUX15_SEED=$$$$s $$(BUILD)/obj_quux15_core$$(call quux15_board_obj,$(1),$(2))/Vquux15_core \
+	       $$(BUILD)/quux15_$(1).quux.p$$(QUUX15_PERIOD_$(2))$$(call quux15_board_tag,$(2)).golden \
+	     || exit 1; \
+	 done
+	@touch $$@
+endef
+$(foreach b,$(QUUX15_BOARDS),$(foreach g,$(QUUX15_MEMSIDE),$(eval $(call QUUX15_BOARD_RULE,$(g),$(b)))))
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
@@ -3821,7 +3882,8 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.k4.golden) \
               $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden \
               $(foreach p,$(QUUX15_CORE) mainsize,$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
-                $(BUILD)/quux15_$(p).quux.p$(q).golden))
+                $(BUILD)/quux15_$(p).quux.p$(q).golden)) \
+              $(QUUX15_BOARD_TRACES)
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

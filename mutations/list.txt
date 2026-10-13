@@ -32169,3 +32169,91 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
       if (land && chgrp) begin
 @end
+
+# **REVISION 15 ON EACH BOARD'S CACHE** (the Makefile's
+# `quux15_<group>.quux.<board>.pass`): faults that only a board's own cache
+# size has, each planted at that size alone, so that the Kria's 64K-word
+# build cannot see them and the board's traces must.
+
+@mutation quux15-set-index-one-bit-short-at-256-sets
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_port.sv
+@note At 256 sets, the Arty Z7-20's 4K-word cache, a line's set is taken
+@note from seven of its eight bits, the top one read as 0: two lines a set's
+@note width apart share a set and a tag.
+@old
+    return b[3 +: SB];
+@new
+    return SETS == 256 ? {1'b0, b[3 +: SB-1]} : b[3 +: SB];
+@end
+
+@mutation quux15-set-index-one-bit-short-at-1024-sets
+@check quux15_boardcache_quux_de25
+@file rtl/machine/quux15_port.sv
+@note At 1,024 sets, the DE25-Nano's 16K-word cache, a line's set is taken
+@note from nine of its ten bits, the top one read as 0.
+@old
+    return b[3 +: SB];
+@new
+    return SETS == 1024 ? {1'b0, b[3 +: SB-1]} : b[3 +: SB];
+@end
+
+@mutation quux15-sweep-a-clock-short-at-256-sets
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_port.sv
+@note At 256 sets the sweep holds lookups for 7 clocks, not the cache's
+@note 4,096 words / 512 = 8.
+@old
+  localparam int unsigned SWEEP_CLOCKS = SETS * 16 / 512 > 1 ? SETS * 16 / 512 : 1;
+@new
+  localparam int unsigned SWEEP_CLOCKS = SETS == 256 ? 7 : SETS * 16 / 512 > 1 ? SETS * 16 / 512 : 1;
+@end
+
+@mutation quux15-sweep-a-clock-long-at-256-sets
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_port.sv
+@note At 256 sets the sweep holds lookups for 9 clocks, not 8.
+@old
+  localparam int unsigned SWEEP_CLOCKS = SETS * 16 / 512 > 1 ? SETS * 16 / 512 : 1;
+@new
+  localparam int unsigned SWEEP_CLOCKS = SETS == 256 ? 9 : SETS * 16 / 512 > 1 ? SETS * 16 / 512 : 1;
+@end
+
+@mutation quux15-valid-group-edge-at-4-groups
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_validmap.sv
+@note With 4 groups, the Arty Z7-20's 256 sets, a write to a group's last
+@note entry makes the next group valid and leaves its own as it was.
+@old
+      if (we) gv[waddr[AW-1:6]] <= 1'b1;
+@new
+      if (we) gv[GROUPS == 4 && waddr[5:0] == 6'd63 ? waddr[AW-1:6] + 1'b1 : waddr[AW-1:6]] <= 1'b1;
+@end
+
+# **THE PORT'S FLOORS IN THE TESTBENCH** (`tb/quux15_core_tb.cpp`): a trace
+# whose fill or write answer is shorter than revision 15's port can be is
+# refused.  A floor a clock high refuses a trace at the floor: the Kria's
+# `storeret` at 18 ns fills in 6 clocks, and the Arty's at 48 ns answers a
+# write in 2.  A floor a clock low is not here: no reference trace is under
+# a floor, so no check of traces can see it.
+
+@mutation quux15-tb-fill-floor-a-clock-high
+@check quux15_storeret_quux
+@file tb/quux15_core_tb.cpp
+@note The testbench refuses a fill of 6 clocks, which the port can take.
+@old
+        if (run_.read < d->axi_read_clocks + static_cast<uint64_t>(l.total)) {
+@new
+        if (run_.read < d->axi_read_clocks + static_cast<uint64_t>(l.total) + 1) {
+@end
+
+@mutation quux15-tb-write-floor-a-clock-high
+@check quux15_storeret_quux_arty
+@file tb/quux15_core_tb.cpp
+@note The testbench refuses a write answered in 2 clocks, which the port can
+@note take.
+@old
+      if (run_.write < d->axi_write_clocks + 1) {
+@new
+      if (run_.write < d->axi_write_clocks + 2) {
+@end

@@ -225,12 +225,19 @@ const M_ZERO: u64 = 0o34;
 const TESTED: u64 = 0o1710;
 
 /// The command list; a page a read writes; another page of its sets (32K
-/// words on, the cache's 4,096 sets of 8 words); a page of sets the
-/// transfers leave; a page a write reads, and a second; the results' page.
+/// words on, a way of the Kria's 4,096 sets of 8 words, and a whole number
+/// of ways of every smaller cache); a page of sets the transfers leave; a
+/// page a write reads, and a second; the results' page.
 const CL: u32 = 0o3000;
 const T: u32 = 0o40000;
 const O: u32 = T + 0o100000;
 const U: u32 = T + 0o4000;
+/// The read's page of sets the transfers leave: `U`, or half a way of the
+/// board's cache past T where a way is smaller than 4,096 words (the Arty's
+/// 4K words, 256 sets of 8 words a way, where `U` falls in T's sets).
+fn u_read() -> u32 {
+    T + (super::cache_words() / 4).min(U - T)
+}
 const S: u32 = 0o150000;
 const S2: u32 = S + 0o2000;
 const RES: u32 = 0o160000;
@@ -347,18 +354,20 @@ pub fn bdisk() -> Vec<(String, Preset)> {
     let mut v = Vec::new();
 
     // A packed read of page T from blocks 3-7.  Before it the cache holds
-    // T+8 and O+8, both ways of one set, U+8, and three more lines like
-    // them, T+16, O+16 and U+16, which only DONE's check reads before the
-    // probe after it.
+    // T+8 and O+8, both ways of one set, u+8 (`u_read`, a page of sets T
+    // has not on every board's cache), and three more lines like them,
+    // T+16, O+16 and u+16, which only DONE's check reads before the probe
+    // after it.
+    let u = u_read();
     let mut p = run(DiskRun {
-        pages: vec![T, O, U, CL & !0o1777, 0],
+        pages: vec![T, O, u, CL & !0o1777, 0],
         disk_blocks: (3..8).collect(),
-        holds: vec![(T + 16, false), (O + 16, false), (U + 16, true)],
+        holds: vec![(T + 16, false), (O + 16, false), (u + 16, true)],
         ..DiskRun::default()
     });
     p.main.extend(page_words(O));
-    p.main.extend(page_words(U));
-    for (k, a) in [T + 8, O + 8, U + 8, T + 16, O + 16, U + 16].into_iter().enumerate() {
+    p.main.extend(page_words(u));
+    for (k, a) in [T + 8, O + 8, u + 8, T + 16, O + 16, u + 16].into_iter().enumerate() {
         p.read(phys(a), 0o20 + k as u64);
     }
     p.bd_setup(CL, 3, READ | IE);
@@ -366,11 +375,11 @@ pub fn bdisk() -> Vec<(String, Preset)> {
     p.write(Word::from(T), phys(CL)).write(0o1234567, phys(T + 5));
     p.bd_start();
     p.bd_delay(0o26, AFTER_WALK);
-    for (k, a) in [T + 8, O + 8, U + 8].into_iter().enumerate() {
+    for (k, a) in [T + 8, O + 8, u + 8].into_iter().enumerate() {
         p.read(phys(a), 0o20 + k as u64);
     }
     p.bd_wait();
-    for (k, a) in [T + 8, O + 8, U + 8, T + 16, O + 16, U + 16, T + 5].into_iter().enumerate() {
+    for (k, a) in [T + 8, O + 8, u + 8, T + 16, O + 16, u + 16, T + 5].into_iter().enumerate() {
         p.read(phys(a), 0o20 + k as u64);
     }
     p.bd_registers(0o27);

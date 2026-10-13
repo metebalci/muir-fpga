@@ -286,7 +286,7 @@ pub struct Net {
 /// their clocks: that clock.
 fn anchor_clock(case: &Case, period: u64, bubbles: u8, frames: &[(Frame, u64)], at: At) -> Result<u64, String> {
     let mut e = Pipeline::new(super::machine(case));
-    e.configure(period, case.timing.unwrap_or(super::TIMING), super::CACHE_WORDS);
+    e.configure(period, case.timing.unwrap_or(super::timing()), super::cache_words());
     e.bubbles = bubbles;
     e.port.model = case.late;
     let mut t = super::trace15::Trace15::start(&mut e);

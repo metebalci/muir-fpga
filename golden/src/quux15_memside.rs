@@ -23,6 +23,12 @@
 //!             that evicts nothing; no word right after a start reads the
 //!             map (A15b.2's rule)
 //!
+//!   boardcache
+//!             a board's cache at its own size (`board_cache`): the valid
+//!             bits' group edges, two lines that differ in the set's top
+//!             bit alone, and the file device's completion sweeping it
+//!             under a loop of reads (`quux15_devices.rs`'s `sweep_reads`)
+//!
 //! `randmem` and `matrixmem` are `quux15_preset.rs`'s random programs and
 //! matrix with their memory starts.  Every run takes -RESET's sweep of the
 //! TLB as done, as muir's tests do; `memory`, a program in the PROM, waits
@@ -953,6 +959,49 @@ pub fn redirect() -> Vec<(String, Preset)> {
         p.late = Some(late(seed));
         v.push((format!("pairs-late{seed}"), p));
     }
+    v
+}
+
+/// **A board's cache at its own size** (`boardcache`, the Makefile's
+/// `QUUX15_MEMSIDE` on each board): lines placed by the board's sets, each
+/// read, the next read, and both read again, so that a line the cache should
+/// hold is a hit and one it should not is a miss, row for row with muir's
+/// cache of `cache_words` words, two ways of `cache_words / 16` sets of
+/// eight words.  From `BOARD_BASE`, 64K words, a whole number of ways of
+/// every board's cache.
+///
+///   edges     the valid bits' groups of 64 sets (`quux15_validmap.sv`):
+///             the last set of a group and the first of the next, at up to
+///             sixteen edges, the top set's next the set 0
+///   aliases   two lines half a way apart, which differ in the set's top
+///             bit alone
+pub fn board_cache(cache_words: u32) -> Vec<(String, Preset)> {
+    const BOARD_BASE: u64 = 0o200000;
+    let sets = u64::from(cache_words) / 16;
+    let way = 8 * sets;
+    let word = |a: u64| (a.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20) & 0xff_ffff_ffff;
+    let pair = |p: &mut Preset, x: u64, y: u64, slot: u64| {
+        p.main.push((x as usize, word(x)));
+        p.main.push((y as usize, word(y)));
+        for (k, a) in [x, y, x, y].into_iter().enumerate() {
+            p.read(PHYS | a, slot + k as u64);
+        }
+    };
+    let mut v = Vec::new();
+    let groups = sets / 64;
+    let step = (groups / 16).max(1);
+    let mut p = run();
+    for g in (step..=groups).step_by(step as usize) {
+        let (last, next) = (64 * g - 1, (64 * g) % sets);
+        pair(&mut p, BOARD_BASE + 8 * last, BOARD_BASE + 8 * next, 0o20);
+    }
+    p.stop();
+    v.push(("edges".to_string(), p));
+    let mut p = run();
+    pair(&mut p, BOARD_BASE + 8, BOARD_BASE + 8 + way / 2, 0o20);
+    pair(&mut p, BOARD_BASE + 8 * (sets - 1) + 5, BOARD_BASE + 8 * (sets / 2 - 1) + 5, 0o24);
+    p.stop();
+    v.push(("aliases".to_string(), p));
     v
 }
 

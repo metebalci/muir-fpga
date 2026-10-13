@@ -447,6 +447,37 @@ pub fn filedev() -> Vec<(String, Preset)> {
     v
 }
 
+/// **The completion's sweep at a board's cache** (`boardcache`): LOG of
+/// "ab", and while it is answered a loop that reads RESP_PROD and then a
+/// line of main memory and takes its word, so that a read of the line waits
+/// on the completion's sweep wherever its cache words / 512 clocks end, and
+/// misses after it; the response read last.
+pub fn sweep_reads() -> Preset {
+    use muir::file_device::op;
+    const LINE: u64 = 0o2000;
+    let mut p = run();
+    p.main.push((LINE as usize, 0o1234567));
+    p.write(CMD_RING, reg(0o162)).write(0, reg(0o163)).write(RESP_RING, reg(0o166));
+    p.write(0, reg(0o167)).write(1, reg(0o160));
+    p.write(Word::from(u32::from_le_bytes(*b"ab\0\0")), PHYS | BUF_A);
+    command(&mut p, 0, [LOG_TAG | Word::from(op::LOG) << 16, 0, BUF_A, 2, 0, 0, 0, 0]);
+    p.read(PHYS | LINE, 0o20);
+    p.write(1, reg(0o164));
+    let (at, one, line) = (p.k(reg(0o170)), p.k(1), p.k(PHYS | LINE));
+    let top = p.at();
+    p.op(ALU | SETA | a_src(at) | START_READ);
+    p.fill(1);
+    p.op(ALU | AND | SRC_MD | a_src(one) | a_dest(TESTED));
+    p.op(ALU | SETA | a_src(line) | START_READ);
+    p.fill(1);
+    p.op(ALU | SETM | SRC_MD | m_dest(0o21));
+    p.op(jcond(3) | a_src(TESTED) | m_src(M_ZERO) | target(top) | N);
+    p.fill(1);
+    p.read(PHYS | RESP_RING, 0o22).read(PHYS | LINE, 0o23);
+    p.stop();
+    p
+}
+
 /// The device window: the frame buffer from its slice 0.
 const fn win(off: u64) -> Word {
     0o34000000000 | off

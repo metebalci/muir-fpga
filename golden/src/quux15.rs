@@ -3,10 +3,11 @@
 //
 //! **QUUX revision 15** (contract G3 revision 15, appendix A15b), as programs
 //! in the boot PROM, traced a clock a row on muir's pipeline
-//! (`muir::pipeline::Pipeline`, the `rtl` engine on revision 15) with the
-//! Kria KR260's memory timing and cache, at a period of `P` units of 0.5 ns.
+//! (`muir::pipeline::Pipeline`, the `rtl` engine on revision 15) with a
+//! board's memory timing and cache, the Kria KR260's unless `--board` names
+//! another (`kria`, `de25`, `arty`), at a period of `P` units of 0.5 ns.
 //!
-//!     quux15 --program <name> --period <P> [--bubbles <B>] [--mutation <fault>]
+//!     quux15 --program <name> --period <P> [--board <board>] [--bubbles <B>] [--mutation <fault>]
 //!     quux15 --program <name> --prom
 //!
 //! Each program is written in `golden/src/trace15.rs`'s columns, which
@@ -108,8 +109,63 @@ use muir::tlb;
 /// Revision 15.
 const REV15: Geometry = Geometry::QUUX_15;
 
-/// The board's memory and cache: the Kria's.
-const TIMING: PortTiming = PortTiming::KRIA;
+/// **A board revision 15 runs on**: its port's memory timing and its
+/// cache's words, `--board`'s.  The Kria KR260's are muir's defaults and
+/// every trace's unless `--board` names another; a trace of another board
+/// names its cache in its `# cache` line, which a testbench built for
+/// another cache refuses.  The board's period is the trace's `--period`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Board {
+    name: &'static str,
+    timing: PortTiming,
+    cache_words: u32,
+}
+
+/// The boards: the Kria KR260 with muir's 64K-word cache, the DE25-Nano
+/// with 16K and the Arty Z7-20 with 4K (contract G3 revision 15, Q-MP6),
+/// each at muir's preset of its memory timing (`--memory-timing`).
+const BOARDS: [Board; 3] = [
+    Board { name: "kria", timing: PortTiming::KRIA, cache_words: CACHE_WORDS },
+    Board { name: "de25", timing: PortTiming::DE25, cache_words: 16_384 },
+    Board { name: "arty", timing: PortTiming::ARTY, cache_words: 4_096 },
+];
+
+/// **The fewest clocks a line's fill can take on revision 15's port**: the
+/// 64-bit master takes a line in five beats, the first a clock after the
+/// clock its address is taken at the soonest, and the fill lands the clock
+/// after the last (`rtl/plumbing/quux15_axi_master.sv`'s
+/// `READ_FABRIC_CLOCKS`).  muir's port takes the fill's time whole, so a
+/// run's own timing is held to this at the trace's period, and the
+/// testbench refuses a trace whose fill is shorter.
+const FILL_FLOOR: u64 = 6;
+
+/// **And the fewest clocks a write's answer can take**: its B a clock after
+/// its accept at the soonest, and the write landing the clock after its B
+/// (`WRITE_FABRIC_CLOCKS`), held and refused as `FILL_FLOOR` is.
+const WRITE_FLOOR: u64 = 2;
+
+/// The board this run's traces are of, set once from `--board`.
+static BOARD: std::sync::OnceLock<Board> = std::sync::OnceLock::new();
+
+/// The board's memory timing: a run's own timing, where it has one, is
+/// taken over it.
+fn timing() -> PortTiming {
+    BOARD.get().unwrap_or(&BOARDS[0]).timing
+}
+
+/// The board's cache, in words.
+fn cache_words() -> u32 {
+    BOARD.get().unwrap_or(&BOARDS[0]).cache_words
+}
+
+/// What a file of the board's carries in its name: nothing for the Kria's,
+/// `.<board>` for another's.
+fn board_suffix() -> String {
+    match BOARD.get() {
+        Some(b) if b.name != BOARDS[0].name => format!(".{}", b.name),
+        _ => String::new(),
+    }
+}
 
 /// Main memory: QUUX's 32 boards, 2M words.
 const MAIN: usize = 32 << 16;
@@ -1052,7 +1108,9 @@ impl Case {
     /// real-time clock's seconds at power-on, which the testbench gives the
     /// core as a board's top and host do; the port's clocks at the period,
     /// which its responder answers by; the seeded model, if the run has
-    /// one; and whether -RESET's sweep of the TLB is taken as done.
+    /// one; whether -RESET's sweep of the TLB is taken as done; and the
+    /// main memory, cache and video controller of a board whose are not
+    /// the defaults, which a testbench built for others refuses.
     fn memory_lines(&self, e: &Pipeline) -> Vec<String> {
         let c = e.port.clocks();
         let mut out = vec![
@@ -1068,6 +1126,9 @@ impl Case {
         }
         if let Some(n) = self.main_words {
             out.push(format!("# main-units {:x}", n >> 16));
+        }
+        if cache_words() != CACHE_WORDS {
+            out.push(format!("# cache {:x}", cache_words()));
         }
         if let Some((w, h)) = self.video {
             out.push(format!("# video {w:x} {h:x}"));
@@ -1290,7 +1351,7 @@ const REACHED: [&str; 14] = [
 fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) -> Result<Ran, (i32, String)> {
     let name = &case.name;
     let mut e = Pipeline::new(machine(case));
-    e.configure(period, case.timing.unwrap_or(TIMING), CACHE_WORDS);
+    e.configure(period, case.timing.unwrap_or(timing()), cache_words());
     e.bubbles = bubbles;
     if let Some(f) = planted {
         e.mutation = f;
@@ -1412,9 +1473,11 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
                 })?;
                 // Two bubbles' file apart from one's: the two runs halt in
-                // states of their own at the same clock.
+                // states of their own at the same clock; and another
+                // board's apart from the Kria's.
                 let b2 = if bubbles == 2 { ".b2" } else { "" };
-                let file = format!("{dir}/{name}.p{period}{b2}.chk");
+                let board = board_suffix();
+                let file = format!("{dir}/{name}.p{period}{b2}{board}.chk");
                 // A file device with a handle open or a command queued holds
                 // what no checkpoint carries: muir refuses, and so must the
                 // board's writer.  And block-disk's transfer in flight, which
@@ -1450,13 +1513,14 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 let muir::machine::Rtc::Counted { start, base_ns } = e.machine().rtc else {
                     return Err((1, format!("{name}: a trace's real-time clock is counted")));
                 };
-                let tm = case.timing.unwrap_or(TIMING);
+                let tm = case.timing.unwrap_or(timing());
                 memory.push(format!(
-                    "# checkpoint {:x} {file} {start:x} {base_ns:x} {} {} {} {CACHE_WORDS}",
+                    "# checkpoint {:x} {file} {start:x} {base_ns:x} {} {} {} {}",
                     e.clock(),
                     tm.read_ns,
                     tm.write_ns,
-                    tm.occupancy_ns
+                    tm.occupancy_ns,
+                    cache_words()
                 ));
                 checkpointed = true;
                 break;
@@ -1598,6 +1662,12 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "redirect" => quux15_memside::redirect().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "mainsize" => quux15_memside::mainsize().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "boardcache" => {
+            let mut v: Vec<Case> =
+                quux15_memside::board_cache(cache_words()).into_iter().map(|(n, p)| p.case(&n)).collect();
+            v.push(quux15_devices::sweep_reads().case("sweep"));
+            v
+        }
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],
         "timers" => quux15_devices::timers().into_iter().map(|(n, p)| p.case(&n)).collect(),
@@ -1634,7 +1704,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
             v.extend(quux15_main::field_macro().into_iter().map(|(n, p)| p.case(&format!("field-{n}"))));
             v
         }
-        "storeret" => quux15_main::store_return().into_iter().map(|(_, c)| c).collect(),
+        "storeret" => quux15_main::store_return(period).into_iter().map(|(_, c)| c).collect(),
         "dispsel" => quux15_preset::dispatch_selects().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),
@@ -1670,6 +1740,18 @@ fn main() {
                     }
                 }
             }
+            "--board" => {
+                let v = it.next().unwrap_or_default();
+                let Some(b) = BOARDS.iter().find(|b| b.name == v) else {
+                    let names: Vec<&str> = BOARDS.iter().map(|b| b.name).collect();
+                    eprintln!("quux15: --board is `{v}`; it is one of {}", names.join(", "));
+                    std::process::exit(2);
+                };
+                if BOARD.set(*b).is_err() {
+                    eprintln!("quux15: --board is given twice");
+                    std::process::exit(2);
+                }
+            }
             "--bubbles" => {
                 let v = it.next().unwrap_or_default();
                 match v.as_str() {
@@ -1696,7 +1778,9 @@ fn main() {
         }
     }
     let Some(name) = name else {
-        eprintln!("usage: quux15 --program <name> --period <P> [--bubbles <B>] [--mutation <fault>] | --prom");
+        eprintln!(
+            "usage: quux15 --program <name> --period <P> [--board <board>] [--bubbles <B>] [--mutation <fault>] | --prom"
+        );
         std::process::exit(2);
     };
     // The PROM's image is one at every period: the time program's word 25
@@ -1728,10 +1812,11 @@ fn main() {
         out.push(trace15::COLUMNS.to_string());
         out.push(format!(
             "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, \
-             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {CACHE_WORDS} words{}{}",
+             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {} words{}{}",
             period / 2,
             if period % 2 == 1 { 5 } else { 0 },
-            TIMING,
+            timing(),
+            cache_words(),
             if bubbles == 2 { ", two bubbles" } else { "" },
             planted.map_or(String::new(), |f| format!(", WITH THE PLANTED FAULT {f:?}"))
         ));

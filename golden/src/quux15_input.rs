@@ -494,7 +494,7 @@ fn ckpt_program() -> Preset {
 /// The clock `case` parks at on muir's pipeline, its injections made.
 pub(crate) fn park_clock(case: &Case, period: u64) -> u64 {
     let mut e = Pipeline::new(super::machine(case));
-    e.configure(period, case.timing.unwrap_or(super::TIMING), super::CACHE_WORDS);
+    e.configure(period, case.timing.unwrap_or(super::timing()), super::cache_words());
     e.boot();
     if case.skip_sweep {
         e.skip_sweep();

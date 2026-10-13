@@ -529,8 +529,11 @@ pub fn field_macro() -> Vec<(String, Preset)> {
 /// the operand address the return armed when the handler's first word
 /// reads it.  D off and on; the port as the traces' period makes it and at
 /// the Kria's, slower and faster; each with the memory model off and with
-/// twelve seeds answering each write up to 50 clocks late.
-pub fn store_return() -> Vec<(String, Case)> {
+/// twelve seeds answering each write up to 50 clocks late.  The faster
+/// port's fill and write are held to `FILL_FLOOR` and `WRITE_FLOOR` clocks
+/// at the period: at a long period its 100 ns and 40 ns would be fewer
+/// clocks than the fabric's port can fill a line or answer a write in.
+pub fn store_return(period: u64) -> Vec<(String, Case)> {
     use muir::isa::asm::R;
     use muir::pipeline::PortTiming;
     use muir::pipeline::port::LateModel;
@@ -545,6 +548,23 @@ pub fn store_return() -> Vec<(String, Case)> {
         ("slow", Some(PortTiming { read_ns: 600, write_ns: 400, occupancy_ns: 40 })),
         ("fast", Some(PortTiming { read_ns: 100, write_ns: 40, occupancy_ns: 10 })),
     ];
+    // A fill or a write under its floor at this period takes the floor:
+    // its clocks times the period in ns, the period being in units of
+    // 0.5 ns.
+    let time = muir::clock::TimeBase::half_ns(period);
+    let timings = timings.map(|(tn, t)| {
+        (tn, t.map(|mut t| {
+            if t.clocks(time).read < super::FILL_FLOOR {
+                t.read_ns = super::FILL_FLOOR * period / 2;
+                assert_eq!(t.clocks(time).read, super::FILL_FLOOR, "the fill's floor at period {period}");
+            }
+            if t.clocks(time).write < super::WRITE_FLOOR {
+                t.write_ns = super::WRITE_FLOOR * period / 2;
+                assert_eq!(t.clocks(time).write, super::WRITE_FLOOR, "the write's floor at period {period}");
+            }
+            t
+        }))
+    });
     let mut v = Vec::new();
     for d in [false, true] {
         let on = if d { "d" } else { "nod" };
