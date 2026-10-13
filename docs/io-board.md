@@ -972,8 +972,10 @@ a frame on `chaos_tx_clear` or `chaos_reset`, and
 pulses `chaos_tx_done` when the program says it has taken one. Coming back it
 streams the program's words on `chaos_rx_valid` and pulses `chaos_rx_done`
 with the bit count. It holds `chaos_address` from what the program wrote,
-there being no switch on this board. Its own header records the three levels
-it holds low and why: `chaos_cbl_busy`, `chaos_rx_crc` and `chaos_tx_abort`.
+there being no switch on this board. It raises `chaos_tx_abort` with the
+`chaos_tx_done` of a take the program marks aborted, which is the machine's
+own frame to itself meeting its own full buffer. Its own header records the
+two levels it holds low and why: `chaos_cbl_busy` and `chaos_rx_crc`.
 
 `rtl/plumbing/cadr_serial_line.sv` paces both directions and holds what the
 machine transmits until the program takes it. It recomputes `tx_on`, `rx_on`,

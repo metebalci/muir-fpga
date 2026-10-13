@@ -606,6 +606,22 @@ int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cabl
 		say("udp: %u words is not a frame CHUDP carries", n);
 		return 0;
 	}
+	// **THE CHECK WORD IS CHECKED BEFORE IT IS REPLACED.**  The card's
+	// 9401 made it, and `chudp_wrap` has just put the Internet checksum
+	// in its place, so past this line a wrong one cannot be seen by
+	// anybody.  muir's CHUDP node drops a frame whose check word failed,
+	// as a receiver does, and this edge does the same: counted, said, and
+	// not sent.  Said every time rather than under the trace, because it
+	// is a fault in the fabric and not traffic.
+	const uint16_t want = chaos_check_word(words, n - 1u);
+	if (words[n - 1u] != want) {
+		if (u->bad_check_word != ~0ul)
+			++u->bad_check_word;
+		say("udp: a frame of %u words to %o carries check word %06o where its words "
+		    "make %06o: not sent (%lu so far)", n, (unsigned)cable_dest,
+		    (unsigned)words[n - 1u], (unsigned)want, u->bad_check_word);
+		return -1;
+	}
 	// Where it goes, which is muir's `Chudp::addressed` in the same four
 	// cases and the same order.
 	//

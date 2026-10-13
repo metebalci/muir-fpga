@@ -76,7 +76,8 @@
 // reads word 5 twice, cannot lose a word.
 //
 //    +0x00   0  IDENT   "CHAO", read-only
-//    +0x04   1  STAT    read-only, the bits of `enum chaos_stat`
+//    +0x04   1  STAT    read-only, the bits of `enum chaos_stat`, and the
+//                       card's own CSR in bits 31:16
 //    +0x08   2  MYADDR  the sixteen address switches: what the machine reads
 //                       at `MY_ADDRESS` (`0o764142`) and the source word the
 //                       transmitter inserts.  Written by Linux, because on
@@ -167,6 +168,12 @@ enum chaos_stat {
 	CHAOS_ST_LOOPED   = 1u << 3
 };
 
+// STAT's bits 31:16 are the card's own CSR, AIM-628 section 7's layout.  The
+// one bit read here is Spy, which widens what the machine's receiver takes
+// from its own frame (`chaos_face_own_frame`).
+#define CHAOS_ST_CSR_SHIFT 16u
+#define CHAOS_CSR_SPY      (1u << 2)
+
 enum chaos_ctl {
 	// The frame `TXLEN` counted has been taken: drop it, and let the
 	// machine's Transmit Done come up.
@@ -176,7 +183,11 @@ enum chaos_ctl {
 	CHAOS_CTL_RX_COMMIT = 1u << 1,
 	// Throw away what has been written into the RX window without storing
 	// it: a frame that turned out to be for somebody else.
-	CHAOS_CTL_RX_ABORT  = 1u << 2
+	CHAOS_CTL_RX_ABORT  = 1u << 2,
+	// With `CHAOS_CTL_TX_TAKE`: the frame taken was aborted, and the
+	// machine's Transmit Done comes with Transmit Abort.  Alone it does
+	// nothing.  `chaos_face_let_go` is what writes it.
+	CHAOS_CTL_TX_ABORTED = 1u << 3
 };
 
 enum chaos_irq {
@@ -220,11 +231,55 @@ void chaos_face_set_address(struct chaos_face *f, uint16_t address);
 // which is right: the cable carried it and nobody wanted it.
 int chaos_face_take(struct chaos_face *f, uint16_t *words, unsigned max);
 
+// **THE SAME TAKE IN TWO HALVES**, for a caller that must know what became of
+// the frame before the machine is told: `chaos_face_read_frame` reads the
+// waiting frame and does NOT let the machine go, and `chaos_face_let_go`
+// does, with Transmit Abort or without.  The machine's own frame needs both
+// halves, because whether its busy receiver aborted it is the answer of the
+// commit that hands it back (`chaos_face_own_frame`), and the abort rides on
+// the take.  `chaos_face_take` is the two with no abort.
+//
+// `chaos_face_read_frame` returns what `chaos_face_take` does, and on -1 it has
+// let the machine go itself.  A frame of fewer than three words is one of
+// those: it has no cable destination, the third word from the end, which is
+// what the program routes by.  The cable never offers one, and this says so
+// and drops it if it ever does, so the program cannot read below the frame.
+int chaos_face_read_frame(struct chaos_face *f, uint16_t *words, unsigned max);
+void chaos_face_let_go(struct chaos_face *f, int aborted);
+
 // A frame onto the machine's incoming buffer.  1 if it was stored, 0 if the
 // machine had not emptied the buffer and the fabric refused it (the caller
 // may try again, and `LOST` has counted it), -1 for a frame this seam cannot
-// carry.
+// carry: fewer than four words, which is 48 bits that no receiver takes, or
+// more than `CHAOS_MAX_WORDS`.  Four words is the machine's own shortest
+// frame that lands; one from over CHUDP is eleven at the least.
 int chaos_face_give(struct chaos_face *f, const uint16_t *words, unsigned n);
+
+// **THE MACHINE'S OWN FRAME, AS ITS RECEIVER HEARS IT ON THE CABLE.**  The
+// board's transceiver hears the whole cable, its own transmission included,
+// and its receiver judges that frame by `DEST MATCH` as it judges any other
+// (muir's `Ether`, measured on the netlist board): to its own address `me`,
+// to zero, or to anyone under Spy, it lands in a free buffer; with the buffer
+// full it is counted in Lost Count, and one to `me` is aborted by the board's
+// own busy receiver, which reads back as Transmit Abort.  A frame to another
+// station without Spy is not for it.  A run of 48 bits or fewer is taken by
+// no receiver and, with the buffer full, neither counted nor aborted, which
+// muir and the netlist board agree on.  **Under Loop Back the frame was not on
+// the cable** and is not judged here.
+//
+// The frame is handed back through `chaos_face_give`, so a full buffer is the
+// fabric's refusal and the count is the fabric's, at both ends of the seam.
+// The caller lets the machine go afterwards, with Transmit Abort when this
+// answers `CHAOS_OWN_ABORTED`.
+enum chaos_own {
+	CHAOS_OWN_NOT_FOR_IT,	// not for this receiver: nothing offered
+	CHAOS_OWN_TAKEN,	// landed in the buffer
+	CHAOS_OWN_LOST,		// the buffer was full: counted in Lost Count
+	CHAOS_OWN_ABORTED,	// ...and it was to `me`: aborted as well
+	CHAOS_OWN_LOOPED	// Loop Back: not on the cable at all
+};
+enum chaos_own chaos_face_own_frame(struct chaos_face *f, const uint16_t *words, unsigned n,
+				    uint16_t me);
 
 // `STAT` and `LOST`, for the status line and for the tests.
 uint32_t chaos_face_stat(struct chaos_face *f);

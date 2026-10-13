@@ -233,6 +233,13 @@ struct chudp {
 	// because nothing is wrong with the datagram --- it is somebody else's,
 	// and a leaf does not forward it.
 	unsigned long not_this_cable;
+	// **AND ONE COUNT ON THE WAY OUT**, outside the sum above, which is of
+	// datagrams arriving: frames from the machine whose check word was
+	// wrong and which `chudp_send` therefore did not send.  The card makes
+	// the check word and CHUDP carries the Internet checksum in its place,
+	// so a wrong one would otherwise cross this edge with a good checksum
+	// and nobody downstream could tell.  It saturates as the others do.
+	unsigned long bad_check_word;
 };
 
 // Binds the socket.  `port` of 0 asks the host for one.  0, or -1 having said
@@ -272,6 +279,10 @@ const char *chudp_flag_without_cable(int have_cable, unsigned npeers, int have_d
 // address is `cable_dest`; and failing that the default peer.  Returns how
 // many datagrams went.  A destination no entry names and no default peer
 // covers is dropped and counted, not forwarded: this is a leaf.
+//
+// **A frame whose check word is wrong goes nowhere**, and -1 says so: it is
+// counted in `bad_check_word` and said.  muir's CHUDP node drops such a frame
+// as a receiver does, and so does this edge.
 int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cable_dest);
 
 // One turn at the socket, never blocking: up to `max` frames taken.  Each is

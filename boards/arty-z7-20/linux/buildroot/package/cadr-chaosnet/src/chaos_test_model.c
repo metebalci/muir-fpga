@@ -47,7 +47,8 @@ void chaos_model_init(struct face_model *m)
 static uint32_t model_stat(const struct face_model *m)
 {
 	return (m->tx_valid ? ST_TX_VALID : 0u) | (m->rx_busy ? ST_RX_BUSY : 0u) |
-	       (m->rx_armed ? ST_RX_ARMED : 0u) | (m->looped ? ST_LOOPED : 0u);
+	       (m->rx_armed ? ST_RX_ARMED : 0u) | (m->looped ? ST_LOOPED : 0u) |
+	       (uint32_t)m->csr << 16;
 }
 
 static uint32_t model_read(struct chaos_face *f, unsigned word)
@@ -87,12 +88,19 @@ static uint32_t model_read(struct chaos_face *f, unsigned word)
 
 static void model_ctl(struct face_model *m, uint32_t v)
 {
+	if ((v & DO_TX_ABORTED) && !(v & DO_TX_TAKE)) {
+		// The abort alone: the fabric ignores it, and a driver that
+		// writes it has lost track of which frame it is aborting.
+		++m->faults;
+	}
 	if (v & DO_TX_TAKE) {
 		if (m->tx_valid) {
 			m->tx_valid = 0;
 			m->txlen = 0;
 			m->irq &= ~IRQ_TX;
 			++m->takes;
+			if (v & DO_TX_ABORTED)
+				++m->tx_aborts;
 		} else {
 			// Taking a frame that is not there: the machine's
 			// Transmit Done would come up for a transmission

@@ -60,7 +60,7 @@
 // --- the register table, transcribed from `chaos_face.h`'s own words ------
 //
 //    +0x00   0  IDENT    "CHAO", read-only
-//    +0x04   1  STAT     read-only
+//    +0x04   1  STAT     read-only, and the card's own CSR in bits 31:16
 //    +0x08   2  MYADDR   the sixteen address switches
 //    +0x0C   3  TXLEN    read-only
 //    +0x10   4  RXLEN    written
@@ -86,7 +86,8 @@
 // "CHAO", spelled out: C is 0x43, H 0x48, A 0x41, O 0x4F.
 #define IDENT_CHAO	0x4348414Fu
 
-// STAT, and CTL's three commands.
+// STAT, and CTL's four commands.  Bit 3 qualifies bit 0: the frame taken
+// was aborted, and its Transmit Done comes with Transmit Abort.
 #define ST_TX_VALID	(1u << 0)
 #define ST_RX_BUSY	(1u << 1)
 #define ST_RX_ARMED	(1u << 2)
@@ -94,6 +95,12 @@
 #define DO_TX_TAKE	(1u << 0)
 #define DO_RX_COMMIT	(1u << 1)
 #define DO_RX_ABORT	(1u << 2)
+#define DO_TX_ABORTED	(1u << 3)
+
+// The card's CSR as AIM-628 section 7 lays it out, of which STAT's bits
+// 31:16 are a copy: bit 1 Loop Back, bit 2 Spy.
+#define CSR_LOOP_BACK	(1u << 1)
+#define CSR_SPY		(1u << 2)
 
 // IRQ: bit 0 a frame is waiting to be taken, bit 1 the machine emptied the
 // incoming buffer.
@@ -124,11 +131,17 @@ struct face_model {
 	uint16_t rx[W_WORDS];
 	unsigned rx_words;
 	int rx_busy, rx_armed, looped;
+	// The card's CSR as STAT's bits 31:16 carry it.  Only what a check
+	// sets: the model does not keep the card's other bits.
+	uint16_t csr;
 	uint32_t lost;
 	uint32_t irq, irqen;
 	// What the driver did, counted: a check reads these rather than
 	// guessing from the state left behind.
 	unsigned takes, commits, aborts, reads, writes;
+	// Takes with Transmit Abort: the machine's own frame, aborted by its
+	// own busy receiver.
+	unsigned tx_aborts;
 	// **What the model refuses to do quietly.**  A write to a read-only
 	// register, a write past a window, or a commit of a length no frame can
 	// be: each is a fault in the driver, and a model that shrugged would

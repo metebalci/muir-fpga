@@ -265,12 +265,16 @@ static void check_give_lengths(struct chaos_face *f, struct face_model *m)
 	CHECK(m->reads == reads && m->writes == writes,
 	      "a frame too long for the seam still reached the fabric");
 
-	// The shortest thing that is not a frame: fewer words than a header and
-	// a trailer, whatever is in them.
-	CHECK(chaos_face_give(f, frame, 10u) == -1, "10 words were accepted as a frame");
+	// The shortest thing that is not a frame: 48 bits or fewer, the
+	// trailer and nothing before it, which no receiver takes.  Four words
+	// are a frame --- the machine's own frame of four words lands --- so
+	// the check is at the boundary.
+	CHECK(chaos_face_give(f, frame, 3u) == -1, "3 words were accepted as a frame");
 	CHECK(chaos_face_give(f, frame, 0u) == -1, "an empty frame was accepted");
 	CHECK(m->reads == reads && m->writes == writes,
 	      "a frame too short for the seam still reached the fabric");
+	CHECK(chaos_face_give(f, frame, 4u) == 1, "a frame of 4 words was refused");
+	chaos_model_drains(m);
 
 	// And the boundary itself is inside, not outside.
 	CHECK(chaos_face_give(f, frame, CHAOS_MAX_WORDS) == 1,
@@ -279,6 +283,178 @@ static void check_give_lengths(struct chaos_face *f, struct face_model *m)
 	      "the fabric stored %u words of the longest frame", m->rx_words);
 	CHECK(memcmp(m->rx, frame, (size_t)n * sizeof frame[0]) == 0,
 	      "the longest frame's words did not survive the seam");
+}
+
+
+// --- the machine's own frame, back off the cable --------------------------
+//
+// **The board's transceiver hears its own frame and its receiver judges it by
+// `DEST MATCH` as it judges any other** (muir's `Ether`, measured on the
+// netlist board in `tests/chaos_rtl.rs`).  To its own address, to zero, or to
+// anyone under Spy it lands in a free buffer; with the buffer full it is
+// counted in Lost Count, and one to its own address is aborted by its own busy
+// receiver.  A run of 48 bits or fewer is taken by no receiver and, with the
+// buffer full, neither counted nor aborted --- measured in muir and on the
+// netlist board for this check.
+
+#define ME 03050u
+#define OTHER 03070u
+
+// A frame of `n` words from this machine to `dest`: words that differ from
+// their neighbors, the destination, this machine as the source, and the
+// check word the card makes, so that what lands can be compared word for
+// word.
+static unsigned own(uint16_t *out, unsigned n, uint16_t dest)
+{
+	for (unsigned k = 0; k + 3u < n; ++k)
+		out[k] = (uint16_t)(0100000u | (k * 0421u));
+	out[n - 3] = dest;
+	out[n - 2] = ME;
+	out[n - 1] = chaos_check_word(out, n - 1);
+	return n;
+}
+
+// A fresh interface for each case, the faults of the last one kept: a fault
+// in an early case must not be thrown away with its model.
+static unsigned own_faults;
+
+static void fresh(struct face_model *m)
+{
+	own_faults += m->faults;
+	chaos_model_init(m);
+}
+
+static void check_own_frame(struct chaos_face *f, struct face_model *m)
+{
+	uint16_t frame[CHAOS_PKT_MAX_WORDS], first[CHAOS_PKT_MAX_WORDS];
+	struct { uint16_t dest; int spy; } mine[] = { { ME, 0 }, { 0, 0 }, { OTHER, 1 } };
+
+	// For it, with the buffer free: it lands, word for word.
+	for (unsigned k = 0; k < sizeof mine / sizeof mine[0]; ++k) {
+		fresh(m);
+		m->csr = mine[k].spy ? CSR_SPY : 0;
+		const unsigned n = own(frame, 14, mine[k].dest);
+		CHECK(chaos_face_own_frame(f, frame, n, ME) == CHAOS_OWN_TAKEN,
+		      "its own frame to %o%s did not come back to it", (unsigned)mine[k].dest,
+		      mine[k].spy ? " under Spy" : "");
+		CHECK(m->rx_busy && m->rx_words == n &&
+			      memcmp(m->rx, frame, (size_t)n * sizeof frame[0]) == 0,
+		      "its own frame to %o landed as %u words, wanting %u",
+		      (unsigned)mine[k].dest, m->rx_words, n);
+		CHECK(m->lost == 0, "its own frame to %o that landed was counted lost",
+		      (unsigned)mine[k].dest);
+	}
+
+	// Not for it: another station's address with Spy off.  Nothing is
+	// offered, and nothing counted.
+	fresh(m);
+	own(frame, 14, OTHER);
+	CHECK(chaos_face_own_frame(f, frame, 14, ME) == CHAOS_OWN_NOT_FOR_IT,
+	      "its own frame to another station came back to it without Spy");
+	CHECK(m->commits == 0 && m->lost == 0,
+	      "its own frame to another station was offered to it: %u commits, %u lost",
+	      m->commits, (unsigned)m->lost);
+
+	// For it, with the buffer full: counted in Lost Count, and to its own
+	// address aborted.  What the machine had not read out stays.
+	struct { uint16_t dest; int spy; enum chaos_own want; } full[] = {
+		{ ME, 0, CHAOS_OWN_ABORTED }, { 0, 0, CHAOS_OWN_LOST }, { OTHER, 1, CHAOS_OWN_LOST },
+		{ ME, 1, CHAOS_OWN_ABORTED },
+	};
+	for (unsigned k = 0; k < sizeof full / sizeof full[0]; ++k) {
+		fresh(m);
+		m->csr = full[k].spy ? CSR_SPY : 0;
+		const unsigned n1 = own(first, 14, ME);
+		CHECK(chaos_face_own_frame(f, first, n1, ME) == CHAOS_OWN_TAKEN,
+		      "the first frame did not land");
+		const unsigned n = own(frame, 20, full[k].dest);
+		const enum chaos_own got = chaos_face_own_frame(f, frame, n, ME);
+		CHECK(got == full[k].want, "its own frame to %o%s into a full buffer is %d, wanting %d",
+		      (unsigned)full[k].dest, full[k].spy ? " under Spy" : "", (int)got,
+		      (int)full[k].want);
+		CHECK(m->lost == 1, "its own frame to %o into a full buffer moved LOST by %u",
+		      (unsigned)full[k].dest, (unsigned)m->lost);
+		CHECK(m->rx_words == n1 && memcmp(m->rx, first, (size_t)n1 * sizeof first[0]) == 0,
+		      "its own frame to %o overwrote the frame the machine had not read",
+		      (unsigned)full[k].dest);
+	}
+
+	// **Four to ten words land**: more than 48 bits, which muir lands, and
+	// fewer than CHUDP carries.  `chaos_face_give` took eleven at the least.
+	for (unsigned n = 4; n <= 10; ++n) {
+		fresh(m);
+		own(frame, n, ME);
+		CHECK(chaos_face_own_frame(f, frame, n, ME) == CHAOS_OWN_TAKEN,
+		      "its own frame of %u words did not come back to it", n);
+		CHECK(m->rx_words == n && memcmp(m->rx, frame, (size_t)n * sizeof frame[0]) == 0,
+		      "its own frame of %u words landed as %u", n, m->rx_words);
+	}
+
+	// **48 bits or fewer: neither landed nor, with the buffer full, counted
+	// or aborted.**  Nothing reaches the fabric.
+	for (unsigned n = 0; n <= 3; ++n) {
+		fresh(m);
+		m->rx_busy = 1;
+		if (n == 3)
+			own(frame, 3, ME);
+		const unsigned writes = m->writes;
+		CHECK(chaos_face_own_frame(f, frame, n, ME) == CHAOS_OWN_NOT_FOR_IT,
+		      "its own run of %u words was taken", n);
+		CHECK(m->writes == writes && m->lost == 0,
+		      "its own run of %u words reached the fabric", n);
+	}
+
+	// **Under Loop Back the receiver is on the transmitter and not on the
+	// cable**: the frame was not on the cable, so it is not heard there.
+	fresh(m);
+	m->looped = 1;
+	m->csr = CSR_LOOP_BACK;
+	own(frame, 14, ME);
+	CHECK(chaos_face_own_frame(f, frame, 14, ME) == CHAOS_OWN_LOOPED,
+	      "its own frame under Loop Back was judged as off the cable");
+	CHECK(m->commits == 0, "its own frame under Loop Back was offered to it");
+	fresh(m);
+	CHECK(own_faults == 0, "its own frame did %u things to the fabric it may not do",
+	      own_faults);
+}
+
+// **The frame is let go with Transmit Abort, or without it.**  The abort
+// rides on the take: bit 3 with bit 0, never alone.
+static void check_let_go(struct chaos_face *f, struct face_model *m)
+{
+	uint16_t frame[CHAOS_PKT_MAX_WORDS], got[CHAOS_PKT_MAX_WORDS];
+	const unsigned n = a_frame(frame, 6);
+	chaos_model_transmits(m, frame, n);
+	CHECK(chaos_face_read_frame(f, got, CHAOS_PKT_MAX_WORDS) == (int)n,
+	      "the frame read is not %u words", n);
+	CHECK(m->tx_valid && m->takes == 0, "reading the frame took it");
+	chaos_face_let_go(f, 1);
+	CHECK(m->takes == 1 && m->tx_aborts == 1,
+	      "an aborted let-go made %u takes and %u aborts, wanting 1 and 1", m->takes,
+	      m->tx_aborts);
+	chaos_model_transmits(m, frame, n);
+	CHECK(chaos_face_read_frame(f, got, CHAOS_PKT_MAX_WORDS) == (int)n,
+	      "the second frame read is not %u words", n);
+	chaos_face_let_go(f, 0);
+	CHECK(m->takes == 2 && m->tx_aborts == 1,
+	      "a plain let-go made %u takes and %u aborts, wanting 2 and 1", m->takes,
+	      m->tx_aborts);
+
+	// **A frame shorter than the trailer has no cable destination**, and the
+	// program routes by the third word from the end: one or two words are
+	// said, dropped and let go, never handed up.
+	for (unsigned short_n = 1; short_n <= 2; ++short_n) {
+		chaos_model_transmits(m, frame, short_n);
+		const unsigned takes = m->takes;
+		capture_start();
+		CHECK(chaos_face_read_frame(f, got, CHAOS_PKT_MAX_WORDS) == -1,
+		      "a frame of %u words was handed up", short_n);
+		const char *said = capture_end();
+		CHECK(m->takes == takes + 1u && !m->tx_valid,
+		      "a frame of %u words was left standing", short_n);
+		CHECK(strstr(said, "destination") != NULL,
+		      "the drop of a frame of %u words does not say why: %s", short_n, said);
+	}
 }
 
 // --- STAT and LOST, which the status line reads ---------------------------
@@ -338,6 +514,16 @@ void chaos_test_face(void)
 	check_give_lengths(&f, &m);
 	CHECK(m.faults == 0, "a frame of the wrong length did %u things to the fabric it "
 	      "may not do", m.faults);
+
+	chaos_model_init(&m);
+	check_own_frame(&f, &m);
+	CHECK(m.faults == 0, "its own frame did %u things to the fabric it may not do",
+	      m.faults);
+
+	chaos_model_init(&m);
+	check_let_go(&f, &m);
+	CHECK(m.faults == 0, "letting frames go did %u things to the fabric it may not do",
+	      m.faults);
 
 	chaos_model_init(&m);
 	check_status(&f, &m);

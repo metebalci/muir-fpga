@@ -38,9 +38,12 @@
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cadr/cadr_log.h>
 
 #include "chaos_packet.h"
 #include "chaos_udp.h"
@@ -1025,6 +1028,62 @@ static void check_a_stranger_is_heard_and_nothing_is_learned(void)
 	chudp_close(&c);
 }
 
+// **A FRAME WHOSE CHECK WORD IS WRONG DOES NOT GO OUT.**  The card makes the
+// check word, and CHUDP carries the Internet checksum in its place, so a
+// wrong one would cross the edge with a good checksum and nobody downstream
+// could tell.  muir's CHUDP node drops a frame whose check word failed, "as a
+// receiver does", so the edge checks the word it is about to replace, counts
+// a bad one, says so and sends nothing.  A good frame follows, so the check
+// waits on something arriving rather than on nothing.
+static void check_a_bad_check_word_does_not_go_out(void)
+{
+	struct chudp a, b;
+	struct sockaddr_in b_at;
+	char spec[64];
+	static struct heard at_b;
+	CHECK(chudp_bind(&a, "127.0.0.1", 0) == 0, "the board's link would not bind");
+	CHECK(chudp_bind(&b, "127.0.0.1", 0) == 0, "the peer's link would not bind");
+	if (bound_at(&b, &b_at) < 0) {
+		CHECK(0, "the host will not say where the peer is bound");
+		chudp_close(&a);
+		chudp_close(&b);
+		return;
+	}
+	a.local = ME;
+	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", PEER, (unsigned)ntohs(b_at.sin_port));
+	CHECK(chudp_add_peer(&a, spec) == 0, "%s was refused", spec);
+
+	uint16_t good[CHAOS_PKT_MAX_WORDS], bad[CHAOS_PKT_MAX_WORDS];
+	const unsigned n = frame_to(good, PEER, CHAOS_RFC, "STATUS", 6);
+	memcpy(bad, good, sizeof good);
+	bad[n - 1] ^= 0x0100u;
+	FILE *was = cadr_log_file();
+	char *said = NULL;
+	size_t said_len = 0;
+	FILE *cap = open_memstream(&said, &said_len);
+	cadr_log_init("cadr-chaosnet: ", cap);
+	const int sent = chudp_send(&a, bad, n, PEER);
+	fflush(cap);
+	cadr_log_init("cadr-chaosnet: ", was);
+	fclose(cap);
+	CHECK(sent < 0, "a frame with a wrong check word went out to %d peers", sent);
+	CHECK(a.bad_check_word == 1u, "the link counts %lu bad check words, wanting 1",
+	      a.bad_check_word);
+	CHECK(said && strstr(said, "check word") != NULL,
+	      "the bad check word was not said: %s", said ? said : "");
+	free(said);
+	CHECK(chudp_send(&a, good, n, PEER) == 1, "the good frame after it did not go");
+	CHECK(a.bad_check_word == 1u, "a good frame was counted as a bad check word");
+	CHECK(wait_for(&b, &at_b, 1), "the peer never heard the good frame");
+	usleep(20000);
+	chudp_poll(&b, 8, heard_deliver, &at_b);
+	CHECK(at_b.n == 1u && at_b.len[0] == n &&
+		      memcmp(at_b.words[0], good, (size_t)n * sizeof good[0]) == 0,
+	      "the peer heard %u frames, wanting the good one alone", at_b.n);
+	chudp_close(&a);
+	chudp_close(&b);
+}
+
 // **A FLAG THAT SAYS WHO IS ON THE CABLE NEEDS THE CABLE.**  muir's rule at
 // `78ebd60`: `--chaos-address` sets the sixteen address switches and nothing
 // else, `--chaos-udp` is the cable, and without it nothing is sent.  A peer
@@ -1310,6 +1369,7 @@ void chaos_test_udp(void)
 	chaos_test_note("udp: two links on the loopback");
 	check_the_links();
 	check_a_stranger_is_heard_and_nothing_is_learned();
+	check_a_bad_check_word_does_not_go_out();
 	check_a_flag_that_says_who_is_on_the_cable_needs_the_cable();
 	chaos_test_note("udp: every datagram that arrives is accounted for");
 	check_every_datagram_is_accounted_for();

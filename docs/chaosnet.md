@@ -115,10 +115,14 @@ difference.** `cadr_chaos_cable.sv` answers a frame of three words or fewer,
 the empty frame's source and check word among them, by giving
 `chaos_tx_done` back the next clock, and nothing goes on the cable. No
 receiver takes a run of 48 bits or fewer (below), and CHUDP has no datagram
-for a frame of fewer than eleven words. For one and two words the rule is
-required as well: `cadr-chaosnet` routes a frame by its third word from the
-end and has no guard for a shorter one, and the card makes frames of one and
-two words from 255 and 256 words written. muir and MIT's board send the
+for a frame of fewer than eleven words. Nor does the board's own busy receiver
+count or abort such a run: its own frame of 48 bits into a full buffer, to its
+own address, to zero or under Spy, leaves Lost Count and Transmit Abort where
+they were, on the netlist board and in muir alike. For one and two words the
+rule also keeps `cadr-chaosnet` from reading below a frame: it routes by the
+third word from the end, and the card makes frames of one and two words from
+255 and 256 words written. The program drops such a frame itself as well, if
+one is ever offered. muir and MIT's board send the
 33-cell frame and raise Transmit Done about 8 µs later. MIT's software never
 reads START with nothing written.
 
@@ -255,12 +259,28 @@ words written on the cable to its own address. `chaos_cable` holds the
 cable's offer, and `gp0_split` the frame the machine sends coming out of the
 cable's window with the check word muir makes.
 
-**On a board the far end does not hand the machine its own frame, and this is
-a known difference.** `cadr-chaosnet` routes a frame by its cable destination
-and never back to the station that sent it, Spy is not implemented, and
-`cadr_chaos_cable.sv` never raises Transmit Abort. MIT's network software
-never sends a frame to its own address or to zero; MIT's interface test
-`CHATST` does.
+**On a board the far end hands the machine its own frame, as muir's ether
+does.** `cadr-chaosnet` is the cable there, and its receiver for the machine
+is `chaos_face_own_frame`. A frame the machine sends to its own address, to
+zero, or to anyone under Spy is handed back through the cable's receive window
+and lands. With the buffer full the cable refuses the commit and the card's
+Lost Count steps, and a frame to the machine's own address is then let go with
+`CTL` bit 3, which `cadr_chaos_cable.sv` carries to the card as
+`chaos_tx_abort` on the take's `chaos_tx_done`: the machine reads Transmit
+Done and Transmit Abort together. A frame to zero or under Spy still goes out
+over CHUDP to the stations that would hear it, and one to the machine's own
+address does not. Frames of four to ten words, which no CHUDP datagram
+carries, land as muir lands them. MIT's network software never sends a frame
+to its own address or to zero; MIT's interface test `CHATST` does, and its
+cable half needs this.
+
+Two differences remain. Whether the buffer is full is the program's answer at
+the moment it takes the frame, where the board decides as the frame's
+destination word goes by. The machine waits for Transmit Done in between, so
+only its own interrupt-driven read-out of an earlier frame could fall into
+that gap. And Loop Back is not the cable's: a frame sent under Loop Back is not
+handed back by `cadr-chaosnet`, which leaves CHATST's loop-back half without
+its packet on a board.
 
 ## What Linux sees
 
@@ -373,6 +393,13 @@ both directions. `chudp_wrap` puts the Internet checksum in its place on the
 way out, and `chudp_unwrap` verifies the Internet checksum and makes the CRC
 for the frame on the way in. Nothing else about a frame is changed, and no
 fabric file is touched by any of this.
+
+**The check word is checked before it is replaced.** Past the UDP edge a wrong
+check word would travel under a good Internet checksum, and nobody downstream
+could tell. So `chudp_send` recomputes the CRC-16 over the frame's words first.
+A frame whose check word does not match is not sent: it is counted, said in
+the log, and dropped, as muir's CHUDP node drops a frame whose check word
+failed. The traffic line reports the count.
 
 **A board and its peers must move to this framing together.** The old framing
 wrote the packet's own words least significant byte first and carried the
@@ -818,8 +845,9 @@ network, and what the link did with everything that arrived:
 
     N from the machine, N to it, N in and N out over UDP; N datagrams
     arrived, N refused for their shape, N with a bad checksum, N not for this
-    cable; N with nowhere to go, N malformed, N refused because the machine
-    had not emptied its buffer
+    cable; N with nowhere to go, N malformed, N with a bad check word; N of
+    its own back to the machine, N lost to a full buffer and N of those
+    aborted; N refused because the machine had not emptied its buffer
 
 **The middle group adds up, taking `N in` from the group before it.** What
 arrived equals what came in plus the three ways a datagram can fail to come
@@ -880,11 +908,12 @@ is thirty-two bits and survives a reset, because `chaos_face_give` reads any
 change in it as a refusal and a count that went backwards would make the
 program read a stored frame as a refused one.
 
-The program offers the machine a frame only when the frame is a broadcast or
-is addressed to this machine. A third party's frame is never offered, which
-agrees with muir on what is counted. It also means Spy is not implemented: a
-machine that set the Spy bit would expect every frame on the cable, and this
-program does not offer them.
+The program offers the machine a frame from over UDP only when the frame is a
+broadcast or is addressed to this machine. A third party's frame is never
+offered, which agrees with muir on what is counted. It also means Spy reaches
+only the machine's own frames: a machine that set the Spy bit would expect
+every frame on the cable, and this program does not offer it the frames other
+stations send each other, which a leaf does not hear.
 
 So a host that sends two frames back to back offers the second one while the
 machine is still copying the first out of the buffer. A form longer than 488

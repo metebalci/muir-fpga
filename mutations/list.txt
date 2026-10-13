@@ -11744,12 +11744,11 @@ if {0 && $held ne $want} {
 @mutation chaos-cable-offers-a-frame-of-48-bits
 @check chaos_cable
 @file rtl/plumbing/cadr_chaos_cable.sv
-@note A frame of three words or fewer is 48 bits that no receiver takes and
-@note has no cable destination for the program to route by: it is not
-@note offered, and the machine is let go at once.  The bound one word low
-@note offers the three words of 257 written, the destination the program
-@note takes the third word from the end.  Caught at "STAT's TX_VALID after a
-@note frame of 3 words".
+@note A frame of three words or fewer is 48 bits that no receiver takes, and
+@note that the board's own busy receiver neither counts nor aborts, measured
+@note in muir and on the netlist board: it is not offered, and the machine is
+@note let go at once.  The bound one word low offers the three words of 257
+@note written.  Caught at "STAT's TX_VALID after a frame of 3 words".
 @old
         if (chaos_tx_len <= 9'd3) begin
 @new
@@ -11848,6 +11847,48 @@ if {0 && $held ne $want} {
   assign chaos_rx_lost = rx_refused;
 @new
   assign chaos_rx_lost = rx_refused || commit_ok;
+@end
+
+@mutation chaos-cable-drops-the-abort
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The machine's own frame to its own address, met by its own busy
+@note receiver, is taken with `CTL` bit 3, and its Transmit Done must come
+@note with Transmit Abort, as the netlist board's does.  Dropping the bit
+@note gives a plain Transmit Done.  Caught at "Transmit Abort with the
+@note aborted take's Transmit Done".
+@old
+          chaos_tx_abort <= wr_data[3] && wr_mask[3];
+@new
+          chaos_tx_abort <= 1'b0;
+@end
+
+@mutation chaos-cable-aborts-every-take
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note Only a take with bit 3 is an abort: every other frame the machine sent
+@note went, and a Transmit Abort on it would have the driver send it again.
+@note Caught at "Transmit Abort with the Transmit Done of a plain take".
+@old
+          chaos_tx_abort <= wr_data[3] && wr_mask[3];
+@new
+          chaos_tx_abort <= 1'b1;
+@end
+
+@mutation chaos-cable-holds-the-abort-past-its-done
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The abort is a qualifier of the done and is driven on that one tick:
+@note the card samples it only with `chaos_tx_done`, so one left standing
+@note would qualify the next frame's done as well.  Caught at "Transmit Abort
+@note on a tick with no Transmit Done".
+@old
+      chaos_tx_done  <= 1'b0;
+      chaos_tx_abort <= 1'b0;
+      rdone_was <= chaos_csr[15];
+@new
+      chaos_tx_done  <= 1'b0;
+      rdone_was <= chaos_csr[15];
 @end
 
 @mutation chaos-cable-streams-one-word-short

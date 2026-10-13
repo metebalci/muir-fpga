@@ -203,6 +203,9 @@ struct ether {
 	// whether anything is happening at all.
 	unsigned long from_machine, from_udp, to_udp;
 	unsigned long dropped_no_route, dropped_bad_frame;
+	// The machine's own frames its receiver heard on the cable: landed,
+	// lost to a full buffer, and of those aborted (`chaos_face_own_frame`).
+	unsigned long own_taken, own_lost, own_aborted;
 };
 
 // One frame printed as it goes by: muir's `--chaos-trace`.  This is the only
@@ -265,38 +268,69 @@ static void to_machine(struct ether *e, const uint16_t *words, unsigned n)
 // One frame off the cable, from whichever station put it there, routed by its
 // CABLE destination --- which is the last word the software wrote and is the
 // hardware's own addressing, not the packet header's.  A broadcast reaches
-// everybody but the station it came from.
+// everybody, the station that sent it included.
+//
+// **THE MACHINE HEARS ITS OWN FRAME**, as the board's transceiver hears the
+// whole cable, its own transmission included, and its receiver judges that
+// frame by `DEST MATCH` as it judges any other (muir's `Ether`, measured on the
+// netlist board).  `chaos_face_own_frame` is that receiver: to its own
+// address, to zero or under Spy the frame lands in a free buffer, and with the
+// buffer full it is counted in Lost Count and, to its own address, aborted.
+// It is not queued for another offer as a frame from over UDP is: the station
+// that sent it is the machine itself, whose own driver answers its own abort.
+// Returns whether the machine's frame was aborted, which the caller says when
+// it lets the machine go.
 enum from { FROM_MACHINE, FROM_UDP };
 
-static void carry(struct ether *e, enum from who, const uint16_t *words, unsigned n,
-		  uint16_t cable_dest)
+static int carry(struct ether *e, enum from who, const uint16_t *words, unsigned n,
+		 uint16_t cable_dest)
 {
 	const int broadcast = cable_dest == 0;
 	const int mine = cable_dest == e->machine;
+	int aborted = 0;
 
-	// The one station that is on this cable.  A station never hears its
-	// own frame, which is what `who` is for: the interface's receiver does
-	// not store what its own transmitter put on the wire.
+	// The one station that is on this cable.
 	if ((broadcast || mine) && who != FROM_MACHINE)
 		to_machine(e, words, n);
+	if (who == FROM_MACHINE && e->have_face) {
+		const enum chaos_own own = chaos_face_own_frame(&e->face, words, n, e->machine);
+		if (own == CHAOS_OWN_TAKEN) {
+			++e->own_taken;
+			trace_frame(e, "back to the machine", words, n);
+		} else if (own == CHAOS_OWN_LOST || own == CHAOS_OWN_ABORTED) {
+			// An aborted frame is a lost one as well: the busy
+			// receiver counts what it aborts.
+			aborted = own == CHAOS_OWN_ABORTED;
+			++e->own_lost;
+			if (aborted)
+				++e->own_aborted;
+			if (e->trace)
+				say("its own frame to %o: the machine's buffer was full, so it is "
+				    "counted in Lost Count%s", (unsigned)cable_dest,
+				    aborted ? " and aborted" : "");
+		}
+	}
 
 	// And everything else, which is off the board.  **A LEAF, NOT A
 	// ROUTER**: an address no peer claims is dropped and counted rather
 	// than forwarded, and a frame that arrived over UDP for a third party
 	// is not sent back out.
 	if (!broadcast && mine)
-		return;
+		return aborted;
 	if (who == FROM_UDP) {
 		if (!broadcast)
 			++e->dropped_no_route;
-		return;
+		return aborted;
 	}
 	trace_frame(e, "onto the network", words, n);
+	// Fewer than 0 is a frame whose check word was wrong, which the link
+	// has counted and said.  It is not a frame with nowhere to go.
 	const int sent = e->have_udp ? chudp_send(&e->udp, words, n, cable_dest) : 0;
 	if (sent > 0)
 		e->to_udp += (unsigned long)sent;
-	else if (!broadcast)
+	else if (sent == 0 && !broadcast)
 		++e->dropped_no_route;
+	return aborted;
 }
 
 // What CHUDP hands up.  A datagram is already a whole frame in the seam's own
@@ -310,7 +344,7 @@ static void from_udp(void *ctx, const uint16_t *words, unsigned n)
 		++e->dropped_bad_frame;
 		return;
 	}
-	carry(e, FROM_UDP, words, n, words[n - CHAOS_PKT_TRAILER_WORDS]);
+	(void)carry(e, FROM_UDP, words, n, words[n - CHAOS_PKT_TRAILER_WORDS]);
 }
 
 // ------------------------------------------------------------- the program
@@ -602,16 +636,29 @@ int main(int argc, char **argv)
 		if (e.have_face) {
 			uint16_t words[CHAOS_MAX_WORDS];
 			for (unsigned k = 0; k < DRAIN; ++k) {
-				const int n = chaos_face_take(&e.face, words, CHAOS_MAX_WORDS);
+				// Read, and the machine NOT yet let go: whether
+				// its own busy receiver aborts the frame is known
+				// only once `carry` has handed it back, and the
+				// abort rides on the take.
+				const int n = chaos_face_read_frame(&e.face, words, CHAOS_MAX_WORDS);
 				if (n <= 0)
 					break;
 				++e.from_machine;
 				did = 1;
 				// The cable destination is the third word from
 				// the end: the hardware trailer is destination,
-				// source, check.
-				carry(&e, FROM_MACHINE, words, (unsigned)n,
-				      words[(unsigned)n - CHAOS_PKT_TRAILER_WORDS]);
+				// source, check.  **Guarded here as well as in
+				// `chaos_face_read_frame`**, which drops a frame
+				// of one or two words: below three there is no
+				// destination to read.
+				if ((unsigned)n < CHAOS_PKT_TRAILER_WORDS) {
+					++e.dropped_bad_frame;
+					chaos_face_let_go(&e.face, 0);
+					continue;
+				}
+				const int aborted = carry(&e, FROM_MACHINE, words, (unsigned)n,
+							  words[(unsigned)n - CHAOS_PKT_TRAILER_WORDS]);
+				chaos_face_let_go(&e.face, aborted);
 			}
 		}
 
@@ -680,7 +727,10 @@ int main(int argc, char **argv)
 				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
 				    "%lu datagrams arrived, %lu refused for their shape, "
 				    "%lu with a bad checksum, %lu not for this cable; "
-				    "%lu with nowhere to go, %lu malformed; "
+				    "%lu with nowhere to go, %lu malformed, "
+				    "%lu with a bad check word; "
+				    "%lu of its own back to the machine, %lu lost to a full "
+				    "buffer and %lu of those aborted; "
 				    "%lu offers refused because the machine had not emptied "
 				    "its buffer and %lu in the interface's own Lost Count, "
 				    "%lu frames given up after three, "
@@ -692,6 +742,8 @@ int main(int argc, char **argv)
 				    e.have_udp ? e.udp.bad_checksum : 0ul,
 				    e.have_udp ? e.udp.not_this_cable : 0ul,
 				    e.dropped_no_route, e.dropped_bad_frame,
+				    e.have_udp ? e.udp.bad_check_word : 0ul,
+				    e.own_taken, e.own_lost, e.own_aborted,
 				    e.inject.refused,
 				    // **THE INTERFACE'S OWN COUNT, BESIDE THIS
 				    // PROGRAM'S.**  They are the same event

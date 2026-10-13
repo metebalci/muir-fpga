@@ -141,10 +141,11 @@
 @file chaos_face.c
 @why CTL_TX_TAKE is what lets the machine's Transmit Done come up and its next packet go; without it the interface holds one frame for ever and the machine's Chaosnet stops after a single packet
 @old
-	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE);
-	return (int)len;
+	if (n > 0)
+		chaos_face_let_go(f, 0);
+	return n;
 @new
-	return (int)len;
+	return n;
 @end
 
 @mutation a-frame-the-interface-refused-is-reported-as-stored
@@ -786,4 +787,109 @@ static volatile sig_atomic_t trace_asked = 0;
 		if (commit(q, f, words, n) == 0) {
 @new
 		if (offer(q, f, words, n, now) == 0) {
+@end
+
+# --- the machine's own frame, and the abort that rides on the take ---------
+#
+# The board's receiver hears its own frame and judges it by DEST MATCH (muir's
+# `Ether`, measured on the netlist board).  `chaos_face_own_frame` is that
+# receiver and `chaos_face_let_go` carries its abort to the cable.
+
+@mutation spy-does-not-widen-what-the-machine-hears-of-its-own-frame
+@file chaos_face.c
+@why under Spy the receiver takes every frame, its own to another station included; the bit is the card's CSR in STAT's high half
+@old
+	const int spy = ((stat >> CHAOS_ST_CSR_SHIFT) & CHAOS_CSR_SPY) != 0;
+@new
+	const int spy = 0;
+@end
+
+@mutation its-own-broadcast-does-not-come-back
+@file chaos_face.c
+@why DEST MATCH is its own address, zero, or Spy: a frame to zero is heard by every receiver, the sender's own included
+@old
+	if (dest != me && dest != 0 && !spy)
+@new
+	if (dest != me && !spy)
+@end
+
+@mutation every-refused-own-frame-is-aborted
+@file chaos_face.c
+@why a busy receiver aborts only what is specifically addressed to it (AIM-628 section 2.5): its own broadcast or a frame taken under Spy is counted and not aborted
+@old
+		return dest == me ? CHAOS_OWN_ABORTED : CHAOS_OWN_LOST;
+@new
+		return CHAOS_OWN_ABORTED;
+@end
+
+@mutation its-own-frame-to-itself-is-never-aborted
+@file chaos_face.c
+@why its own frame to its own address into a full buffer reads back as Transmit Abort on the netlist board and in muir; CHATST prints "Transmit aborted" for it
+@old
+		return dest == me ? CHAOS_OWN_ABORTED : CHAOS_OWN_LOST;
+@new
+		return CHAOS_OWN_LOST;
+@end
+
+@mutation a-looped-frame-is-judged-as-off-the-cable
+@file chaos_face.c
+@why under Loop Back the receiver is on the transmitter and the frame was never on the cable, so the cable's receiver has nothing to judge
+@old
+	if (stat & CHAOS_ST_LOOPED)
+		return CHAOS_OWN_LOOPED;
+@new
+@end
+
+@mutation a-run-of-48-bits-is-handed-to-the-machine
+@file chaos_face.c
+@why no receiver takes 48 bits or fewer, and the board's busy receiver neither counts nor aborts one: measured in muir and on the netlist board
+@old
+#define CHAOS_FACE_MIN_WORDS (CHAOS_PKT_TRAILER_WORDS + 1u)
+@new
+#define CHAOS_FACE_MIN_WORDS (CHAOS_PKT_TRAILER_WORDS)
+@end
+
+@mutation the-abort-is-dropped-from-the-take
+@file chaos_face.c
+@why the abort rides on the take: without bit 3 the machine reads a plain Transmit Done for a frame its own busy receiver aborted
+@old
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE | (aborted ? CHAOS_CTL_TX_ABORTED : 0u));
+@new
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE);
+@end
+
+@mutation every-take-is-aborted
+@file chaos_face.c
+@why only a frame its own busy receiver aborted comes back with Transmit Abort; every other take is a plain Transmit Done
+@old
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE | (aborted ? CHAOS_CTL_TX_ABORTED : 0u));
+@new
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE | CHAOS_CTL_TX_ABORTED);
+@end
+
+@mutation a-frame-with-no-cable-destination-is-handed-up
+@file chaos_face.c
+@why the program routes by the third word from the end, so a frame of one or two words would send it below the frame; it is dropped and the machine let go
+@old
+	if (len < CHAOS_PKT_TRAILER_WORDS) {
+@new
+	if (0) {
+@end
+
+@mutation a-wrong-check-word-goes-out-over-chudp
+@file chaos_udp.c
+@why CHUDP carries the Internet checksum in the check word's place, so a wrong check word not caught here crosses the edge with a good checksum; muir's node drops such a frame
+@old
+	if (words[n - 1u] != want) {
+@new
+	if (0) {
+@end
+
+@mutation the-check-word-is-checked-over-the-wrong-words
+@file chaos_udp.c
+@why the check word covers every word before it, the source included
+@old
+	const uint16_t want = chaos_check_word(words, n - 1u);
+@new
+	const uint16_t want = chaos_check_word(words, n - 2u);
 @end

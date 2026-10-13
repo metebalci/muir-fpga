@@ -1199,6 +1199,32 @@ int main(int argc, char **argv) {
     if (b.Read(CHAOS_PAGE + 4 * 3) != 0) Fail("TXLEN with no frame waiting", 1, 0);
     const unsigned csr = b.UbRead(UB_CH_CSR);
     if (!(csr & 0200u)) Fail("Transmit Done after the frame was taken", csr, 0200u);
+    if (csr & 0100u) Fail("Transmit Abort after a plain take", csr, csr & ~0100u);
+
+    // --- the same frame again, taken with `CTL` bit 3: what the program
+    // writes when the machine's own busy receiver aborted its own frame.
+    // The machine must read Transmit Done AND Transmit Abort, as the
+    // netlist board's CSR does, across the cable and the card together.
+    for (uint16_t w : buffer) b.UbWrite(UB_CH_MYADDR, w);
+    (void)b.UbRead(UB_CH_START);
+    waited = 0;
+    while (!(b.Read(CHAOS_PAGE + 4) & 1u) && waited < 40) ++waited;
+    if (!(b.Read(CHAOS_PAGE + 4) & 1u)) Fail("STAT's TX_VALID after the second START", 0, 1);
+    ++frames_out;
+    if (b.Read(CHAOS_PAGE + 4 * 3) != buffer.size() + 2)
+      Fail("TXLEN of the frame to be aborted", b.Read(CHAOS_PAGE + 4 * 3), buffer.size() + 2);
+    if (b.UbRead(UB_CH_CSR) & 0300u)
+      Fail("Transmit Done or Abort before the aborted take", b.UbRead(UB_CH_CSR) & 0300u, 0);
+    b.Write(CHAOS_PAGE + 4 * 5, 1u | 8u);
+    const unsigned aborted = b.UbRead(UB_CH_CSR);
+    if ((aborted & 0300u) != 0300u)
+      Fail("Transmit Done and Transmit Abort after an aborted take", aborted & 0300u, 0300u);
+    // Writing a word into the outgoing buffer clears the abort again, as
+    // the board's next packet does.
+    b.UbWrite(UB_CH_MYADDR, 0);
+    if (b.UbRead(UB_CH_CSR) & 0100u)
+      Fail("Transmit Abort after the next word written", 1, 0);
+    b.UbWrite(UB_CH_CSR, 0400u);   // Clear Transmitter: the word goes nowhere
 
     // --- a frame the cable gives the machine.  The words are the buffer,
     // the source and the check word, as the machine reads them back.

@@ -38,7 +38,12 @@
 // 255 to 257 send 16 to 48 bits, and an empty START sends the source and
 // the check word --- is a run that no receiver takes, muir's `arrive`
 // measured on the netlist board, and CHUDP has no datagram for a frame of
-// fewer than eleven words (`chudp_wrap`).  **For one and two words the rule
+// fewer than eleven words (`chudp_wrap`).  **Nor does the board's own busy
+// receiver count or abort one**: its own frame of 48 bits to its own
+// address, to zero or under Spy, with Receive Done up, leaves Lost Count and
+// Transmit Abort where they were, on the netlist board and in muir alike,
+// where 64 bits are counted and, to its own address, aborted.  So not
+// offering it loses nothing the machine could see.  **For one and two words the rule
 // is required**: `cadr-chaosnet` routes a frame it takes by the third word
 // from the end, `words[n - 3]`, with no guard for a shorter one, and the card
 // now makes frames of one and two words (255 and 256 written).  So nothing
@@ -118,11 +123,20 @@
 // the machine.  One more `CTL` bit would carry it if that is wanted; it is
 // named in the report rather than invented here.
 //
-// **`chaos_tx_abort` IS HELD LOW BECAUSE THERE IS NO COLLISION DOMAIN.**
-// Abort is "a collision, or the receiver was busy" on a shared ether; this
-// cable is one program and a socket.  The card samples it only on the tick
-// `chaos_tx_done` is high, so it is a qualifier of the done and not an event
-// of its own.
+// **`chaos_tx_abort` IS RAISED BY A TAKE WITH `CTL` BIT 3, AND BY NOTHING
+// ELSE.**  Abort is "a collision, or the receiver was busy" on a shared
+// ether.  This cable is one program and a socket, so there is no collision,
+// but there is one busy receiver: the machine's own.  The board's transceiver
+// hears its own frame, and with Receive Done up its busy receiver aborts a
+// frame addressed to it by name, which reads back as Transmit Abort (muir's
+// `Ether::busy_receiver`, measured on the netlist board).  Whether the buffer
+// was busy is the commit's answer, and the commit is the program's:
+// `cadr-chaosnet` hands the frame back, reads `LOST`, and takes it with bit 3
+// when the refusal was of a frame to its own address.  So the abort is
+// decided where the refusal is counted, in one place, and this module carries
+// it.  The card samples it only on the tick `chaos_tx_done` is high, so it is
+// a qualifier of the done and not an event of its own, and it is driven on
+// that tick alone.
 //
 // ## The registers
 //
@@ -135,8 +149,8 @@
 //                      has not read out: a frame given now is refused
 //                bit 2 the receiver will take a frame now
 //                bit 3 the interface is in Loop Back
-//               **and the card's own CSR in bits 31:16**, where
-//               `chaos_face.h` says nothing --- the program masks it off.
+//               **and the card's own CSR in bits 31:16**, from which the
+//               program reads Spy to judge the machine's own frame.
 //               The card brings `chaos_csr` out and this face reads two of
 //               its sixteen bits; the other fourteen (the lost count, Spy,
 //               the two interrupt enables, Transmit Done) would otherwise
@@ -157,6 +171,9 @@
 //                        unless `TXLEN` was read after that frame arrived,
 //                        so a take cannot land on a frame the program has
 //                        not seen
+//                        bit 3, with bit 0: the frame was aborted --- its
+//                        Transmit Done comes with Transmit Abort.  Alone
+//                        it does nothing
 //                        bit 1 the `RXLEN` words in the RX window are a
 //                        whole frame: store it and raise Receive Done, or
 //                        refuse it and count it in `LOST`.  Ignored, and
@@ -365,7 +382,6 @@ module cadr_chaos_cable #(
 
   assign chaos_address  = r_myaddr;
   assign chaos_cbl_busy = 1'b0;      // see the header
-  assign chaos_tx_abort = 1'b0;      // see the header
   assign chaos_rx_crc   = 1'b0;      // see the header
 
   // The stream: one word a tick while `X_STREAM`, then an idle tick, then
@@ -499,12 +515,14 @@ module cadr_chaos_cable #(
       sent        <= 9'd0;
       x_len       <= 9'd0;
       stream_at   <= 8'd0;
-      chaos_tx_done <= 1'b0;
+      chaos_tx_done  <= 1'b0;
+      chaos_tx_abort <= 1'b0;
     end else begin
       // One tick, always: the card samples this level every tick with no
       // gate of its own, and a second tick of it would raise Transmit Done
       // for a frame that never went.
-      chaos_tx_done <= 1'b0;
+      chaos_tx_done  <= 1'b0;
+      chaos_tx_abort <= 1'b0;
       rdone_was <= chaos_csr[15];
       txv_was   <= tx_valid;
       irq_q     <= (irq_q & ~irq_clr) | irq_set;
@@ -605,8 +623,10 @@ module cadr_chaos_cable #(
       // finds the new frame waiting at its next poll.
       if (cmd_wr) begin
         if (wr_data[0] && wr_mask[0] && tx_valid && tx_seen) begin
-          tx_valid      <= 1'b0;
-          chaos_tx_done <= 1'b1;
+          tx_valid       <= 1'b0;
+          chaos_tx_done  <= 1'b1;
+          // The machine's own busy receiver aborted it: see the header.
+          chaos_tx_abort <= wr_data[3] && wr_mask[3];
         end
         if (rx_refused && lost != 32'hFFFF_FFFF) begin
           lost <= lost + 32'd1;

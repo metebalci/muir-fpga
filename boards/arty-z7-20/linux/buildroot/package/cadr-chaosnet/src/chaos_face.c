@@ -47,10 +47,13 @@
 
 #include "chaos_packet.h"
 
-// The fewest words a frame on this seam can be: the eight software header
-// words and the three-word hardware trailer, with no data between them.  A
-// buffer shorter than that is not a frame, whatever else it is.
-#define CHAOS_FACE_MIN_WORDS (CHAOS_PKT_HEADER_WORDS + CHAOS_PKT_TRAILER_WORDS)
+// The fewest words a frame on this seam can be: more than 48 bits, the
+// three-word hardware trailer and one word before it.  No receiver takes a
+// run of 48 bits or fewer (muir's `arrive`, measured on the netlist board),
+// and the machine's own frame of four words to itself lands.  A frame from
+// over CHUDP is eleven words at the least, the eight software header words
+// and the trailer, and `chudp_unwrap` holds that rule at its own edge.
+#define CHAOS_FACE_MIN_WORDS (CHAOS_PKT_TRAILER_WORDS + 1u)
 
 // --- the face over /dev/mem ----------------------------------------------
 
@@ -209,6 +212,22 @@ void chaos_face_set_address(struct chaos_face *f, uint16_t address)
 
 int chaos_face_take(struct chaos_face *f, uint16_t *words, unsigned max)
 {
+	const int n = chaos_face_read_frame(f, words, max);
+	if (n > 0)
+		chaos_face_let_go(f, 0);
+	return n;
+}
+
+// The machine let go: Transmit Done comes up, and with `aborted` Transmit
+// Abort with it.  The cable ignores the abort bit unless the take bit is in
+// the same write, so the two go together or the abort not at all.
+void chaos_face_let_go(struct chaos_face *f, int aborted)
+{
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE | (aborted ? CHAOS_CTL_TX_ABORTED : 0u));
+}
+
+int chaos_face_read_frame(struct chaos_face *f, uint16_t *words, unsigned max)
+{
 	const uint32_t stat = f->read(f, CHAOS_STAT);
 	if (!(stat & CHAOS_ST_TX_VALID))
 		return 0;
@@ -228,15 +247,21 @@ int chaos_face_take(struct chaos_face *f, uint16_t *words, unsigned max)
 		say("the interface offers a frame of %u words and this holds %u: "
 		    "dropped, and the transmitter let go",
 		    (unsigned)len, room);
-		f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE);
+		chaos_face_let_go(f, 0);
+		return -1;
+	}
+	// **Fewer than three words has no cable destination**: the trailer's
+	// first word, the third from the end, is what the program routes by,
+	// and below it there is nothing.  The cable offers nothing of 48 bits
+	// or fewer, so this is a fault in the fabric, said and let go.
+	if (len < CHAOS_PKT_TRAILER_WORDS) {
+		say("the interface offers a frame of %u words, which has no cable destination: "
+		    "dropped, and the transmitter let go", (unsigned)len);
+		chaos_face_let_go(f, 0);
 		return -1;
 	}
 	for (unsigned k = 0; k < (unsigned)len; ++k)
 		words[k] = (uint16_t)(f->read(f, CHAOS_TX_WINDOW + k) & 0xFFFFu);
-	// Taking a frame includes telling the fabric it was taken, so a caller
-	// that drops the frame on the floor has still let the machine transmit
-	// again --- which is right: the cable carried it and nobody wanted it.
-	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE);
 	return (int)len;
 }
 
@@ -252,8 +277,8 @@ int chaos_face_give(struct chaos_face *f, const uint16_t *words, unsigned n)
 {
 	if (n < CHAOS_FACE_MIN_WORDS || n > CHAOS_MAX_WORDS) {
 		say("a frame of %u words is not one this seam carries, which is %u to %u "
-		    "--- the eight header words, up to %u bytes of data, and the "
-		    "three-word hardware trailer",
+		    "--- more than the 48 bits no receiver takes, and up to the eight "
+		    "header words, %u bytes of data and the three-word hardware trailer",
 		    n, (unsigned)CHAOS_FACE_MIN_WORDS, (unsigned)CHAOS_MAX_WORDS,
 		    (unsigned)CHAOS_MAX_DATA);
 		return -1;
@@ -298,4 +323,38 @@ int chaos_face_give(struct chaos_face *f, const uint16_t *words, unsigned n)
 	if (lost_before == 0xFFFFFFFFu && (stat & CHAOS_ST_RX_BUSY))
 		return 0;
 	return 1;
+}
+
+// --- the machine's own frame, back off the cable -----------------------------
+//
+// `chaos_face.h` has the rule.  The order is the board's: Loop Back first,
+// since then the frame was never on the cable; then 48 bits, which no
+// receiver takes; then `DEST MATCH`; and only then the buffer, whose answer is
+// the fabric's commit.
+
+enum chaos_own chaos_face_own_frame(struct chaos_face *f, const uint16_t *words, unsigned n,
+				    uint16_t me)
+{
+	if (n < CHAOS_FACE_MIN_WORDS || n > CHAOS_MAX_WORDS)
+		return CHAOS_OWN_NOT_FOR_IT;
+	const uint32_t stat = f->read(f, CHAOS_STAT);
+	if (stat & CHAOS_ST_LOOPED)
+		return CHAOS_OWN_LOOPED;
+	const uint16_t dest = words[n - CHAOS_PKT_TRAILER_WORDS];
+	const int spy = ((stat >> CHAOS_ST_CSR_SHIFT) & CHAOS_CSR_SPY) != 0;
+	if (dest != me && dest != 0 && !spy)
+		return CHAOS_OWN_NOT_FOR_IT;
+	switch (chaos_face_give(f, words, n)) {
+	case 1:
+		return CHAOS_OWN_TAKEN;
+	case 0:
+		// **Counted, and aborted only when addressed to it by name.**
+		// AIM-628 section 2.5: a busy receiver "will only generate an
+		// abort signal if the packet was specifically addressed to it",
+		// so a frame to zero or one taken under Spy is counted and not
+		// aborted.
+		return dest == me ? CHAOS_OWN_ABORTED : CHAOS_OWN_LOST;
+	default:
+		return CHAOS_OWN_NOT_FOR_IT;
+	}
 }

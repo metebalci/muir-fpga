@@ -26,6 +26,10 @@
 //     frame whose `TXLEN` was read after it arrived.
 //   - `LOST` survives the card's own Reset and is cleared by this module's
 //     reset input, which is what the header now says.
+//   - Transmit Abort was held low, so the machine's own frame to its own
+//     address into a full buffer came back as a plain Transmit Done, where
+//     the board's busy receiver aborts it.  A take with `CTL` bit 3 now
+//     raises it on the take's Transmit Done, and only there.
 //
 // And the frame the card sends is the frame as it goes on the cable, the
 // source and the check word in it, which this face offers as it comes; one
@@ -52,6 +56,8 @@ int bad = 0;
 
 // What the card saw, counted on every tick.
 long rx_valid_n = 0, rx_done_n = 0, rx_lost_n = 0, tx_done_n = 0;
+// Transmit Done with Transmit Abort, and Transmit Abort on any other tick.
+long tx_abort_n = 0, abort_alone_n = 0;
 long bits_at_done = -1;
 std::vector<unsigned> streamed;
 bool card_rdone = false;
@@ -96,6 +102,8 @@ void Step() {
   }
   if (t->chaos_rx_lost) ++rx_lost_n;
   if (t->chaos_tx_done) ++tx_done_n;
+  if (t->chaos_tx_done && t->chaos_tx_abort) ++tx_abort_n;
+  if (!t->chaos_tx_done && t->chaos_tx_abort) ++abort_alone_n;
   t->clk = 1;
   t->eval();
   ++tick;
@@ -139,6 +147,7 @@ void Reset() {
 
 void Clear() {
   rx_valid_n = rx_done_n = rx_lost_n = tx_done_n = 0;
+  tx_abort_n = abort_alone_n = 0;
   bits_at_done = -1;
   streamed.clear();
 }
@@ -316,6 +325,7 @@ int main(int argc, char **argv) {
     SetReg(CTL, 1);
     Idle(2);
     if (tx_done_n != 1) Fail("Transmit Done pulses for a take", tx_done_n, 1);
+    if (tx_abort_n != 0) Fail("Transmit Abort with the Transmit Done of a plain take", tx_abort_n, 0);
     if (Reg(STAT) & 1) Fail("STAT's TX_VALID after the take", 1, 0);
     ++cases;
   }
@@ -386,6 +396,47 @@ int main(int argc, char **argv) {
     if (tx_done_n != (n > 3 ? 0 : 1)) Fail(what, tx_done_n, n > 3 ? 0 : 1);
     std::snprintf(what, sizeof what, "TXLEN for a frame of %u words", n);
     if (Reg(TXLEN) != (n > 3 ? n : 0)) Fail(what, Reg(TXLEN), n > 3 ? n : 0);
+    std::snprintf(what, sizeof what, "Transmit Abort for a frame of %u words", n);
+    if (tx_abort_n != 0 || abort_alone_n != 0) Fail(what, tx_abort_n + abort_alone_n, 0);
+    ++cases;
+  }
+
+  // ====================================================================
+  // A TAKE WITH CTL BIT 3 RAISES TRANSMIT ABORT ON ITS TRANSMIT DONE
+  // ====================================================================
+  // The machine's own frame to its own address, met by its own busy
+  // receiver: `chaos_face_let_go` takes it with bit 3, and the card must
+  // see Transmit Abort on the tick of that take's Transmit Done and on no
+  // other tick.  Bit 3 alone takes nothing, and a take with it that lands
+  // on no frame raises nothing.
+  {
+    Reset(); Clear();
+    transmit(12, 11);
+    if (Reg(TXLEN) != 11) Fail("TXLEN of the frame to be aborted", Reg(TXLEN), 11);
+    SetReg(CTL, 8);
+    Idle(2);
+    if (tx_done_n != 0) Fail("Transmit Done pulses for CTL bit 3 alone", tx_done_n, 0);
+    if (!(Reg(STAT) & 1)) Fail("STAT's TX_VALID after CTL bit 3 alone", 0, 1);
+    SetReg(CTL, 1 | 8);
+    Idle(2);
+    if (tx_done_n != 1) Fail("Transmit Done pulses for an aborted take", tx_done_n, 1);
+    if (tx_abort_n != 1) Fail("Transmit Abort with the aborted take's Transmit Done", tx_abort_n, 1);
+    if (abort_alone_n != 0) Fail("Transmit Abort on a tick with no Transmit Done", abort_alone_n, 0);
+    if (Reg(STAT) & 1) Fail("STAT's TX_VALID after the aborted take", 1, 0);
+    // And the next frame, taken plainly, is not aborted.
+    transmit(13, 11);
+    (void)Reg(TXLEN);
+    SetReg(CTL, 1);
+    Idle(2);
+    if (tx_done_n != 2) Fail("Transmit Done pulses for the plain take after", tx_done_n, 2);
+    if (tx_abort_n != 1) Fail("Transmit Abort with the plain take after an aborted one", tx_abort_n, 1);
+    // An aborted take with nothing waiting raises neither.
+    const long done_was = tx_done_n, abort_was = tx_abort_n;
+    SetReg(CTL, 1 | 8);
+    Idle(2);
+    if (tx_done_n != done_was) Fail("Transmit Done for an aborted take of nothing", tx_done_n - done_was, 0);
+    if (tx_abort_n != abort_was || abort_alone_n != 0)
+      Fail("Transmit Abort for an aborted take of nothing", tx_abort_n - abort_was + abort_alone_n, 0);
     ++cases;
   }
 
@@ -397,6 +448,6 @@ int main(int argc, char **argv) {
   }
   std::printf("ok: %ld cases: the length is taken at the commit, a malformed commit is "
               "counted nowhere, a take counts only for the frame it read, a frame of 48 bits "
-              "or fewer is not offered\n", cases);
+              "or fewer is not offered, an aborted take raises Transmit Abort with its Transmit Done\n", cases);
   return 0;
 }
