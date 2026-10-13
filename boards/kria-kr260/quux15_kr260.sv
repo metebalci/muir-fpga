@@ -124,6 +124,11 @@ module quux15_kr260 #(
            VIDEO_W / 32 * VIDEO_H, cadr_ddr_map::VIDEO_WORDS_MAX);
   end
 
+  // **THE BOARD NAME** (contract HD): feature words 20-24, which the band's
+  // herald prints, "Machine Type QUUX on Kria KR260"; `cadr_kr260.sv`'s for
+  // revision 13.
+  localparam logic [8*64-1:0] BOARD = "Kria KR260";
+
   // **THE TIMES IN CLOCKS, AT THE PERIOD** (R9): each a duration the module
   // states at the 10 ns tick, here at `PERIOD_NS`.  The display's second,
   // rounded to the nearest clock; the lamp's hold, 2^22 ticks of 10 ns,
@@ -239,7 +244,7 @@ module quux15_kr260 #(
   quux15_core #(
       .PROM_HEX(PROM_HEX),
       .MAIN_WORDS(MAIN_WORDS),
-      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H),
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H), .BOARD_NAME(BOARD),
       .MAIN_BASE(MAIN_BASE),
       .DISPLAY_BASE(DISPLAY_BASE)
   ) u_core (

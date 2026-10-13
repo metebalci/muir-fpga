@@ -2846,8 +2846,9 @@ CHECKS["quux15_kr260"] = {
 
 # And its figures read at the instances (the Makefile's
 # `quux15_kr260_param.pass`): the video controller's size at the core, the
-# face and the display, the display's raster, and the display's second, the
-# lamp's hold and the mouse's step at each period.  Refusing is being caught.
+# face and the display, the display's raster, the board name at the core,
+# and the display's second, the lamp's hold and the mouse's step at each
+# period.  Refusing is being caught.
 CHECKS["quux15_kr260_param"] = {
     "kind": "script",
     "sources": ["boards/kria-kr260/quux15_kr260.sv", "rtl/machine/quux15_core.sv",
@@ -2862,11 +2863,13 @@ CHECKS["quux15_kr260_param"] = {
 }
 
 # And at the Kria's 1920 by 1080 (the Makefile's `quux15_videosize.quux.pass`):
-# the core built with `VIDEO_W` and `VIDEO_H` at that size and the
-# testbench's frame buffer as large, held to the `videosize` group.
+# the core built with `VIDEO_W` and `VIDEO_H` at that size and the Kria's
+# board name, and the testbench's frame buffer as large, held to the
+# `videosize` group.
 CHECKS["quux15_videosize_quux"] = dict(
     CHECKS["quux15_alu_quux"],
     flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GVIDEO_W=1920", "-GVIDEO_H=1080",
+                                                '-GBOARD_NAME="Kria KR260"',
                                                 "-CFLAGS", "-DQUUX15_VIDEO_W=1920",
                                                 "-CFLAGS", "-DQUUX15_VIDEO_H=1080"],
     golden=["quux15_videosize.quux.p%d.golden" % _q for _q in (20, 38)])

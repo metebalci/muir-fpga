@@ -954,6 +954,10 @@ struct Case {
     /// refuses; such a run ends with the mode's black-on-white and the
     /// frame buffer's hash (`# endbow`, `# endfb`).
     video: Option<(usize, usize)>,
+    /// The board name, feature words 20-24, when the core under test is
+    /// built with one (`BOARD_NAME`, the Kria's at its 1920 by 1080); none,
+    /// the words reading 0, as the core is built by default.
+    board_name: Option<&'static str>,
     /// Block-disk's pack, its pack side's latency, and what the run is
     /// judged by at its end (`quux15_blockdisk.rs`).
     disk: Option<quux15_blockdisk::DiskRun>,
@@ -1007,6 +1011,7 @@ impl Case {
             mdmem: Vec::new(),
             main_words: None,
             video: None,
+            board_name: None,
             disk: None,
             input: Vec::new(),
             net: None,
@@ -1085,6 +1090,7 @@ fn machine(case: &Case) -> Machine {
         muir::tv::check_video_size(w, h, false).expect("a video controller muir takes");
         m.tv.set_video_size(w, h);
     }
+    m.set_board_name(case.board_name.unwrap_or("")).expect("a board name muir takes");
     for &(k, w) in &case.imem {
         m.imem[k] = Insn::extended(w);
     }

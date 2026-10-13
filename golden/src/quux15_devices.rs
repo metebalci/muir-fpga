@@ -502,14 +502,20 @@ pub fn window() -> Vec<(String, Preset)> {
 /// contract HD): 1920 by 1080, muir's `VIDEO_MAX_SIZE`.
 pub const KRIA_VIDEO: (usize, usize) = (1920, 1080);
 
+/// The Kria KR260's board name, feature words 20-24 (`boards/kria-kr260/
+/// quux15_kr260.sv`; contract HD), which the core under the `videosize`
+/// group is built with (`BOARD_NAME`) and muir's machine is given.
+pub const KRIA_NAME: &str = "Kria KR260";
+
 /// **The video controller at the Kria's 1920 by 1080**, where the core is
 /// built with `VIDEO_W` and `VIDEO_H` at that size and the testbench's frame
 /// buffer as large; each run says so in its `# video` line, and a testbench
 /// of another size refuses it.  Every place the size reaches, each run ending
 /// with muir's mode and frame buffer (`# endbow`, `# endfb`):
 ///
-///   features   the register page's feature words, 0 to 17: 11 the size,
-///              12 a bit a pixel and 60 words a line
+///   features   the register page's feature words, 0 to 24: 11 the size,
+///              12 a bit a pixel and 60 words a line, 20 to 24 the board
+///              name, the Kria's (`KRIA_NAME`)
 ///   edges      the frame buffer's last word written and read back; the
 ///              first past 1280 by 1024's, inside this one; the first past
 ///              this one nothing there, MD 0 and word 101's NXM, and a write
@@ -521,10 +527,13 @@ pub fn videosize() -> Vec<(String, Preset)> {
     const LIST: Word = 0o016 << 32;
     let words = (KRIA_VIDEO.0 / 32 * KRIA_VIDEO.1) as u64;
     let mut v = Vec::new();
-    let sized = |p: &mut Preset| p.video = Some(KRIA_VIDEO);
+    let sized = |p: &mut Preset| {
+        p.video = Some(KRIA_VIDEO);
+        p.board_name = Some(KRIA_NAME);
+    };
     let mut p = run();
     sized(&mut p);
-    for k in 0..0o20 {
+    for k in 0..0o25 {
         p.read(reg(k), 0o20 + (k % 8));
     }
     p.stop();

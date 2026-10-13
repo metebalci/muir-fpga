@@ -27305,6 +27305,60 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
     for (int unsigned k = 0; k < 19; k++)
 @end
 
+@mutation quux15-board-name-a-word-on
+@check quux15_videosize_quux
+@file rtl/machine/quux15_core.sv
+@note Word 20 + k gives the name's word k + 1 on revision 15: the first four
+@note characters lost and the rest a word early.
+@old
+              return {1'b1, BOARD_NAME_WORDS[32 * (32'(k) - 32'o20) +: 32]};
+@new
+              return {1'b1, BOARD_NAME_WORDS[32 * (32'(k) - 32'o17) +: 32]};
+@end
+
+@mutation quux15-board-name-not-given
+@check quux15_videosize_quux
+@file rtl/machine/quux15_core.sv
+@note Words 20-24 read 0 on revision 15 whatever the board's name is: their
+@note case moved to words nothing reads, which keeps the name named and so
+@note through lint.
+@old
+      8'o20, 8'o21, 8'o22, 8'o23, 8'o24:
+@new
+      8'o320, 8'o321, 8'o322, 8'o323, 8'o324:
+@end
+
+@mutation quux15-board-name-backwards
+@check quux15_videosize_quux
+@file rtl/machine/quux15_core.sv
+@note The literal's bytes taken from bit 0 up on revision 15: the name's
+@note last character first.
+@old
+      if (k < n) w[8*k +: 8] = s[8*(n - 1 - k) +: 8];
+@new
+      if (k < n) w[8*k +: 8] = s[8*k +: 8];
+@end
+
+@mutation quux15-board-name-kria-one-character-wrong
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note The Kria's revision 15 top names itself with one character wrong.
+@old
+  localparam logic [8*64-1:0] BOARD = "Kria KR260";
+@new
+  localparam logic [8*64-1:0] BOARD = "Kria KR261";
+@end
+
+@mutation quux15-board-name-kria-not-passed
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note The Kria's revision 15 top gives its core no name: words 20-24 read 0.
+@old
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H), .BOARD_NAME(BOARD),
+@new
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H),
+@end
+
 @mutation machine-the-feature-page-at-the-old-width
 @check quux13_devices_hd_quux
 @file rtl/machine/cadr_machine.sv

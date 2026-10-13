@@ -119,6 +119,15 @@ module quux15_core #(
     parameter int unsigned VIDEO_W = 1280,
     parameter int unsigned VIDEO_H = 1024,
     parameter int unsigned FB_WORDS = VIDEO_W / 32 * VIDEO_H,
+    // **THE BOARD NAME**, the board's (contract HD): feature words 20-24
+    // give it to the band to print and never to branch on.  A string
+    // literal from the board's top, which SystemVerilog stores
+    // right-justified in these 64 bytes; `BOARD_NAME_WORDS` below lays it
+    // out as `cadr_machine.sv` does for revision 13: at most 20 printable
+    // ASCII characters (`040`-`176`), 4 to a word in `<31:0>`, the first in
+    // `<7:0>`, zero bytes after the last.  Empty, the default, is no name:
+    // the words read 0.
+    parameter logic [8*64-1:0] BOARD_NAME = '0,
     // One AXI ID for every write, as the board needs (A15b.5), its writes
     // answered in order; clear, an ID a slot of the port's in-flight list.
     parameter bit ONE_WRITE_ID = 1'b1,
@@ -319,6 +328,41 @@ module quux15_core #(
   if (FB_WORDS != VIDEO_W / 32 * VIDEO_H) begin : g_bad_fb
     $error("quux15_core: FB_WORDS is %0d, and a video controller of %0d by %0d is %0d words",
            FB_WORDS, VIDEO_W, VIDEO_H, VIDEO_W / 32 * VIDEO_H);
+  end
+
+  // The board name's length: its literal is right-justified, so the
+  // characters are the bytes up to the highest one that is not zero.
+  function automatic int unsigned board_name_chars(input logic [8*64-1:0] s);
+    int unsigned n = 0;
+    for (int unsigned i = 0; i < 64; i++)
+      if (s[8*i +: 8] != 8'd0) n = i + 1;
+    return n;
+  endfunction
+  // Whether every character is printable ASCII, `040`-`176`; a zero byte
+  // inside the name is not.
+  function automatic bit board_name_printable(input logic [8*64-1:0] s);
+    bit ok = 1'b1;
+    for (int unsigned i = 0; i < board_name_chars(s); i++)
+      if (s[8*i +: 8] < 8'o40 || s[8*i +: 8] > 8'o176) ok = 1'b0;
+    return ok;
+  endfunction
+  // Feature words 20-24: character k of the name, counted from its first,
+  // at bits `8k + 7` to `8k`, so word 20 + k/4 holds it in `<8(k mod 4)+7 :
+  // 8(k mod 4)>` (muir's `board_name_word`).
+  function automatic logic [159:0] board_name_words(input logic [8*64-1:0] s);
+    logic [159:0] w = '0;
+    int unsigned n = board_name_chars(s);
+    for (int unsigned k = 0; k < 20; k++)
+      if (k < n) w[8*k +: 8] = s[8*(n - 1 - k) +: 8];
+    return w;
+  endfunction
+  localparam int unsigned BOARD_NAME_CHARS = board_name_chars(BOARD_NAME);
+  localparam logic [159:0] BOARD_NAME_WORDS = board_name_words(BOARD_NAME);
+  if (BOARD_NAME_CHARS > 20) begin : g_board_name_long
+    $error("quux15_core: the board name is %0d characters, over 20", BOARD_NAME_CHARS);
+  end
+  if (!board_name_printable(BOARD_NAME)) begin : g_board_name_bytes
+    $error("quux15_core: the board name has a byte outside 040-176");
   end
 
   // ===================================================================== types
@@ -1459,6 +1503,9 @@ module quux15_core #(
     if (k < 8'o20) return {1'b1, FEATURES[k[3:0]]};
     if (dev_word(k) || unbuilt_word(k)) return {1'b0, 32'd0};
     unique case (k)
+      // The board name (contract HD), `BOARD_NAME_WORDS`' word k - 20.
+      8'o20, 8'o21, 8'o22, 8'o23, 8'o24:
+              return {1'b1, BOARD_NAME_WORDS[32 * (32'(k) - 32'o20) +: 32]};
       8'o25:  return {1'b1, 25'd0, period};
       8'o101: return {1'b1, 31'd0, bus_nxm};
       8'o102: return {1'b1, 31'd0, errstop};
@@ -1468,8 +1515,7 @@ module quux15_core #(
       8'o223: return {1'b1, pointer_types[63:32]};
       8'o224: return {1'b1, refused};
       8'o225: return {1'b1, posted};
-      // Every other word is reserved, or a constant 0 on this board: the
-      // board name (words 20-24) where the board's top gives none.
+      // Every other word is reserved, a constant 0.
       default: return {1'b1, 32'd0};
     endcase
   endfunction

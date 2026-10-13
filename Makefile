@@ -1680,17 +1680,18 @@ $(BUILD)/obj_quux15_core_32m/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.
 $(eval $(call QUUX15_CORE_RULE,mainsize,_32m,))
 
 # **AND AT THE KRIA'S 1920 BY 1080** (`boards/kria-kr260/quux15_kr260.sv`'s
-# `VIDEO_W` and `VIDEO_H`; contract HD): the core built at that size, its
-# feature words 11 and 12 and its frame buffer, and the testbench's frame
-# buffer as large (`QUUX15_VIDEO_W`, `QUUX15_VIDEO_H`), held to the
-# `videosize` group (`golden/src/quux15_devices.rs`), muir's video
-# controller at the same size: the feature words, the buffer's edges, and
+# `VIDEO_W` and `VIDEO_H`; contract HD): the core built at that size and
+# with the Kria's board name, its feature words 11 and 12, 20 to 24 and its
+# frame buffer, and the testbench's frame buffer as large (`QUUX15_VIDEO_W`,
+# `QUUX15_VIDEO_H`), held to the `videosize` group
+# (`golden/src/quux15_devices.rs`), muir's video controller at the same size
+# and muir's machine with the same name: the feature words, the buffer's edges, and
 # word 210's black-on-white at the core's `bow`, with the buffer's words at
 # the end.  Each of its traces names its size, and a testbench built for
 # another refuses it.  At 10 ns and at 19 ns.
 QUUX15_PERIODS_videosize := 20 38
 $(BUILD)/obj_quux15_core_hd/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
-	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GVIDEO_W=1920 -GVIDEO_H=1080 \
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GVIDEO_W=1920 -GVIDEO_H=1080 -GBOARD_NAME='"Kria KR260"' \
 	    -CFLAGS -DQUUX15_VIDEO_W=1920 -CFLAGS -DQUUX15_VIDEO_H=1080 \
 	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_hd \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
@@ -3309,9 +3310,11 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
 
 # **THE MACHINE'S GUARDS ON THE BOARD'S VIDEO SIZE AND NAME** (contract HD),
 # each with its negative control: a value just inside the rule elaborates and
-# one just outside stops with the guard's own words.
-$(BUILD)/machine_guard.pass: tools/machine_guard_check.py $(MACHINE_SRC) | $(BUILD)
+# one just outside stops with the guard's own words; and revision 15's
+# core's guards on the board name.
+$(BUILD)/machine_guard.pass: tools/machine_guard_check.py $(MACHINE_SRC) $(QUUX15_CORE_SRC) | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/machine_guard_check.py $(MACHINE_SRC)
+	VERILATOR=$(VERILATOR) python3 tools/machine_guard_check.py --quux15 $(QUUX15_CORE_SRC)
 	@touch $@
 
 $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile \

@@ -112,6 +112,9 @@ pub struct Preset {
     /// The video controller's size, when not muir's 1280 by 1024
     /// (`quux15_devices.rs`'s `videosize`).
     pub video: Option<(usize, usize)>,
+    /// The board name, feature words 20-24, when the core is built with one
+    /// (`quux15_devices.rs`'s `videosize`); none otherwise.
+    pub board_name: Option<&'static str>,
     /// Block-disk's pack and what the run is judged by
     /// (`quux15_blockdisk.rs`).
     pub disk: Option<super::quux15_blockdisk::DiskRun>,
@@ -207,6 +210,7 @@ impl Preset {
             mdmem: self.mdmem.clone(),
             main_words: self.main_words,
             video: self.video,
+            board_name: self.board_name,
             disk: self.disk.clone(),
             input: self.input.clone(),
             net: self.net.clone(),

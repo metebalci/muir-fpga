@@ -17,6 +17,11 @@ the display output (`PIC_W`, `PIC_H`, `WORDS_PER_LINE`), whose raster is
 `boards/kria-kr260/display_raster.mk`'s, the figures
 `build/display_out_kr260.quux15.pass` holds it at.
 
+**THE BOARD NAME** (contract HD): "Kria KR260", at the core (`BOARD_NAME`)
+and packed as feature words 20-24 give it (`BOARD_NAME_WORDS`), the first
+character in word 20's `<7:0>` and zero bytes after the last.  The core's
+words with a name are held to muir's by the `videosize` group.
+
 **EVERY TIME IN CLOCKS IS THE PERIOD'S** (the MP5a review's R9): each module
 states a duration in clocks of the 10 ns tick, and the top turns it into
 clocks of `PERIOD_NS`.  For each period asked, this reads back the display's
@@ -42,7 +47,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from machine_param_check import params_at_cell  # noqa: E402
+from machine_param_check import name_of, params_at_cell  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_kr260"
@@ -51,6 +56,9 @@ TOP = "quux15_kr260"
 PERIODS = (10, 13, 18, 19)
 # Contract HD: the Kria's video controller.  Written here apart from the top.
 VIDEO = (1920, 1080)
+# Contract HD: the Kria's board name, feature words 20-24.  Written here apart
+# from the top.
+NAME = "Kria KR260"
 
 failures = []
 
@@ -130,6 +138,27 @@ def at_period(period, sources, scratch):
     want = {"VIDEO_W": w, "VIDEO_H": h}
     got, why = params_at_cell(tree, TOP, "u_face", list(want))
     check(want, got, why, "%s, u_face: word 39" % at)
+
+    # The board name, the same at every period: the top's literal at the
+    # core, and the five words it packs, from the name here.
+    what = "%s, u_core: the board name %r" % (at, NAME)
+    got, why = params_at_cell(tree, TOP, "u_core", ["BOARD_NAME"])
+    if got is None:
+        say(False, "%s --- %s" % (what, why or "no such cell"))
+    elif name_of(got["BOARD_NAME"]) != NAME:
+        say(False, "%s --- it elaborates %r" % (what, name_of(got["BOARD_NAME"])))
+    else:
+        say(True, what)
+    want = {"BOARD_NAME_WORDS": int.from_bytes(NAME.encode("ascii").ljust(20, b"\0"), "little")}
+    what = "%s, u_core: feature words 20-24 hold %r" % (at, NAME)
+    got, why = params_at_cell(tree, TOP, "u_core", list(want))
+    if got is None:
+        say(False, "%s --- %s" % (what, why or "no such cell"))
+    elif got != want:
+        say(False, "%s --- they hold %040x, want %040x" % (
+            what, got["BOARD_NAME_WORDS"], want["BOARD_NAME_WORDS"]))
+    else:
+        say(True, what)
 
 
 def main():

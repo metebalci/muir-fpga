@@ -4,6 +4,7 @@
 """The machine's elaboration guards on the board's video size and name.
 
     machine_guard_check.py <source>...
+    machine_guard_check.py --quux15 <source>...
 
 `rtl/machine/cadr_machine.sv` refuses at elaboration a board name over 20
 characters, with a byte outside `040`-`176`, and a video controller muir's
@@ -12,6 +13,9 @@ with its negative control: QUUX at revision 13 is linted with the value just
 inside the rule, which must pass, and just outside it, which must stop with
 the guard's own words.  A guard that refused everything, or nothing, fails one
 of the pair.
+
+With `--quux15`, revision 15's core, `rtl/machine/quux15_core.sv`, is linted
+the same way for its guards on the board name, which are `cadr_machine.sv`'s.
 """
 import os
 import subprocess
@@ -34,13 +38,22 @@ CASES = [
     ("1024 by 768", ["-GVIDEO_WIDTH=1024", "-GVIDEO_HEIGHT=768"], None),
 ]
 
+# Revision 15's core: the board name's cases, the same rule.
+CASES15 = [c for c in CASES if "BOARD_NAME" in "".join(c[1]) or not c[1]]
+
 
 def main():
     sources = sys.argv[1:]
-    base = [VERILATOR, "--lint-only", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-            "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "--top-module", "cadr_machine"]
+    if sources[:1] == ["--quux15"]:
+        sources = sources[1:]
+        base = [VERILATOR, "--lint-only", "-Irtl/machine", "--top-module", "quux15_core"]
+        cases = CASES15
+    else:
+        base = [VERILATOR, "--lint-only", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "--top-module", "cadr_machine"]
+        cases = CASES
     bad = 0
-    for what, params, refusal in CASES:
+    for what, params, refusal in cases:
         p = subprocess.run(base + params + sources, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = p.stdout.decode("utf-8", "replace")
         if refusal is None:
@@ -53,7 +66,7 @@ def main():
         print("machine_guard: %s %s: %s" % ("ok     " if ok else "FAILED ", what, said))
         bad += not ok
     if bad:
-        sys.exit("machine_guard: %d of %d cases are not as the rule says" % (bad, len(CASES)))
+        sys.exit("machine_guard: %d of %d cases are not as the rule says" % (bad, len(cases)))
 
 
 if __name__ == "__main__":
