@@ -114,7 +114,7 @@ pub fn pack(blocks: u32) -> Disk {
 }
 
 /// FNV-1a over words of `bytes` bytes each, least significant first.
-fn fnv(words: impl Iterator<Item = u64>, bytes: usize) -> u32 {
+pub fn fnv(words: impl Iterator<Item = u64>, bytes: usize) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for w in words {
         for b in 0..bytes {

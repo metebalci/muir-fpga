@@ -534,6 +534,26 @@ fn spread(end: u64, n: u64) -> Vec<u64> {
 /// **The checkpoints** (A15b.13): runs of every kind halted at clocks spread
 /// over each, each ended with muir's checkpoint of the halted machine as a
 /// fabric writes it, which the testbench holds the fabric's own to.
+/// **The checkpoints at the Kria's 1920 by 1080** (the `videosize` group):
+/// each run of `quux15_devices::videosize` checkpointed at three clocks, the
+/// video controller's size, mode and buffer carried as muir's file carries
+/// them.
+pub fn videosize_checkpoints(period: u64) -> Vec<Case> {
+    let mut v = Vec::new();
+    for (n, p) in super::quux15_devices::videosize() {
+        let base = p.case(&n);
+        let end = park_clock(&base, period);
+        for at in spread(end, 3) {
+            let mut c = base.clone();
+            c.name = format!("ckpt-{n}-{at}");
+            c.script = checkpoint_at(at);
+            c.micro_check = false;
+            v.push(c);
+        }
+    }
+    v
+}
+
 pub fn checkpoints(period: u64) -> Vec<Case> {
     let mut v = Vec::new();
     let mut add = |name: &str, base: Case, n: u64| {

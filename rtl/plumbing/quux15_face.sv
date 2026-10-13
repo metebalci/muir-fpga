@@ -46,6 +46,28 @@
 //
 //   page 2, +0x80
 //     32 BUILD    the bitstream's build stamp (USR_ACCESS)
+//     33 DISPLAY  the backplane's display boards, `cadr_console.sv`'s word
+//                 with its keys and marker: `TV_SIMPLE_KEY` or
+//                 `TV_LISPM_KEY`, `COLOR_TV_KEY` or its complement, read
+//                 back as `{TV_MARK, 14'd0, color_tv, tv_lispm}`.  QUUX has
+//                 neither board, so the two settings are kept and read back
+//                 and reach nothing, as on revisions 13 and 14
+//     34 HDMI     what the display output shows and which way up, the
+//                 console's six keys, read back as `{HDMI_MARK, 12'd0,
+//                 rotate, out}`; out to `cadr_display_out.sv`'s `out_sel`
+//                 and `rotate`.  The video controller fills the raster, so
+//                 the output keeps it upright whatever the turn says
+//     35 LAMPS    whether the activity lamp blinks or holds a level:
+//                 `LAMP_STEADY_KEY` or its complement, read back as
+//                 `{LAMP_MARK, 15'd0, steady}`; out to the board's lamp
+//     36 SLEEP    whether the display output sleeps a monitor, and after how
+//                 long: a write of `HDMI_SLEEP_KEY` in <31:16>, <15> clear,
+//                 and the seconds in <14:0>, all four strobes, is a setting,
+//                 and a write of `HDMI_WAKE_KEY` a wake, each a clock's pulse
+//                 to the display output, which holds the setting; read back
+//                 as `{HDMI_SLEEP_MARK, asleep, setting}`, or `UNMAPPED` on a
+//                 board with no display output (`disp_fitted` low).
+//                 `cadr-displayport` follows its bit 15
 //     37 BOARDS   main memory: "BD" in <31:16> and its 64K-word units in
 //                 <10:0>, read only: revision 15's is the bitstream's
 //     38 RANGE    `MEM_BOARDS_RANGE_MARK` in <31:22>, the units as both the
@@ -59,6 +81,15 @@
 //                 file device's page (`quux_fd_face.sv`, 0x010 and 0x014),
 //                 the one setter, after which no reset reaches the clock
 //                 (`quux15_devices.sv`).  No program writes it
+//     42 ERRORS   the display output's two sticky bits, a bank the raster
+//                 reached before its words (`underrun`) and a read the port
+//                 answered with an error (`rd_error`): `{DISP_ERR_MARK,
+//                 14'd0, rd_error, underrun}`, or `UNMAPPED` on a board with
+//                 no display output.  A write of `DISP_CLEAR_KEY`, all four
+//                 strobes, clears both: a clock's pulse to the display
+//                 output, whose `underrun` clears once the pulse has crossed
+//                 into the pixel domain, so a read in the next few clocks may
+//                 still see it.  Every other write is dropped
 //
 // **A READOUT WORD IS THE MACHINE HALTED**: the core reads its memories on
 // their write ports only while halted, so a word read while it runs is
@@ -80,6 +111,31 @@ module quux15_face #(
     parameter int unsigned VIDEO_H    = 1024,
     // The period, in units of 0.5 ns.
     parameter logic [31:0] PERIOD     = 32'd26,
+    // **WORDS 33 TO 36**: `cadr_console.sv`'s keys and markers, the same
+    // values, so that `cadr-console` and `cadr-displayport` drive and read
+    // them unchanged.
+    parameter logic [31:0] TV_SIMPLE_KEY   = 32'h534D_504C,
+    parameter logic [31:0] TV_LISPM_KEY    = 32'h4C53_504D,
+    parameter logic [31:0] COLOR_TV_KEY    = 32'h434F_4C52,
+    parameter logic [15:0] TV_MARK         = 16'h5456,
+    parameter logic [31:0] HDMI_TV_KEY     = 32'h4854_5631,
+    parameter logic [31:0] HDMI_COLOR_KEY  = 32'h4854_5632,
+    parameter logic [31:0] HDMI_BOTH_KEY   = 32'h4854_5642,
+    parameter logic [31:0] HDMI_UP_KEY     = 32'h4855_5052,
+    parameter logic [31:0] HDMI_CW_KEY     = 32'h4852_4357,
+    parameter logic [31:0] HDMI_CCW_KEY    = 32'h4852_4343,
+    parameter logic [15:0] HDMI_MARK       = 16'h4844,
+    parameter logic [31:0] LAMP_STEADY_KEY = 32'h5354_4459,
+    parameter logic [15:0] LAMP_MARK       = 16'h4C44,
+    parameter logic [15:0] HDMI_SLEEP_KEY  = 16'h4853,
+    parameter logic [31:0] HDMI_WAKE_KEY   = 32'h5741_4B45,
+    parameter logic [15:0] HDMI_SLEEP_MARK = 16'h5A5A,
+    // **AND WORD 42**, the display output's two sticky bits: the marker
+    // "DE", and the clear's key "CLRD", on `RESET_KEY`'s rule --- four
+    // distinct bytes, none `00` or `FF`, neither IDENT, UNMAPPED, another
+    // key nor what the word reads back.
+    parameter logic [15:0] DISP_ERR_MARK   = 16'h4445,
+    parameter logic [31:0] DISP_CLEAR_KEY  = 32'h434C_5244,
     parameter int unsigned ID_W       = 16,
     parameter int unsigned LEN_W      = 8
 ) (
@@ -130,7 +186,25 @@ module quux15_face #(
     output var logic        rm_snap,
     output var logic [3:0]  rm_sel,
     output var logic [13:0] rm_addr,
-    input  var logic [63:0] rm_word
+    input  var logic [63:0] rm_word,
+    // --- The display output (`cadr_display_out.sv`), words 34, 36 and 42,
+    // --- in this clock's domain: what it shows and which way up; the sleep's
+    // --- setting and wake, pulses, and what it holds; whether there is one;
+    // --- its two sticky bits, `underrun` brought into this domain by the
+    // --- board, and their clear, a pulse.
+    output var logic [1:0]  disp_out,
+    output var logic [1:0]  disp_rotate,
+    output var logic        sleep_set,
+    output var logic [14:0] sleep_secs,
+    output var logic        wake,
+    input  var logic        disp_fitted,
+    input  var logic [14:0] sleep_q,
+    input  var logic        asleep,
+    input  var logic        underrun,
+    input  var logic        rd_error,
+    output var logic        err_clear,
+    // --- The activity lamp, word 35: steady rather than blinking.
+    output var logic        steady_lamps
 );
 
   localparam int unsigned RO_CLOCKS = 6;
@@ -172,6 +246,62 @@ module quux15_face #(
     end
   end
   assign mach_rst = reset_left != '0;
+
+  // --- Words 33 to 36 and 42: the display output and the lamp, as
+  // --- `cadr_console.sv` has them.  A whole-word key is compared with the
+  // --- beat's unstrobed lanes as zero, so a key with no zero byte asks for
+  // --- all four lanes by itself; a setting carrying its value in the
+  // --- bottom half asks by the strobes.  Settings are register loads; the
+  // --- sleep's setting and wake and the sticky bits' clear are a clock's
+  // --- pulse each, the display holding what they set.
+  logic [31:0] w_full;
+  logic        tv_lispm, color_tv;
+  assign w_full = wr_data & wr_mask;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      // One SIMPLE TV and no color board, the first display shown upright,
+      // the lamp blinking: what `cadr_console.sv` comes up with.
+      tv_lispm     <= 1'b0;
+      color_tv     <= 1'b0;
+      disp_out     <= 2'b01;
+      disp_rotate  <= 2'd0;
+      steady_lamps <= 1'b0;
+      sleep_set    <= 1'b0;
+      sleep_secs   <= 15'd0;
+      wake         <= 1'b0;
+      err_clear    <= 1'b0;
+    end else begin
+      sleep_set <= 1'b0;
+      wake      <= 1'b0;
+      err_clear <= 1'b0;
+      if (wr && w_word == 10'd33) begin
+        if (w_full == TV_SIMPLE_KEY)      tv_lispm <= 1'b0;
+        else if (w_full == TV_LISPM_KEY)  tv_lispm <= 1'b1;
+        if (w_full == COLOR_TV_KEY)       color_tv <= 1'b1;
+        else if (w_full == ~COLOR_TV_KEY) color_tv <= 1'b0;
+      end
+      if (wr && w_word == 10'd34) begin
+        if (w_full == HDMI_TV_KEY)         disp_out    <= 2'b01;
+        else if (w_full == HDMI_COLOR_KEY) disp_out    <= 2'b10;
+        else if (w_full == HDMI_BOTH_KEY)  disp_out    <= 2'b11;
+        else if (w_full == HDMI_UP_KEY)    disp_rotate <= 2'd0;
+        else if (w_full == HDMI_CW_KEY)    disp_rotate <= 2'd1;
+        else if (w_full == HDMI_CCW_KEY)   disp_rotate <= 2'd2;
+      end
+      if (wr && w_word == 10'd35) begin
+        if (w_full == LAMP_STEADY_KEY)       steady_lamps <= 1'b1;
+        else if (w_full == ~LAMP_STEADY_KEY) steady_lamps <= 1'b0;
+      end
+      if (wr && w_word == 10'd36) begin
+        if (w_full[31:16] == HDMI_SLEEP_KEY && !w_full[15] && wr_mask == 32'hFFFF_FFFF) begin
+          sleep_set  <= 1'b1;
+          sleep_secs <= w_full[14:0];
+        end
+        if (w_full == HDMI_WAKE_KEY) wake <= 1'b1;
+      end
+      if (wr && w_word == 10'd42 && w_full == DISP_CLEAR_KEY) err_clear <= 1'b1;
+    end
+  end
 
   // --- The written words: the diagnostic registers, the readout's address,
   // --- the real-time clock's start.
@@ -272,11 +402,16 @@ module quux15_face #(
         10'd11: rd_data = lo_l;
         10'd12: rd_data = hi_l;
         10'd32: rd_data = build;
+        10'd33: rd_data = {TV_MARK, 14'd0, color_tv, tv_lispm};
+        10'd34: rd_data = {HDMI_MARK, 12'd0, disp_rotate, disp_out};
+        10'd35: rd_data = {LAMP_MARK, 15'd0, steady_lamps};
+        10'd36: rd_data = disp_fitted ? {HDMI_SLEEP_MARK, asleep, sleep_q} : UNMAPPED;
         10'd37: rd_data = {MEM_BOARDS_MARK, 5'd0, 11'(MAIN_UNITS)};
         10'd38: rd_data = {MEM_BOARDS_RANGE_MARK, 11'(MAIN_UNITS), 11'(MAIN_UNITS)};
         10'd39: rd_data = {VIDEO_MARK, 11'(VIDEO_W), 11'(VIDEO_H)};
         10'd40: rd_data = PERIOD;
         10'd41: rd_data = rtc_start;
+        10'd42: rd_data = disp_fitted ? {DISP_ERR_MARK, 14'd0, rd_error, underrun} : UNMAPPED;
         default: rd_data = UNMAPPED;
       endcase
     end

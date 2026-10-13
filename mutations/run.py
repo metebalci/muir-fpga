@@ -2070,6 +2070,22 @@ CHECKS = {
                   "-GSPREAD=1"],
         "golden": None,
     },
+    # And as revision 15's Kria builds it: the memory side at 19 ns, and the
+    # configurations of `bow` and `err_clear` (the Makefile's
+    # `display_out_kr260.quux15.pass`).
+    "display_out_kr260_quux15": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS",
+                  "-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=19000",
+                  "-GH_ACTIVE=1920", "-GH_FRONT=88", "-GH_SYNC=44", "-GH_BACK=148",
+                  "-GV_ACTIVE=1080", "-GV_FRONT=4", "-GV_SYNC=5", "-GV_BACK=36",
+                  "-GPIC_W=1920", "-GPIC_H=1080", "-GWORDS_PER_LINE=60",
+                  "-GCOLOR_BASE=470024192"],
+        "golden": None,
+        "machine": "quux",
+    },
     "display_out_kr260_quux": {
         "sources": ["rtl/plumbing/cadr_display_out.sv"],
         "top": "cadr_display_out",
@@ -2817,7 +2833,9 @@ CHECKS["quux15_kr260"] = {
               "rtl/plumbing/cadr_axi_burst128.sv",
               "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
               "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
-              "rtl/plumbing/quux_fd_face.sv",
+              "rtl/plumbing/quux_fd_face.sv", "rtl/plumbing/cadr_display_out.sv",
+              "rtl/plumbing/cadr_axi_rd128.sv", "boards/kria-kr260/cadr_kr260_pixel_clock.sv",
+              "rtl/plumbing/cadr_lamp_microcycle.sv",
               "tb/cadr_ps8_stub.sv", "boards/kria-kr260/cadr_ps8.sv"],
     "top": "quux15_kr260",
     "tb": None,
@@ -2825,6 +2843,33 @@ CHECKS["quux15_kr260"] = {
     "golden": None,
     "machine": "quux",
 }
+
+# And its figures read at the instances (the Makefile's
+# `quux15_kr260_param.pass`): the video controller's size at the core, the
+# face and the display, the display's raster, and the display's second, the
+# lamp's hold and the mouse's step at each period.  Refusing is being caught.
+CHECKS["quux15_kr260_param"] = {
+    "kind": "script",
+    "sources": ["boards/kria-kr260/quux15_kr260.sv", "rtl/machine/quux15_core.sv",
+                "rtl/plumbing/quux15_face.sv", "rtl/plumbing/cadr_display_out.sv"],
+    "cmd": ["tools/quux15_kr260_param_check.py"] + CHECKS["quux15_kr260"]["stubs"] + [
+        "rtl/machine/cadr_tick_pkg.sv"] + CHECKS["quux15_kr260"]["extra"] + CHECKS["quux15_kr260"]["sources"],
+    "top": None,
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
+# And at the Kria's 1920 by 1080 (the Makefile's `quux15_videosize.quux.pass`):
+# the core built with `VIDEO_W` and `VIDEO_H` at that size and the
+# testbench's frame buffer as large, held to the `videosize` group.
+CHECKS["quux15_videosize_quux"] = dict(
+    CHECKS["quux15_alu_quux"],
+    flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GVIDEO_W=1920", "-GVIDEO_H=1080",
+                                                "-CFLAGS", "-DQUUX15_VIDEO_W=1920",
+                                                "-CFLAGS", "-DQUUX15_VIDEO_H=1080"],
+    golden=["quux15_videosize.quux.p%d.golden" % _q for _q in (20, 38)])
 
 # Revision 15's console face (the Makefile's `quux15_face.pass`).
 CHECKS["quux15_face"] = {

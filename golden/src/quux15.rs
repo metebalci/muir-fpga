@@ -948,6 +948,12 @@ struct Case {
     /// 32M), which the trace's `# main-units` line names and a testbench
     /// built for another size refuses.
     main_words: Option<usize>,
+    /// The video controller's size, when not muir's default 1280 by 1024:
+    /// a board's (the Kria's 1920 by 1080, `--video-size`), which the
+    /// trace's `# video` line names and a testbench built for another size
+    /// refuses; such a run ends with the mode's black-on-white and the
+    /// frame buffer's hash (`# endbow`, `# endfb`).
+    video: Option<(usize, usize)>,
     /// Block-disk's pack, its pack side's latency, and what the run is
     /// judged by at its end (`quux15_blockdisk.rs`).
     disk: Option<quux15_blockdisk::DiskRun>,
@@ -1000,6 +1006,7 @@ impl Case {
             micro_check: true,
             mdmem: Vec::new(),
             main_words: None,
+            video: None,
             disk: None,
             input: Vec::new(),
             net: None,
@@ -1057,6 +1064,9 @@ impl Case {
         if let Some(n) = self.main_words {
             out.push(format!("# main-units {:x}", n >> 16));
         }
+        if let Some((w, h)) = self.video {
+            out.push(format!("# video {w:x} {h:x}"));
+        }
         if let Some(d) = &self.disk {
             out.extend(d.lines());
         }
@@ -1071,6 +1081,10 @@ fn machine(case: &Case) -> Machine {
     let mut m = Which::Quux.machine(&prom);
     m.geometry = REV15;
     m.main = vec![0; case.main_words.unwrap_or(MAIN)];
+    if let Some((w, h)) = case.video {
+        muir::tv::check_video_size(w, h, false).expect("a video controller muir takes");
+        m.tv.set_video_size(w, h);
+    }
     for &(k, w) in &case.imem {
         m.imem[k] = Insn::extended(w);
     }
@@ -1540,6 +1554,17 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     memory.extend(feed.lines);
     memory.extend(net.lines);
     memory.extend(disk.lines);
+    // A run at another video controller's size: the mode and the frame
+    // buffer as muir's video controller ends with them; a run that ends in
+    // a checkpoint carries both in muir's file instead.
+    if case.video.is_some() && case.script.is_empty() {
+        let tv = &e.machine().tv;
+        memory.push(format!("# endbow {:x}", u8::from(tv.black_on_white())));
+        memory.push(format!(
+            "# endfb {:x}",
+            quux15_blockdisk::fnv(tv.buffer().iter().map(|&w| u64::from(w)), 4)
+        ));
+    }
     let mut rows = rows;
     if let Some(d) = &case.disk {
         memory.extend(d.end_lines(&e, case.park));
@@ -1579,6 +1604,11 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         }
         "bdmix" => quux15_blockdisk::bdmix().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "window" => quux15_devices::window().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "videosize" => {
+            let mut v: Vec<Case> = quux15_devices::videosize().into_iter().map(|(n, p)| p.case(&n)).collect();
+            v.extend(quux15_console::videosize_checkpoints(period));
+            v
+        }
         "input" => quux15_input::input(period),
         "network" => quux15_network::network(period),
         "regread" => quux15_regread::regread(period),

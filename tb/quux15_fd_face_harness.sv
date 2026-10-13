@@ -98,7 +98,7 @@ module quux15_fd_face_harness #(
   );
 
   /* verilator lint_off UNUSEDSIGNAL */
-  logic        rd_built, wr_built, fd_doorbell, fd_enabled, bd_start, kbd_boot, kbd_busy;
+  logic        rd_built, wr_built, fd_doorbell, fd_enabled, bd_start, kbd_boot, kbd_busy, bow;
   logic [15:0] fd_prod;
   logic [31:0] bd_st_cmd, microseconds;
   logic [27:0] bd_st_clp, bd_st_da;
@@ -131,7 +131,7 @@ module quux15_fd_face_harness #(
       .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0),
       .chaos_cbl_busy(1'b0), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
-      .snap(1'b0), .ro_k(7'd0), .ro_dev(ro_dev)
+      .snap(1'b0), .ro_k(7'd0), .ro_dev(ro_dev), .bow(bow)
   );
 
   // The index and the count the processor's reads of 165 and 161 are made

@@ -380,7 +380,7 @@ CHECK_QUUX_AT = dispatch_write_order13 quux13_readout_window \
 CHECK_QUUX_AT_L1 = $(QUUX13_PORTED_L1:%=quux13_%) phase_gen
 CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
-       $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass \
+       $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass $(BUILD)/display_out_kr260.quux15.pass \
        $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass $(BUILD)/quux15_input_module.quux.pass \
        $(BUILD)/quux15_chaos_module.quux.pass \
        $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux15_block_walk.quux.pass \
@@ -394,7 +394,9 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
-       $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass $(BUILD)/quux15_fd_face.pass \
+       $(BUILD)/quux15_videosize.quux.pass \
+       $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
+       $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1661,6 +1663,23 @@ $(BUILD)/obj_quux15_core_32m/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.
 	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_32m \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 $(eval $(call QUUX15_CORE_RULE,mainsize,_32m,))
+
+# **AND AT THE KRIA'S 1920 BY 1080** (`boards/kria-kr260/quux15_kr260.sv`'s
+# `VIDEO_W` and `VIDEO_H`; contract HD): the core built at that size, its
+# feature words 11 and 12 and its frame buffer, and the testbench's frame
+# buffer as large (`QUUX15_VIDEO_W`, `QUUX15_VIDEO_H`), held to the
+# `videosize` group (`golden/src/quux15_devices.rs`), muir's video
+# controller at the same size: the feature words, the buffer's edges, and
+# word 210's black-on-white at the core's `bow`, with the buffer's words at
+# the end.  Each of its traces names its size, and a testbench built for
+# another refuses it.  At 10 ns and at 19 ns.
+QUUX15_PERIODS_videosize := 20 38
+$(BUILD)/obj_quux15_core_hd/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GVIDEO_W=1920 -GVIDEO_H=1080 \
+	    -CFLAGS -DQUUX15_VIDEO_W=1920 -CFLAGS -DQUUX15_VIDEO_H=1080 \
+	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_hd \
+	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
+$(eval $(call QUUX15_CORE_RULE,videosize,_hd,))
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
@@ -3202,7 +3221,8 @@ QUUX15_KR260_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) r
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
-    rtl/plumbing/quux_fd_face.sv \
+    rtl/plumbing/quux_fd_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
+    boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
 $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                             boards/kria-kr260/vivado/quux15_bitstream.tcl | $(BUILD)
@@ -3214,6 +3234,18 @@ $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stu
 	   grep -q "$$f" boards/kria-kr260/vivado/quux15_bitstream.tcl \
 	     || { echo "quux15_kr260: $$f is linted and not in quux15_bitstream.tcl"; exit 1; }; \
 	 done
+	@touch $@
+
+# **AND ITS FIGURES, READ AT THE INSTANCES** (`tools/quux15_kr260_param_check.py`):
+# the video controller's 1920 by 1080 at the core, the face and the display
+# output, the display's raster `display_raster.mk`'s, and every time in
+# clocks --- the display's second, the lamp's hold, the mouse's step ---
+# the period's, at each period the board's fits are asked for and at 10 ns.
+$(BUILD)/quux15_kr260_param.pass: tools/quux15_kr260_param_check.py tools/machine_param_check.py \
+                                  $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+                                  boards/kria-kr260/display_raster.mk | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_kr260_param_check.py \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv $(QUUX15_KR260_SRC)
 	@touch $@
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
@@ -4211,6 +4243,24 @@ $(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out: rtl/plumbing/cadr_display
 
 $(BUILD)/display_out_kr260.quux.pass: $(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out
 	$(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out
+	@touch $@
+
+# **AND AS REVISION 15'S KRIA BUILDS IT** (`boards/kria-kr260/quux15_kr260.sv`):
+# the same picture and raster, the memory side at the machine's period,
+# 19 ns, the slowest the board's fits have been asked for, where the fetch
+# has the fewest clocks a line to keep up in; and its configurations W, U
+# and R, the `bow` and `err_clear` that board drives.
+$(BUILD)/obj_display_out_kr260_quux15/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                                         tb/cadr_display_out_tb.cpp \
+                                                         boards/kria-kr260/display_raster.mk | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=19000' \
+	    -Mdir $(BUILD)/obj_display_out_kr260_quux15 \
+	    $(DISPLAY_KR260_G) -GPIC_W=1920 -GPIC_H=1080 -GWORDS_PER_LINE=60 -GCOLOR_BASE=470024192 \
+	    --top-module cadr_display_out \
+	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
+
+$(BUILD)/display_out_kr260.quux15.pass: $(BUILD)/obj_display_out_kr260_quux15/Vcadr_display_out
+	$(BUILD)/obj_display_out_kr260_quux15/Vcadr_display_out
 	@touch $@
 
 # The display output's sleep: the timer, its prescaler and the mute on the four

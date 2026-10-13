@@ -185,6 +185,13 @@
 // raised.  The first bank of all is black because nothing has been fetched yet,
 // and that is not an underrun --- it is what starting up looks like.
 //
+// **`err_clear` CLEARS BOTH STICKY BITS**, `underrun` and `rd_error`: a pulse
+// of one tick in the machine's clock domain, which clears `rd_error` at its
+// edge and `underrun` once it has crossed into the pixel domain as a toggle,
+// a few pixels later.  A fault on the same edge as the clear wins over it, so
+// a clear never hides one.  A board that reads neither ties it low, and then
+// both are sticky until a reset, as they always were.
+//
 // ----------------------------------------------------------------------
 // WHICH BIT IS WHICH PIXEL
 //
@@ -210,6 +217,14 @@
 // `cadr-terminal` made the identical choice for the identical reason and calls
 // it `--bow`.  **It does not reach the color screen**, whose pixels are map
 // entries and have no sense of inverted.
+//
+// **AND WHERE THE MACHINE DOES BRING IT OUT, IT IS THE `bow` PORT**: QUUX
+// revision 15's video controller keeps word 210's black-on-white in
+// `rtl/machine/quux15_devices.sv` and hands it out, so its board ties the
+// port to it and the picture follows the band's `BLACK-ON-WHITE`.  The port
+// is XORed with the parameter, synchronized into the pixel domain and taken
+// at the top of a frame as `out_sel` is, so a change shows whole from the
+// next frame.  Every other board ties it low.
 //
 // **THE BORDER IS BLACK WHATEVER `BOW` SAYS.**  A picture of 768 by 963 in a
 // raster of 1280 by 1024 leaves 512 columns and 61 rows that are not the CADR's
@@ -320,7 +335,9 @@
 // **THE SECOND IS IN BOARD TICKS AND NOT ON MIT'S GRID.**  `SECOND_T` is how
 // many of the machine's clock edges make a real second, a fabric choice like
 // `cadr_debug_window.sv`'s watchdog, so it names no nanosecond figure and does
-// not go through `cadr_tick_pkg`.  At the 10 ns tick it is 100,000,000.
+// not go through `cadr_tick_pkg`.  At the 10 ns tick it is 100,000,000.  A
+// board whose clock is not the tick passes its own: QUUX revision 15 on the
+// Kria KR260 derives it from the period its fit closes at.
 //
 // ----------------------------------------------------------------------
 // THE VIDEO MODE
@@ -453,6 +470,13 @@ module cadr_display_out #(
     // half drawn.
     input  var logic [1:0]  out_sel,
     input  var logic [1:0]  rotate,
+    // `MODE BOW` as the machine holds it, where it brings it out, in the
+    // machine's clock domain: see "WHICH BIT IS WHICH PIXEL" above.  Taken at
+    // the top of a frame, as the two above are.  Low where nothing drives it.
+    input  var logic        bow,
+    // The sticky bits' clear, a one-tick pulse in the machine's clock domain:
+    // see "THE TWO DOMAINS MEET" above.  Low where nothing reads them.
+    input  var logic        err_clear,
 
     // **SLEEP**, the face the console writes, in the machine's clock domain:
     // see "SLEEP" above.  `sleep_set` is a one-tick pulse carrying a new
@@ -613,6 +637,7 @@ module cadr_display_out #(
 
   logic [1:0] sel_s1, sel_s2, rot_s1, rot_s2;
   logic [1:0] cfg_sel, cfg_rot;
+  logic       bow_s1, bow_s2, cfg_bow;
   logic       en_m, en_c, rot_on;
   assign en_m   = cfg_sel[0];
   assign en_c   = cfg_sel[1];
@@ -992,6 +1017,8 @@ module cadr_display_out #(
       f_drop      <= 1'b0;
     end else begin
       for (int s = 0; s < 2; s++) req_sync[s] <= {req_sync[s][1:0], req_tog[s]};
+      // The clear, first, so that an error answered on the same edge wins.
+      if (err_clear) rd_error <= 1'b0;
 
       unique case (fstate)
         F_IDLE: begin
@@ -1250,6 +1277,21 @@ module cadr_display_out #(
   end
   assign asleep = slp_mute_s2;
 
+  // The clear, as a toggle the pixel domain follows: the port's reset puts
+  // it back, and the pixel side's three flops are not reset, following it
+  // alone, so a reset reads at most as one clear more.
+  logic clr_tog;
+  always_ff @(posedge clk) begin
+    if (rst)            clr_tog <= 1'b0;
+    else if (err_clear) clr_tog <= ~clr_tog;
+  end
+  logic clr_s1, clr_s2, clr_s3;
+  always_ff @(posedge pclk) begin
+    clr_s1 <= clr_tog;
+    clr_s2 <= clr_s1;
+    clr_s3 <= clr_s2;
+  end
+
   // ====================================================================
   // THE PIXEL SIDE
   // ====================================================================
@@ -1320,7 +1362,7 @@ module cadr_display_out #(
   logic [4:0]  nib_base;
   logic [23:0] c_rgb;
   assign nib_base = {color_nib, 2'b00};
-  assign m_lit  = m_word[mono_bit] ^ BOW;
+  assign m_lit  = m_word[mono_bit] ^ BOW ^ cfg_bow;
   assign m_show = de_c && en_m && m_in_c && !blackx[MONO];
   assign c_show = de_c && en_c && c_in_c && !blackx[COLR];
   assign c_rgb  = cmap[c_word[nib_base +: 4]];
@@ -1330,6 +1372,7 @@ module cadr_display_out #(
       hc <= '0; vc <= '0;
       sel_s1 <= 2'b01; sel_s2 <= 2'b01; rot_s1 <= 2'd0; rot_s2 <= 2'd0;
       cfg_sel <= 2'b01; cfg_rot <= 2'd0;
+      bow_s1 <= 1'b0; bow_s2 <= 1'b0; cfg_bow <= 1'b0;
       map_idx <= 4'd0;
       for (int c = 0; c < 16; c++) cmap[c] <= 24'd0;
       for (int s = 0; s < 2; s++) begin
@@ -1376,6 +1419,9 @@ module cadr_display_out #(
     end else begin
       for (int s = 0; s < 2; s++) ack_sync[s] <= {ack_sync[s][1:0], fill_n[s]};
       sel_s1 <= out_sel; sel_s2 <= sel_s1;
+      bow_s1 <= bow;     bow_s2 <= bow_s1;
+      // The clear, first, so that an underrun on the same edge wins.
+      if (clr_s2 != clr_s3) underrun <= 1'b0;
       rot_s1 <= ROTATABLE ? rotate : 2'd0;  rot_s2 <= rot_s1;
       slp_want_s1 <= slp_want; slp_want_s2 <= slp_want_s1;
 
@@ -1440,6 +1486,7 @@ module cadr_display_out #(
       if ((hc == HC_W'(LINE_STEP)) && (vc == VC_W'(V_TOTAL - 1))) begin
         cfg_sel <= sel_s2;
         cfg_rot <= rot_next;
+        cfg_bow <= bow_s2;
         // The shape about to be drawn starts at its own first line, so all four
         // addresses and both ahead-lines are reloaded here rather than stepped.
         m_show_addr <= mono_first_next;
@@ -1521,7 +1568,7 @@ module cadr_display_out #(
       vsync <= vs_c;
       // Blanking is black by the specification.  The border is black because it
       // is not the CADR's screen --- see the header --- so it does not follow
-      // `BOW`.
+      // `BOW` or `bow`.
       if (c_show) begin
         red <= c_rgb[23:16]; green <= c_rgb[15:8]; blue <= c_rgb[7:0];
       end else if (m_show && m_lit) begin

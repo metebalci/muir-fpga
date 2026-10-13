@@ -853,6 +853,7 @@ with them.
 | `WATCHDOG_T` in `cadr_debug_window.sv` | one second of real time before a wedged bus is released |
 | `CLKIN_PERIOD_NS` in `xilinx7/cadr_hdmi_phy.sv` | the board's own oscillator, in real nanoseconds |
 | `POWER_ON_EDGES` in `cadr_tick_pkg.sv` | how many edges after the reset edge the reference's power-on falls, as the processor and the bus interface count time |
+| `SECOND_T` in `cadr_display_out.sv` | one second of real time for the display's sleep timer |
 | `HOLD_T` in `cadr_lamp_microcycle.sv` | how long the steady microcycle lamp stays lit after a microcycle, 2^22 ticks: longer than any stall of a running machine and shorter than a person takes to see a lamp go out |
 | `DISK_LIT_T` in `boards/arty-z7-20/cadr_arty.sv` | how long the disk lamp stays lit after a block moves, the same 2^22 ticks for the same reason |
 
@@ -863,6 +864,26 @@ notices", which is a fabric judgment with a floor and a margin.
 the CADR's, and it derives from the grid even in
 `rtl/plumbing/cadr_prove.sv`, where a witness built to honor the bus rule
 would otherwise stop honoring it silently when the grid moved.
+
+**On revision 15 a board tick is a clock of the period, so each of these
+that is a time is turned into clocks by the board's top.** The modules state
+them at the 10 ns tick, and revision 15 runs at whatever period its fit
+closes at. `boards/kria-kr260/quux15_kr260.sv` computes each from its
+`PERIOD_NS`, the one place the period is decided:
+
+| Constant | The time | At 19 ns |
+|---|---|---|
+| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 52,631,579 |
+| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,207,529 |
+| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 843 |
+
+The counts that are not times stay counts: the display's `SLEEP_S` is in
+seconds, `OUTSTANDING` and `cadr_axi_rd128.sv`'s `DEPTH` are reads in flight,
+the lamp's `BLINK_BIT` counts microcycles, the console face's `RESET_T` and
+`RO_CLOCKS` are clocks of the machine's own, and the raster's figures are the
+pixel clock's. `build/quux15_kr260_param.pass` reads the three back at the
+top's instances at 10, 13, 18 and 19 ns and holds each to the figure computed
+from the period apart from the top.
 
 ## If you are about to change an instant
 

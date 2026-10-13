@@ -67,6 +67,18 @@
 //      once.
 //   H  the color board alone, a quarter turn clockwise, which is the one
 //      placement no other configuration puts an edge on.
+//
+// QUUX's builds run A, B and Q (below), and three more, for the `bow` and
+// `err_clear` ports revision 15's board drives:
+//   W  `bow` up: the whole frame compared, every bit of the picture shown
+//      the other way, and the border, were there one, still black.
+//   U  the port slowed, as B, and the clear pulsed once the underrun is up:
+//      the bit must fall, and then rise again while the port stays slow.
+//   R  every beat answered SLVERR for the first two frames: `rd_error` must
+//      rise; then the clear, and no error after it: it must be down at the
+//      end, which is the check every configuration ends with.
+// `CADR_DISPLAY_CLK_PS` sets the memory side's period, 10 ns unless the
+// build says otherwise: revision 15's board runs it at the machine's period.
 
 #include <cstdarg>
 #include <cstdint>
@@ -178,6 +190,11 @@ int gPipeLatency = -1;     // -1: the serialized slave below; else pipelined
 // What `rotate` is driven with, when it is not what the configuration expects
 // to see: QUUX's configuration Q asks for a quarter turn and expects upright.
 int gDriveRotate = -1;
+// Configurations U and R: the frame at whose start the clear is pulsed, a
+// clock of the memory side; and the frame before which every beat is
+// answered SLVERR.  Zero: neither.
+long gClearAtFrame = 0;
+long gErrUntilFrame = 0;
 
 // Where each picture sits, upright and rotated.
 //
@@ -233,7 +250,11 @@ Rect ColorRect(int rot, int sel) {
   return rot == 0 ? Rect{Cx0(sel), CY0, kCW, kCH} : Rect{Rcx0(sel), RCY0, kCH, kCW};
 }
 
+#ifdef CADR_DISPLAY_CLK_PS
+constexpr uint64_t kClkHalf = CADR_DISPLAY_CLK_PS / 2;
+#else
 constexpr uint64_t kClkHalf = 5000;   // 100 MHz
+#endif
 
 int bad = 0;
 
@@ -354,14 +375,19 @@ bool ColorSrc(int x, int y, int rot, int sel, int *row, int *col) {
   return true;
 }
 
+// What `bow` is driven with: configuration W's black-on-white.
+int gBow = 0;
+
 // What the three channels must be at a pixel inside the active region.  **THE
-// COLOR SCREEN IS DRAWN OVER THE FIRST DISPLAY** where both are shown.
+// COLOR SCREEN IS DRAWN OVER THE FIRST DISPLAY** where both are shown.  A lit
+// bit of the first display is white unless `bow`, and the border black
+// whatever it says.
 uint32_t WantRGB(int x, int y, int sel, int rot) {
   int row, col;
   if ((sel & 2) && ColorSrc(x, y, rot, sel, &row, &col))
     return Shown(Stored(ColorIndex(row, col)));
   if ((sel & 1) && MonoSrc(x, y, rot, sel, &row, &col))
-    return MonoLit(row, col) ? 0xFFFFFFu : 0u;
+    return (MonoLit(row, col) != (gBow != 0)) ? 0xFFFFFFu : 0u;
   return 0u;
 }
 
@@ -387,6 +413,7 @@ struct Slave {
   long now = 0;
   int live = 0;         // the settings have taken: compare from here
   long dump = 0;
+  int err = 0;          // every beat answered SLVERR while set
 
   std::deque<Burst> q;
 
@@ -427,7 +454,7 @@ struct Slave {
       const Burst &b = q.front();
       dut->m_rvalid = 1;
       dut->m_rdata = BeatData(b.addr + static_cast<uint32_t>(8 * b.beat));
-      dut->m_rresp = 0;
+      dut->m_rresp = err ? 2 : 0;
       dut->m_rlast = (b.beat == b.len) ? 1 : 0;
     } else {
       dut->m_rvalid = 0; dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
@@ -547,6 +574,11 @@ struct Result {
   // and how many of each came out black and pure red.
   long idx0 = 0, idx1 = 0, black0 = 0, red1 = 0;
   size_t max_in_flight = 0;
+  // Configurations U and R's: the clear's edge, what the two bits were
+  // there, whether the underrun fell after it and rose again after that,
+  // and whether the read error was up before it.
+  int cleared = 0, under_at_clear = 0, rderr_at_clear = 0;
+  int under_fell = 0, under_rose = 0, rderr_seen = 0;
   Extent mono, color;
 };
 
@@ -727,7 +759,11 @@ int main(int argc, char **argv) {
     // thousand frames, and `build/display_sleep.pass` is the check that runs
     // the timer out.  So the lanes must never be muted in these runs.
     dut->sleep_set = 0; dut->sleep_secs = 0; dut->wake = 0;
+    dut->bow = static_cast<uint8_t>(gBow);
+    dut->err_clear = 0;
+    slave.err = gErrUntilFrame > 0;
     dut->eval();
+    bool clear_due = false;
 
     uint64_t t = 0, next_clk = kClkHalf, next_pclk = kPclkHalf;
     int clk_v = 0, pclk_v = 0;
@@ -750,14 +786,25 @@ int main(int argc, char **argv) {
       if (ck) { clk_v ^= 1; next_clk += kClkHalf; }
       if (pk) { pclk_v ^= 1; next_pclk += kPclkHalf; }
 
-      const int in_reset = (t < 64000) ? 1 : 0;
+      const int in_reset = (t < 64000 || t < 16 * kClkHalf) ? 1 : 0;
       dut->rst = in_reset; dut->prst = in_reset;
 
       // The color board's map, answered combinationally as
       // `rtl/machine/cadr_tv.sv` answers it.
       dut->map_q = Stored(dut->map_a & 15);
 
-      if (ck && clk_v) { slave.Drive(dut); dut->eval(); slave.Sample(dut); }
+      if (ck && clk_v) {
+        // The clear: high for this edge of the memory side alone.
+        dut->err_clear = clear_due ? 1 : 0;
+        if (clear_due) {
+          clear_due = false;
+          res->cleared = 1;
+          res->under_at_clear = dut->underrun;
+          res->rderr_at_clear = dut->rd_error;
+        }
+        if (dut->rd_error) res->rderr_seen = 1;
+        slave.Drive(dut); dut->eval(); slave.Sample(dut);
+      }
       dut->clk = clk_v; dut->pclk = pclk_v;
       dut->eval();
       if (ck && clk_v) slave.AfterEdge(dut);
@@ -799,6 +846,8 @@ int main(int argc, char **argv) {
             // picture is read exactly once a frame" is measured.
           }
           ++mon.frames;
+          if (gClearAtFrame > 0 && mon.frames == gClearAtFrame) clear_due = true;
+          if (gErrUntilFrame > 0 && mon.frames >= gErrUntilFrame) slave.err = 0;
           // **THE SETTINGS TAKE AT THE TOP OF A FRAME, SO FRAME ONE RUNS ON THE
           // FABRIC'S OWN DEFAULTS AND FRAME TWO IS THE CHANGEOVER.**  Frame two
           // legitimately shows a bank filled for the other geometry --- it is
@@ -821,6 +870,10 @@ int main(int argc, char **argv) {
         }
         if (dut->mute) Fail("the lanes were muted at frame %ld, and nothing ran the timer out",
                             mon.frames);
+        if (res->cleared && !dut->err_clear) {
+          if (!dut->underrun) res->under_fell = 1;
+          else if (res->under_fell) res->under_rose = 1;
+        }
         if (dut->underrun && !under_seen) {
           under_seen = 1;
           std::fprintf(stderr, "       underrun first seen at frame %ld line %d\n",
@@ -1159,6 +1212,49 @@ int main(int argc, char **argv) {
            qr.mono_beats, static_cast<long>(kPicH) * (kWords / 2));
     placed(qr, 1, 0, turn == 1 ? "Q asked clockwise" : "Q asked anticlockwise");
   }
+
+  // ------------------------------------------------------ configuration W
+  //
+  // **BLACK-ON-WHITE AT THE PORT**: every pixel against the picture with
+  // each bit shown the other way.  A module that ignored `bow` draws the
+  // poison's picture, and every pixel of it disagrees.
+  Result w;
+  gBow = 1;
+  (void)run(1, 0, 0, 0, 4, true, &w, "W black-on-white");
+  gBow = 0;
+  if (w.underruns) Fail("black-on-white reported an underrun");
+  if (w.compared < static_cast<long>(HA) * VA)
+    Fail("black-on-white: only %ld pixels compared, want at least %d", w.compared, HA * VA);
+  placed(w, 1, 0, "W black-on-white");
+
+  // ------------------------------------------------------ configuration U
+  //
+  // **THE CLEAR, AND THE UNDERRUN STILL STICKY AFTER IT**: the port slowed
+  // as in B, the clear pulsed at the start of frame 2 with the bit up.  It
+  // must fall, and rise again at the next bank the port is late for.
+  Result u;
+  gClearAtFrame = 2;
+  (void)run(1, 0, 40, 200, 4, false, &u, "U port slowed, the clear at frame 2");
+  gClearAtFrame = 0;
+  if (!u.cleared) Fail("U: the clear was never pulsed");
+  if (!u.under_at_clear) Fail("U: the underrun was not up when the clear came");
+  if (!u.under_fell) Fail("U: the clear did not take the underrun down");
+  if (!u.under_rose) Fail("U: after the clear the underrun did not rise again with the port still slow");
+
+  // ------------------------------------------------------ configuration R
+  //
+  // **A READ ERROR, STICKY UNTIL THE CLEAR**: every beat SLVERR for two
+  // frames, up at the clear in frame 3, and down at the end: the run's own
+  // last check fails a read error standing with none given since.
+  Result r;
+  gErrUntilFrame = 2;
+  gClearAtFrame = 3;
+  (void)run(1, 0, 0, 0, 4, false, &r, "R SLVERR, then the clear at frame 3");
+  gErrUntilFrame = 0;
+  gClearAtFrame = 0;
+  if (!r.rderr_seen) Fail("R: every beat answered SLVERR and no read error was reported");
+  if (!r.rderr_at_clear) Fail("R: the read error was not up when the clear came");
+
   if (bad) {
     std::fprintf(stderr, "FAIL: %d problems\n", bad);
     return 1;
@@ -1166,10 +1262,15 @@ int main(int argc, char **argv) {
   std::printf(
       "ok: %s, QUUX's video controller\n"
       "    %ld pixels compared against a DDR window poisoned injectively in the\n"
-      "    address, 1280 by 1024 at 40 words a line, filling the raster from\n"
+      "    address, %d by %d at %d words a line, filling the raster from\n"
       "    column %d to %d and row %d to %d; the underrun reported with the port\n"
-      "    slowed; and both quarter turns asked for and the picture kept upright\n",
-      kModeName, a.compared, MX0, MX0 + kPicW - 1, MY0, MY0 + kPicH - 1);
+      "    slowed; and both quarter turns asked for and the picture kept upright\n"
+      "    and: black-on-white at the port, every pixel the other way; the clear\n"
+      "    taking the underrun down, and the port still slow raising it again;\n"
+      "    and a read error up until the clear and down after it; the memory\n"
+      "    side at %.1f ns\n",
+      kModeName, a.compared, kPicW, kPicH, kWords, MX0, MX0 + kPicW - 1, MY0, MY0 + kPicH - 1,
+      2.0 * kClkHalf / 1000.0);
   return 0;
 #else
   // ------------------------------------------------------ configuration C

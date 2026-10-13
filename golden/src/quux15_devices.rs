@@ -498,6 +498,59 @@ pub fn window() -> Vec<(String, Preset)> {
     v
 }
 
+/// The Kria KR260's video controller (`boards/kria-kr260/quux15_kr260.sv`;
+/// contract HD): 1920 by 1080, muir's `VIDEO_MAX_SIZE`.
+pub const KRIA_VIDEO: (usize, usize) = (1920, 1080);
+
+/// **The video controller at the Kria's 1920 by 1080**, where the core is
+/// built with `VIDEO_W` and `VIDEO_H` at that size and the testbench's frame
+/// buffer as large; each run says so in its `# video` line, and a testbench
+/// of another size refuses it.  Every place the size reaches, each run ending
+/// with muir's mode and frame buffer (`# endbow`, `# endfb`):
+///
+///   features   the register page's feature words, 0 to 17: 11 the size,
+///              12 a bit a pixel and 60 words a line
+///   edges      the frame buffer's last word written and read back; the
+///              first past 1280 by 1024's, inside this one; the first past
+///              this one nothing there, MD 0 and word 101's NXM, and a write
+///              of it the same
+///   bow        word 210's black-on-white set, read back and left set at the
+///              end, the buffer's first, middle and last words written
+///   bowcleared the same set and then cleared
+pub fn videosize() -> Vec<(String, Preset)> {
+    const LIST: Word = 0o016 << 32;
+    let words = (KRIA_VIDEO.0 / 32 * KRIA_VIDEO.1) as u64;
+    let mut v = Vec::new();
+    let sized = |p: &mut Preset| p.video = Some(KRIA_VIDEO);
+    let mut p = run();
+    sized(&mut p);
+    for k in 0..0o20 {
+        p.read(reg(k), 0o20 + (k % 8));
+    }
+    p.stop();
+    v.push(("features".to_string(), p));
+    let mut p = run();
+    sized(&mut p);
+    p.write(LIST | 0o13570, win(words - 1)).read(win(words - 1), 0o20);
+    p.write(LIST | 0o24670, win(40960)).read(win(40960), 0o21);
+    p.read(win(words), 0o22).read(reg(0o101), 0o23);
+    p.write(0, reg(0o101)).write(1, win(words)).read(reg(0o101), 0o24);
+    p.stop();
+    v.push(("edges".to_string(), p));
+    for clear in [false, true] {
+        let mut p = run();
+        sized(&mut p);
+        p.write(0o4, reg(0o210)).read(reg(0o210), 0o20);
+        p.write(0o11111, win(0)).write(0o22222, win(words / 2 + 17)).write(0o33333, win(words - 1));
+        if clear {
+            p.write(0o3, reg(0o210)).read(reg(0o210), 0o21);
+        }
+        p.stop();
+        v.push((if clear { "bowcleared" } else { "bow" }.to_string(), p));
+    }
+    v
+}
+
 #[allow(dead_code)]
 fn _uses() {
     let _ = (ADD, AND, JUMP, M_ZERO);

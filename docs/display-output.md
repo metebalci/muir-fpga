@@ -937,7 +937,8 @@ overrides the fetch job's bound beside it, so neither is in force on the board.
 
 A second is `SECOND_T` edges of the machine's clock, 100,000,000 at the 10 ns
 tick. That is a fabric choice like the debug window's watchdog, so it is counted
-in board ticks and not on MIT's grid.
+in board ticks and not on MIT's grid. A board whose clock is not the tick
+passes its own: revision 15 on the Kria KR260 derives it from its period, below.
 
 ### What holds it
 
@@ -1318,6 +1319,57 @@ clock, and there is no schematic in the package to explain how the two meet.
 The link works at 108 MHz, which settles that it can be driven this way and
 settles nothing about why. `boards/de25-nano/README.md` records it.
 
+## Revision 15 on the Kria KR260
+
+QUUX revision 15's top level, `boards/kria-kr260/quux15_kr260.sv`, builds the
+same display output as `boards/kria-kr260/cadr_kr260.sv` does for revision 14:
+`cadr_display_out.sv` reads `S_AXI_HP3_FPD` through `cadr_axi_rd128.sv`, at
+CEA-861's 1920x1080 at 60 Hz on `cadr_kr260_pixel_clock.sv`'s pixel clock, into
+the processing system's DisplayPort controller as live video, and
+`cadr-displayport` brings up and keeps the link. The flow reads
+`cadr_kr260_display.xdc` and asserts its two clocks, the registers its bounds
+name and the 39 live video pins, as the revision 14 flow does.
+
+**The picture is the video controller at the raster's size.** The core,
+`rtl/machine/quux15_core.sv`, takes the video controller's size as two
+parameters, `VIDEO_W` and `VIDEO_H`, 1280 by 1024 unless a board says
+otherwise; its frame buffer's words and its feature words 11 and 12 follow
+them, and it refuses a size muir's `--video-size` would refuse. The Kria
+KR260's top gives it 1920 by 1080, and gives the same size to the console's
+word 39 and to the display's picture: 60 words a line, 64,800 words, filling
+the raster.
+
+**DDR holds the screen.** Revision 15's cache is write-through, so a word the
+machine writes to the frame buffer reaches DDR once its write is answered, at
+most the posted queue and the in-flight list behind the processor, and the
+display reads it there.
+
+**Black-on-white follows the band.** Word 210's `MODE BOW` leaves the core
+as `bow`, and `cadr_display_out.sv`'s `bow` port takes it, XORed with the
+`BOW` parameter, synchronized into the pixel domain and taken at the top of a
+frame as the output's other settings are, so a change shows whole from the
+next frame. The border, where there is one, stays black.
+
+**The two sticky faults can be read and cleared.** `cadr_display_out.sv`'s
+`err_clear` port, a pulse in the machine's clock domain, clears `rd_error` at
+once and `underrun` once it has crossed into the pixel domain. A fault on the
+same edge as the clear wins. The console's word 42 reads both and clears them
+(`docs/console.md`). The Arty Z7-20, the DE25-Nano and revision 14's Kria tie
+`bow` and `err_clear` low, so there nothing changes.
+
+**The sleep's second is the period's.** The top computes `SECOND_T` from its
+period, a second to the nearest clock: 52,631,579 at 19 ns.
+
+`build/display_out_kr260.quux15.pass` builds the display as this board does and
+runs the memory side at 19 ns. Beside the QUUX configurations it adds three:
+black-on-white, every pixel compared against the picture shown the other way;
+the port slowed and the clear pulsed once the underrun is up, which must take
+it down and see it rise again; and every beat answered with an error for two
+frames, then the clear, which must leave `rd_error` down. The core at 1920 by
+1080 is held to muir at that size by `build/quux15_videosize.quux.pass`, and
+`build/quux15_kr260_param.pass` reads the size, the raster and `SECOND_T` back
+at the top's instances.
+
 ## What is not built
 
 Nothing reads the hot-plug detect, so the block sends its raster whether a
@@ -1326,11 +1378,12 @@ monitor is attached or not.
 Nothing reads EDID, so the mode is fixed and is not negotiated. A monitor that
 does not do the bitstream's mode shows nothing.
 
-`MODE BOW` is a parameter and not a wire. The machine can set that bit and the
-display output will not follow it. Making it follow would be one output on
-`rtl/machine/cadr_tv.sv` and one wire, and it is left undone because
-`rtl/machine/` is held to muir and neither reference program ever writes the
-register.
+On the CADR and on QUUX to revision 14, `MODE BOW` is a parameter and not a
+wire. The machine can set that bit and the display output will not follow it.
+Making it follow would be one output on `rtl/machine/cadr_tv.sv` and one wire,
+and it is left undone because `rtl/machine/` is held to muir and neither
+reference program ever writes the register. Revision 15's machine brings it
+out, and its display follows it (below).
 
 The machine cannot turn the output off, and nor can Linux except by the sleep
 timer above. The connector's CEC pin is wired on this board and could tell a

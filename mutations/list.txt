@@ -30663,6 +30663,106 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
         10'd8:  rd_data = q[31:0] ^ (q_l & 32'd0);
 @end
 
+@mutation quux15-face-clockwise-key-turns-the-other-way
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note Word 34's clockwise key turns the display output the other way: the
+@note console's word, which `cadr-console` writes for `--display-rotate`.
+@old
+        else if (w_full == HDMI_CW_KEY)    disp_rotate <= 2'd1;
+@new
+        else if (w_full == HDMI_CW_KEY)    disp_rotate <= 2'd2;
+@end
+
+@mutation quux15-face-display-errors-cleared-by-any-write
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note Word 42's two sticky bits cleared by any write to it, not by its key
+@note alone: a program that wrote the word back would hide an underrun.
+@old
+      if (wr && w_word == 10'd42 && w_full == DISP_CLEAR_KEY) err_clear <= 1'b1;
+@new
+      if (wr && w_word == 10'd42 && (w_full == DISP_CLEAR_KEY || 1'b1)) err_clear <= 1'b1;
+@end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15'S DISPLAY OUTPUT ON THE KRIA KR260** (MP5a step 6):
+# `cadr_display_out.sv`'s `bow` and `err_clear`, held by
+# `display_out_kr260_quux15` at the board's raster with the memory side at
+# 19 ns; the video controller's 1920 by 1080 in the core, held by
+# `quux15_videosize_quux` to muir at that size; and the times the top turns
+# into clocks of its period, held by `quux15_kr260_param`.
+
+@mutation display-underrun-not-raised-on-a-late-fill-on-revision-15
+@check display_out_kr260_quux15
+@file rtl/plumbing/cadr_display_out.sv
+@note A bank the raster reached before its words did is shown black and not
+@note said: the console's word 42 would read clear with the port losing the
+@note race, on the board revision 15 builds.
+@old
+            if (primed[MONO]) underrun <= 1'b1;
+@new
+            if (primed[MONO] && 1'b0) underrun <= 1'b1;
+@end
+
+@mutation display-underrun-not-sticky
+@check display_out_kr260_quux15
+@file rtl/plumbing/cadr_display_out.sv
+@note The underrun cleared at every pixel, as though the clear were always
+@note pulsed: it is up for the one line the port was late and gone when the
+@note console looks.
+@old
+      if (clr_s2 != clr_s3) underrun <= 1'b0;
+@new
+      if (clr_s2 != clr_s3 || 1'b1) underrun <= 1'b0;
+@end
+
+@mutation display-bow-ignored
+@check display_out_kr260_quux15
+@file rtl/plumbing/cadr_display_out.sv
+@note Word 210's black-on-white does not reach the picture: the band's
+@note `BLACK-ON-WHITE` changes the register and leaves the monitor as it was.
+@old
+  assign m_lit  = m_word[mono_bit] ^ BOW ^ cfg_bow;
+@new
+  assign m_lit  = m_word[mono_bit] ^ BOW ^ (cfg_bow & 1'b0);
+@end
+
+@mutation quux15-feature-words-left-at-1280x1024
+@check quux15_videosize_quux
+@file rtl/machine/quux15_core.sv
+@note Feature words 11 and 12 left at 1280 by 1024 with the frame buffer at
+@note the board's 1920 by 1080: the band would draw a screen of the old size
+@note into a buffer laid out for the new one.
+@old
+      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1, 32'h3,
+@new
+      32'h1, 32'h5000400, 32'h10028, 32'he0000000, 32'h1, 32'h3,
+@end
+
+@mutation quux15-frame-buffer-left-at-1280x1024
+@check quux15_videosize_quux
+@file rtl/machine/quux15_core.sv
+@note The frame buffer's window left at 1280 by 1024's 40,960 words with the
+@note feature words at 1920 by 1080: the screen's bottom third is nothing
+@note there.
+@old
+    s_window    = s_bus[28] && !s_device && s_bus[27:0] < 28'(FB_WORDS);
+@new
+    s_window    = s_bus[28] && !s_device && s_bus[27:0] < 28'(40960 + 0 * FB_WORDS);
+@end
+
+@mutation quux15-kr260-second-at-the-tick
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note The display's second left at the 10 ns tick's 100,000,000 clocks: at
+@note 19 ns the monitor sleeps 1.9 times later than `--display-sleep` says.
+@old
+  localparam int unsigned SECOND_T = (1_000_000_000 + PERIOD_NS / 2) / PERIOD_NS;
+@new
+  localparam int unsigned SECOND_T = 100_000_000 + 0 * PERIOD_NS;
+@end
+
 # ---------------------------------------------------------------------------
 # **REVISION 15'S KEYBOARD AND MOUSE** (contract Q3; G3 revision 15, A15b.3;
 # MP2b rulings Q4 and rulings 2 Q1): `rtl/machine/quux15_input.sv` on the

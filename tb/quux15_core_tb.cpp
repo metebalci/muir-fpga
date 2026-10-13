@@ -198,7 +198,17 @@ struct Totals {
 #define QUUX15_MAIN_UNITS 32
 #endif
 constexpr uint64_t kMainWords = uint64_t(QUUX15_MAIN_UNITS) << 16;
-constexpr uint64_t kFbWords = 40960;
+// The video controller's size, as the core's `VIDEO_W` and `VIDEO_H` are
+// built (the Kria's 1920 by 1080: `quux15_videosize.quux.pass`), and its
+// frame buffer's words.
+#ifndef QUUX15_VIDEO_W
+#define QUUX15_VIDEO_W 1280
+#endif
+#ifndef QUUX15_VIDEO_H
+#define QUUX15_VIDEO_H 1024
+#endif
+constexpr uint64_t kVideoW = QUUX15_VIDEO_W, kVideoH = QUUX15_VIDEO_H;
+constexpr uint64_t kFbWords = kVideoW / 32 * kVideoH;
 constexpr uint64_t kDisplayBase = 0x0A000000;
 
 // When a column is compared, by the trace's row.
@@ -297,6 +307,13 @@ struct Run {
   // Main memory's 64K-word units, as the trace's machine has them: 32
   // unless its `# main-units` line says otherwise.
   uint64_t main_units = 32;
+  // The video controller's size, 1280 by 1024 unless its `# video` line
+  // says otherwise; and muir's mode and frame buffer at the end, where the
+  // trace gives them (`# endbow`, `# endfb`).
+  uint64_t video_w = 1280, video_h = 1024;
+  int end_bow = -1;
+  bool has_end_fb = false;
+  uint64_t end_fb = 0;
   // Block-disk's pack: its blocks and the pack side's latency; the pages
   // and blocks held to muir's at the end; a run judged by them alone, where
   // it parks and the clocks muir took; reads answered as their address
@@ -545,6 +562,20 @@ int read_trace(const char *path, std::vector<Run> &runs) {
       }
       if (w.size() == 2 && w[0] == "main-units") {
         runs.back().main_units = std::strtoull(w[1].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "video") {
+        runs.back().video_w = std::strtoull(w[1].c_str(), nullptr, 16);
+        runs.back().video_h = std::strtoull(w[2].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "endbow") {
+        runs.back().end_bow = static_cast<int>(std::strtoull(w[1].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "endfb") {
+        runs.back().has_end_fb = true;
+        runs.back().end_fb = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
       }
       if (w.size() == 3 && w[0] == "pack") {
@@ -1202,7 +1233,8 @@ std::string checkpoint_check(Top *dut, const Run &run, const Bench &bench, const
   r.write = tb_face_write;
   r.ctx = &face;
   struct cadr_image img;
-  if (img_alloc_video(&img, static_cast<unsigned>(kMainWords >> 16), 1, 15, 1280, 1024) != 0)
+  if (img_alloc_video(&img, static_cast<unsigned>(kMainWords >> 16), 1, 15, static_cast<unsigned>(kVideoW),
+                      static_cast<unsigned>(kVideoH)) != 0)
     return "the image could not be made";
   std::string why;
   if (ro_read_quux15(&r, &img) != 0) {
@@ -1269,6 +1301,16 @@ int run_trace(const char *path, const Run &run, int seed) {
                  "core are built for %llu (QUUX15_MAIN_UNITS, MAIN_WORDS)\n", path, run.name.c_str(),
                  static_cast<unsigned long long>(run.main_units),
                  static_cast<unsigned long long>(kMainWords >> 16));
+    return 1;
+  }
+  // **AND A TRACE OF ANOTHER VIDEO CONTROLLER**: the core's feature words
+  // and frame buffer are built for this testbench's size.
+  if (run.video_w != kVideoW || run.video_h != kVideoH) {
+    std::fprintf(stderr, "FAIL: %s run %s is of a video controller of %llu by %llu, and this testbench and its "
+                 "core are built for %llu by %llu (QUUX15_VIDEO_W and _H, VIDEO_W and VIDEO_H)\n", path,
+                 run.name.c_str(), static_cast<unsigned long long>(run.video_w),
+                 static_cast<unsigned long long>(run.video_h), static_cast<unsigned long long>(kVideoW),
+                 static_cast<unsigned long long>(kVideoH));
     return 1;
   }
   // A run before that stopped the simulation stopped it for itself alone.
@@ -1698,6 +1740,25 @@ int run_trace(const char *path, const Run &run, int seed) {
       ++bad;
     }
     if (bad) first_clock = rows.size();
+  }
+  // **AND THE VIDEO CONTROLLER AT THE END**: the mode's black-on-white as
+  // the core gives it to the board's display output, and the frame buffer
+  // as DDR holds it, every write answered, against muir's.
+  if (bad == 0 && run.end_bow >= 0 && static_cast<int>(dut->bow) != run.end_bow) {
+    std::fprintf(stderr, "at the end: the core's bow is %d, muir's black-on-white %d\n",
+                 static_cast<int>(dut->bow), run.end_bow);
+    first_column = "bow";
+    first_clock = rows.size();
+    ++bad;
+  }
+  if (bad == 0 && run.has_end_fb) {
+    const uint32_t h = fnv(bench.fb_bytes().data(), bench.fb_bytes().size());
+    if (h != run.end_fb) {
+      std::fprintf(stderr, "at the end: the frame buffer hashes to %x, muir's to %" PRIx64 "\n", h, run.end_fb);
+      first_column = "frame buffer";
+      first_clock = rows.size();
+      ++bad;
+    }
   }
   if (run.pack && pack.past_28_) {
     std::fprintf(stderr, "the pack side was asked for a block at 2^28 or past it\n");

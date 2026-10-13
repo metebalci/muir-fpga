@@ -53,16 +53,35 @@
 //     storage at the same base, the rings' bases 28 bits), the map onto the
 //     core's host side (`quux15_devices.sv`), so `quux-file-device` serves
 //     HOST: and sets the clock as it does on revisions 13 and 14.
-//   - **NOT ON THIS BOARD YET**: the display output, the network's cable and
-//     the serial line, which the programs that serve them bring; the debug
-//     cable, which QUUX never has (contract Q5), PMOD1's pads left undriven.
+//   - **THE DISPLAY OUTPUT ON `S_AXI_HP3_FPD` AND THE DISPLAYPORT'S LIVE
+//     VIDEO**, as `cadr_kr260.sv` has it: `rtl/plumbing/cadr_display_out.sv`
+//     reading the video controller's frame buffer out of DDR at the display
+//     base through `cadr_axi_rd128.sv`, at CEA-861's 1920x1080 at 60 Hz on
+//     `cadr_kr260_pixel_clock.sv`'s pixel clock, into the PS8's live video,
+//     which `cadr-displayport` brings up.  The cache is write-through, so DDR
+//     holds every word the machine has written to the frame buffer once its
+//     write is answered (A15b.5).  The video controller is the board's
+//     1920 by 1080 (contract HD), `VIDEO_W` by `VIDEO_H` below, which the
+//     core's feature words 11 and 12 and its frame buffer, the console's
+//     word 39 and the display's picture all take; word 210's black-on-white
+//     reaches the picture.  The console face's words 33 to 36 drive it, as
+//     `cadr_console.sv`'s do, and its word 42 reads and clears its two
+//     sticky bits.
+//   - **NOT ON THIS BOARD YET**: the network's cable and the serial line,
+//     which the programs that serve them bring; the debug cable, which QUUX
+//     never has (contract Q5), PMOD1's pads left undriven.
 //     The core's Chaosnet interface (`quux15_chaos.sv`) is built, its cable
 //     tied off as a cable with nothing on it: a frame sent goes nowhere and
 //     is away at once, nothing arrives, and the address switches read 0.
-//   - **TWO LAMPS**: UF1 a count of committed microcycles, so it flickers
-//     while the machine runs and freezes when it stops; UF2 lit at an error
-//     halt.  **THE FAN IS DRIVEN ON**, `fan_en_b` low, as every KR260
-//     bitstream holds it.
+//   - **TWO LAMPS**: UF1 the microcycle lamp (`cadr_lamp_microcycle.sv`),
+//     blinking with the committed microcycles, so it flickers while the
+//     machine runs and freezes when it stops, or steady at the console's
+//     word 35; UF2 lit at an error halt.  **THE FAN IS DRIVEN ON**,
+//     `fan_en_b` low, as every KR260 bitstream holds it.
+//   - **EVERY TIME IN CLOCKS IS THE PERIOD'S** (the MP5a review's R9): the
+//     mouse's step, the display's second and the lamp's hold are durations,
+//     each turned into clocks here from `PERIOD_NS`, where the
+//     modules' own defaults are counts of the 10 ns tick.
 
 `default_nettype none
 
@@ -94,6 +113,23 @@ module quux15_kr260 #(
     $error("the Kria KR260's main memory is %0d words, and its reservation holds %0d",
            MAIN_WORDS, cadr_ddr_map::QUUX13_MAIN_WORDS_MAX);
   end
+
+  // **THE VIDEO CONTROLLER: 1920 BY 1080**, the board's raster (contract HD;
+  // muir's `--video-size 1920x1080`, its `VIDEO_MAX_SIZE`): 60 words a line,
+  // 64,800 words of frame buffer, inside the display's reservation.
+  localparam int unsigned VIDEO_W = 1920;
+  localparam int unsigned VIDEO_H = 1080;
+  if (VIDEO_W / 32 * VIDEO_H > cadr_ddr_map::VIDEO_WORDS_MAX) begin : g_video_words
+    $error("the Kria KR260's video controller is %0d words, and the display's reservation holds %0d",
+           VIDEO_W / 32 * VIDEO_H, cadr_ddr_map::VIDEO_WORDS_MAX);
+  end
+
+  // **THE TIMES IN CLOCKS, AT THE PERIOD** (R9): each a duration the module
+  // states at the 10 ns tick, here at `PERIOD_NS`.  The display's second,
+  // rounded to the nearest clock; the lamp's hold, 2^22 ticks of 10 ns,
+  // rounded up; the mouse's step below.
+  localparam int unsigned SECOND_T = (1_000_000_000 + PERIOD_NS / 2) / PERIOD_NS;
+  localparam int unsigned HOLD_T   = (41_943_040 + PERIOD_NS - 1) / PERIOD_NS;
 
   // ------------------------------------------------------------ the clock
   logic clk_fb, clk_raw, clk, mmcm_locked;
@@ -176,6 +212,7 @@ module quux15_kr260 #(
   logic [3:0]  rm_sel;
   logic [13:0] rm_addr;
   logic [31:0] rtc_start;
+  logic        video_bow;
 
   // Block-disk's seam to the pack side (`cadr_disk_pack.sv`).
   logic        store_we, store_miss, req_valid, req_post, ch_waiting, store_deny;
@@ -202,6 +239,7 @@ module quux15_kr260 #(
   quux15_core #(
       .PROM_HEX(PROM_HEX),
       .MAIN_WORDS(MAIN_WORDS),
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H),
       .MAIN_BASE(MAIN_BASE),
       .DISPLAY_BASE(DISPLAY_BASE)
   ) u_core (
@@ -246,7 +284,7 @@ module quux15_kr260 #(
       .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post), .ch_waiting(ch_waiting),
       .store_deny(store_deny), .ch_slot(ch_slot), .ch_wrote(ch_wrote), .ch_hit(ch_hit),
       .ch_active(ch_active), .store_busy(store_busy), .store_busy_slot(store_busy_slot),
-      .obs_transfer(obs_transfer)
+      .obs_transfer(obs_transfer), .bow(video_bow)
   );
 
   // ------------------------------------------------------- main memory, HP0
@@ -685,8 +723,16 @@ module quux15_kr260 #(
   logic [31:0] build;
   cadr_usr_access u_usr_access (.build(build));
 
+  // The display output's settings and answers, words 34, 36 and 42, and
+  // the lamp's, word 35.
+  logic [1:0]  con_disp_out, con_disp_rotate;
+  logic        con_sleep_set, con_wake, con_err_clear, con_steady_lamps;
+  logic [14:0] con_sleep_secs, disp_sleep_setting;
+  logic        disp_asleep, disp_underrun_s2, disp_rd_error;
+
   quux15_face #(
-      .ID_W(16), .LEN_W(8), .PERIOD(32'(2 * PERIOD_NS)), .MAIN_UNITS(MAIN_WORDS >> 16)
+      .ID_W(16), .LEN_W(8), .PERIOD(32'(2 * PERIOD_NS)), .MAIN_UNITS(MAIN_WORDS >> 16),
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H)
   ) u_face (
       .clk(clk), .rst(axi_rst),
       .s_awaddr(gp1c_awaddr[11:0]), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
@@ -704,7 +750,12 @@ module quux15_kr260 #(
       .vma(obs_vma), .q(obs_q), .md(obs_md),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),
       .spy_raddr(spy_raddr), .spy_rdata(spy_rdata),
-      .rm_en(rm_en), .rm_snap(rm_snap), .rm_sel(rm_sel), .rm_addr(rm_addr), .rm_word(rm_word)
+      .rm_en(rm_en), .rm_snap(rm_snap), .rm_sel(rm_sel), .rm_addr(rm_addr), .rm_word(rm_word),
+      .disp_out(con_disp_out), .disp_rotate(con_disp_rotate),
+      .sleep_set(con_sleep_set), .sleep_secs(con_sleep_secs), .wake(con_wake),
+      .disp_fitted(1'b1), .sleep_q(disp_sleep_setting), .asleep(disp_asleep),
+      .underrun(disp_underrun_s2), .rd_error(disp_rd_error), .err_clear(con_err_clear),
+      .steady_lamps(con_steady_lamps)
   );
 
   cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp1_dbg_rest (
@@ -726,10 +777,103 @@ module quux15_kr260 #(
       .s_rid(gp1x_rid), .s_rlast(gp1x_rlast), .s_rvalid(gp1x_rvalid), .s_rready(gp1x_rready)
   );
 
-  // ------------------------------------------- the processing system
+  // ------------------------------------------------- the display output
+  //
+  // `cadr_kr260.sv`'s, with this machine's picture: the video controller's
+  // frame buffer at the display base, `VIDEO_W` by `VIDEO_H` at a bit a
+  // pixel, filling the raster; no color board, so the map reads zero; word
+  // 210's black-on-white at `bow`.  Its reset is the port's, and the
+  // fabric's at `fabric_rst`, as there.  **ITS SECOND IS THE PERIOD'S**,
+  // `SECOND_T` above, so the sleep's minutes are minutes at any period.
+  logic disp_rst;
+  always_ff @(posedge clk) disp_rst <= !port_rst_sync[2];
+
+  logic        pclk, prst;
+  cadr_kr260_pixel_clock u_pixel_clock (
+      .clk25(clk25), .rst(rst), .pclk(pclk), .prst(prst)
+  );
+
+  logic [31:0] dm_araddr;
+  logic [3:0]  dm_arlen;
+  logic [1:0]  dm_arsize, dm_arburst, dm_rresp;
+  logic        dm_arvalid, dm_arready, dm_rvalid, dm_rready, dm_rlast;
+  logic [63:0] dm_rdata;
+  logic        disp_de, disp_hsync, disp_vsync, disp_mute, disp_sleep_due;
+  logic [7:0]  disp_red, disp_green, disp_blue;
+  logic        disp_underrun;
+  logic [3:0]  disp_map_a;
+
+  cadr_display_out #(
+      .BASE(DISPLAY_BASE),
+      .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
+      // The board's raster: CEA-861's 1920x1080 at 60 Hz.
+      .H_ACTIVE(1920), .H_FRONT(88), .H_SYNC(44), .H_BACK(148),
+      .V_ACTIVE(1080), .V_FRONT(4),  .V_SYNC(5),  .V_BACK(36),
+      .SPREAD(0),
+      .PIC_W(VIDEO_W), .PIC_H(VIDEO_H), .WORDS_PER_LINE(VIDEO_W / 32),
+      .SECOND_T(SECOND_T)
+  ) u_display (
+      .clk(clk), .rst(disp_rst), .fabric_rst(rst),
+      .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
+      .m_arburst(dm_arburst), .m_arvalid(dm_arvalid), .m_arready(dm_arready),
+      .m_rdata(dm_rdata), .m_rresp(dm_rresp), .m_rlast(dm_rlast),
+      .m_rvalid(dm_rvalid), .m_rready(dm_rready),
+      .out_sel(con_disp_out), .rotate(con_disp_rotate),
+      .bow(video_bow), .err_clear(con_err_clear),
+      .sleep_set(con_sleep_set), .sleep_secs(con_sleep_secs),
+      .wake(con_wake), .sleep_setting(disp_sleep_setting),
+      .sleep_due(disp_sleep_due), .asleep(disp_asleep),
+      .pclk(pclk), .prst(prst),
+      .map_a(disp_map_a), .map_q(24'd0),
+      .mute(disp_mute),
+      .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+      .red(disp_red), .green(disp_green), .blue(disp_blue),
+      .underrun(disp_underrun), .rd_error(disp_rd_error)
+  );
+
+  // The underrun is the pixel domain's: two flops into this one for the
+  // console's word 42.  Not reset, following their source alone.
+  logic disp_underrun_s1;
+  always_ff @(posedge clk) begin
+    disp_underrun_s1 <= disp_underrun;
+    disp_underrun_s2 <= disp_underrun_s1;
+  end
+
+  // The port's read side, as narrow bursts on its 128 bits.
+  logic [31:0]  hp3_araddr;
+  logic [7:0]   hp3_arlen;
+  logic [2:0]   hp3_arsize;
+  logic         hp3_arvalid, hp3_arready, hp3_rvalid, hp3_rready, hp3_rlast;
   logic [127:0] hp3_rdata;
-  logic         hp3_awready, hp3_wready, hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid;
-  logic [1:0]   hp3_bresp, hp3_rresp;
+  logic [1:0]   hp3_rresp;
+  // The write side's answers, which nothing asks for.
+  logic         hp3_awready, hp3_wready, hp3_bvalid;
+  logic [1:0]   hp3_bresp;
+  cadr_axi_rd128 #(.DEPTH(8)) u_disp_rd128 (
+      .clk(clk), .rst(disp_rst),
+      .s_araddr(dm_araddr), .s_arlen(dm_arlen), .s_arsize(dm_arsize),
+      .s_arvalid(dm_arvalid), .s_arready(dm_arready),
+      .s_rdata(dm_rdata), .s_rvalid(dm_rvalid), .s_rready(dm_rready),
+      .s_rlast(dm_rlast),
+      .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
+      .m_arvalid(hp3_arvalid), .m_arready(hp3_arready),
+      .m_rdata(hp3_rdata), .m_rvalid(hp3_rvalid), .m_rready(hp3_rready),
+      .m_rlast(hp3_rlast)
+  );
+  assign dm_rresp = hp3_rresp;
+
+  // The live video input: registered on the pixel clock, pixel 1 at eight
+  // bits a component in UG1085 table 33-3's places, as `cadr_kr260.sv`'s.
+  logic [35:0] live_pixel;
+  logic        live_de, live_hsync, live_vsync;
+  always_ff @(posedge pclk) begin
+    live_pixel <= {disp_red, 4'd0, disp_green, 4'd0, disp_blue, 4'd0};
+    live_de    <= disp_de;
+    live_hsync <= disp_hsync;
+    live_vsync <= disp_vsync;
+  end
+
+  // ------------------------------------------- the processing system
 
   cadr_ps8 u_ps8 (
       .hpm0_aclk(clk),
@@ -782,32 +926,40 @@ module quux15_kr260 #(
       .hp2_rdata(hp2w_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
       .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
       .gpio_i(gpio_i), .gpio_o(gpio_o),
+      // The display output's reads: the read side only, the write side
+      // tied off, since the display never writes.
       .hp3_rclk(clk), .hp3_wclk(clk),
-      .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'd4), .hp3_awburst(2'b01),
+      .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'd3), .hp3_awburst(2'b01),
       .hp3_awvalid(1'b0), .hp3_awready(hp3_awready),
       .hp3_wdata(128'd0), .hp3_wstrb(16'd0), .hp3_wlast(1'b0), .hp3_wvalid(1'b0),
       .hp3_wready(hp3_wready), .hp3_bresp(hp3_bresp), .hp3_bvalid(hp3_bvalid),
       .hp3_bready(1'b1),
-      .hp3_araddr(49'd0), .hp3_arlen(8'd0), .hp3_arsize(3'd4), .hp3_arburst(2'b01),
-      .hp3_arvalid(1'b0), .hp3_arready(hp3_arready),
+      .hp3_araddr({17'd0, hp3_araddr}), .hp3_arlen(hp3_arlen),
+      .hp3_arsize(hp3_arsize), .hp3_arburst(2'b01),
+      .hp3_arvalid(hp3_arvalid), .hp3_arready(hp3_arready),
       .hp3_rdata(hp3_rdata), .hp3_rresp(hp3_rresp), .hp3_rlast(hp3_rlast),
-      .hp3_rvalid(hp3_rvalid), .hp3_rready(1'b1),
-      .dp_videoinclk(clk), .dp_livevideoinvsync(1'b0),
-      .dp_livevideoinhsync(1'b0), .dp_livevideoinde(1'b0),
-      .dp_livevideoinpixel1(36'd0),
+      .hp3_rvalid(hp3_rvalid), .hp3_rready(hp3_rready),
+      // The display's raster into the DisplayPort controller.
+      .dp_videoinclk(pclk), .dp_livevideoinvsync(live_vsync),
+      .dp_livevideoinhsync(live_hsync), .dp_livevideoinde(live_de),
+      .dp_livevideoinpixel1(live_pixel),
       .irq0({7'd0, pack_irq})
   );
 
   // ------------------------------------------------------------ the lamps
   //
-  // UF1: bit 19 of a count of committed microcycles, so it flickers while
-  // the machine runs and freezes when it stops.  UF2: lit while the machine
-  // is stopped at an error.  Registered on the way to the pad.
-  logic [19:0] commits;
+  // UF1: the microcycle lamp, a committed microcycle its `retired`: blinking,
+  // bit 19 of their count, so it flickers while the machine runs and freezes
+  // when it stops; or steady at the console's word 35, lit for `HOLD_T`
+  // clocks after each.  UF2: lit while the machine is stopped at an error.
+  // Registered on the way to the pad.
+  logic cycle_lamp;
+  cadr_lamp_microcycle #(.HOLD_T(HOLD_T)) u_lamp_microcycle (
+      .clk(clk), .rst(mach_rst), .steady(con_steady_lamps),
+      .retired(obs_commit[15]), .lit(cycle_lamp)
+  );
   always_ff @(posedge clk) begin
-    if (mach_rst) commits <= 20'd0;
-    else if (obs_commit[15]) commits <= commits + 20'd1;
-    uf1 <= commits[19];
+    uf1 <= cycle_lamp;
     uf2 <= obs_errhalt != 2'd0;
   end
 
@@ -841,8 +993,8 @@ module quux15_kr260 #(
                     drive_read_only[7:0], drive_present[7:1], drive_timed, obs_transfer,
                     gpio_o[94:0], gp1c_awaddr[31:12], gp1c_araddr[31:12],
                     gp1d_awaddr, gp1d_araddr, gp1d_awlen, gp1d_wdata, gp1d_wstrb,
-                    hp3_rdata, hp3_awready, hp3_wready,
-                    hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid, hp3_bresp, hp3_rresp};
+                    hp3_awready, hp3_wready, hp3_bvalid, hp3_bresp,
+                    disp_sleep_due, disp_mute, dm_arburst, disp_map_a};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

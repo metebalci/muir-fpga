@@ -158,7 +158,11 @@ module quux15_devices #(
     // read, so that a checkpoint names one instant however long it reads.
     input  var logic        snap,
     input  var logic [6:0]  ro_k,
-    output var logic [63:0] ro_dev
+    output var logic [63:0] ro_dev,
+
+    // The video controller's mode, word 210's black-on-white, out to the
+    // board's display output (`cadr_display_out.sv`'s `bow`).
+    output var logic        bow
 );
 
   localparam logic [11:0] US_UNITS  = 12'd2000;
@@ -363,8 +367,7 @@ module quux15_devices #(
 
   // The video controller's mode, word 210: black-on-white, `<2>`, and
   // nothing else (muir's `Tv::write_control` on `Board::Video`); no reset
-  // clears it.
-  logic bow;
+  // clears it.  It leaves on `bow` for the board's display output.
   initial bow = 1'b0;
 
   // ============================================================== the writes

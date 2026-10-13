@@ -238,13 +238,25 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  and the height in lines in bits 10 to 0.  Each board's top
                  level gives the console the size it gives the machine, which
                  the band reads from its feature words 11 and 12: 1280 by 1024
-                 on the Arty Z7-20 and the DE25-Nano.  `cadr-terminal`,
+                 on the Arty Z7-20 and the DE25-Nano, and 1920 by 1080 on the
+                 Kria KR260.  `cadr-terminal`,
                  `cadr-readout` and `cadr-checkpoint` size QUUX's screen by
                  it.  The CADR, which has no video controller, reads UNMAPPED
                  here, and so does a QUUX bitstream older than the word, whose
                  video controller is 1280 by 1024; `cadr-terminal --machine
                  cadr` refuses a bitstream whose word carries the marker
-    40-47        read UNMAPPED; writes dropped
+    40-41        read UNMAPPED here; revision 15's face gives them the
+                 period and the real-time clock's start (below)
+    42 ERRORS   **the display output's two sticky faults**, wherever a
+                 console has the word: a bank the raster reached before its
+                 words, `underrun`, in bit 0, and a read the port answered
+                 with an error, `rd_error`, in bit 1, under a marker of `DE`
+                 in the top half.  A write of `DISP_CLEAR_KEY`, "CLRD", with
+                 all four lanes strobed, clears both; any other write is
+                 dropped.  A board with no display output reads UNMAPPED.
+                 Revision 15's face has the word; this console leaves it
+                 UNMAPPED today, and its boards' displays tie the clear low
+    43-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 
@@ -1688,6 +1700,35 @@ is the ordering: on that board the fabric is configured before the processor's
 software opens the bridge, and the boot PROM's one pass over main memory would
 otherwise always meet a shut port. `boards/de25-nano/README.md` has the
 measurement.
+
+## Revision 15's console face
+
+QUUX revision 15 has no diagnostic bus, so its console is its own module,
+`rtl/plumbing/quux15_face.sv`, on the same page at the same address. It keeps
+this console's words where it can, with the same keys and markers, so that
+`cadr-console`, `cadr-readout`, `cadr-checkpoint` and `cadr-displayport` drive
+it unchanged. Its page 2:
+
+| Word | What it is on revision 15 |
+|---|---|
+| 32 BUILD | the build stamp, as here |
+| 33 DISPLAY | the display boards' two settings, kept and read back. QUUX has neither board, so they reach nothing |
+| 34 HDMI | what the display output shows and which way up, out to the display output. The video controller fills the raster, so the picture stays upright whatever the turn says |
+| 35 LAMPS | the Kria KR260's UF1, the microcycle lamp: blinking with the committed microcycles, or steady |
+| 36 SLEEP | the display output's sleep setting and wake, read back as here |
+| 37, 38 | main memory, read only: revision 15's is the bitstream's |
+| 39 VIDEO | the video controller's size, 1920 by 1080 on the Kria KR260 |
+| 40 PERIOD | the clock's period, in units of 0.5 ns |
+| 41 RTC | the real-time clock's seconds at the machine's reset |
+| 42 ERRORS | the display output's `underrun` and `rd_error`, and their clear |
+
+Word 42's `underrun` is the pixel clock's, brought into the machine's clock
+through two flops, and the clear reaches it as a toggle through three more.
+So a read in the few clocks after a clear may still show the bit.
+
+`build/quux15_face.pass` drives each of these words over AXI: every key, a key
+with a strobe off, another value, and the word's own read-back written, which
+sets nothing.
 
 ## What is not built
 

@@ -1401,6 +1401,9 @@ module cadr_kr260 #(
         .m_rvalid(dm_rvalid), .m_rready(dm_rready),
         // What is shown and which way up, out of the console face.
         .out_sel(con_hdmi_out), .rotate(con_hdmi_rotate),
+        // No machine this top builds brings `MODE BOW` out to it, and nothing
+        // reads the two sticky bits, so neither is cleared.
+        .bow(1'b0), .err_clear(1'b0),
         // Whether it sleeps: a setting and a wake out of the console face,
         // the wake from `cadr-terminal` for a key or the mouse at the board.
         .sleep_set(con_hdmi_sleep_set), .sleep_secs(con_hdmi_sleep_secs),

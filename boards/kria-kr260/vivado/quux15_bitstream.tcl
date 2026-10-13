@@ -41,7 +41,8 @@ set sources [list \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
-    rtl/plumbing/quux_fd_face.sv \
+    rtl/plumbing/quux_fd_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
+    boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv]
 read_verilog -sv $sources
 read_xdc -unmanaged boards/kria-kr260/vivado/quux15_ram.xdc
@@ -53,6 +54,35 @@ synth_design -top quux15_kr260 -part $part -include_dirs rtl/machine \
 puts "Q15BIT: synthesis took [expr {[clock seconds] - $t0}] s"
 report_utilization -file $outdir/util_synth.rpt
 read_xdc boards/kria-kr260/quux15_kr260.xdc
+# THE DISPLAY OUTPUT'S CLOCKS AND CROSSINGS, `cadr_kr260.sv`'s file for the
+# same module, and the assertions that file cannot make for itself, as
+# `bitstream.tcl` makes them: that the two clocks exist, that each bound
+# named a register, and the PS8's 39 live video pins.  This machine has no
+# color board, so the map's bound names nothing and is not asked for.
+read_xdc boards/kria-kr260/cadr_kr260_display.xdc
+foreach c {clk_raw pixel_raw} {
+    if {[llength [get_clocks -quiet $c]] != 1} {
+        puts "Q15BIT: FAILED --- no clock `$c`: boards/kria-kr260/cadr_kr260_display.xdc names"
+        puts "Q15BIT: the machine's and the pixel MMCM's outputs by their nets"
+        exit 1
+    }
+}
+set disp_bound 0
+foreach pat {*req_addr_reg* *slp_want_reg* *slp_want_s1_reg* *slp_mute_reg* *slp_mute_s1_reg*} {
+    set found [get_cells -quiet -hier -filter "NAME =~ $pat"]
+    if {[llength $found] == 0} {
+        puts "Q15BIT: FAILED --- no register matching $pat, so a bound in"
+        puts "Q15BIT: boards/kria-kr260/cadr_kr260_display.xdc named nothing"
+        exit 1
+    }
+    incr disp_bound [llength $found]
+}
+set live [get_pins -quiet -hier -filter {NAME =~ *u_ps8/u_ps8/DPLIVEVIDEOIN*}]
+if {[llength $live] != 39} {
+    puts "Q15BIT: FAILED --- [llength $live] live video pins on the PS8, want 39"
+    exit 1
+}
+puts "Q15BIT: the display's pixel clock grouped apart from the machine's; $disp_bound register(s) of its crossings named; 39 live video pins"
 
 # The memories where `quux15_ram.xdc` puts them: the store and the lines in
 # UltraRAM.

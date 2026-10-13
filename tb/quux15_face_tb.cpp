@@ -21,7 +21,17 @@
 //   - a diagnostic register read and written at word 16 + k;
 //   - BUILD, BOARDS, RANGE, VIDEO and PERIOD as the bitstream's parameters
 //     give them, and RTC's start written and read back and given to the
-//     machine.
+//     machine;
+//   - words 33 to 36, `cadr_console.sv`'s, with its keys and markers: the
+//     display boards kept and read back; what the display output shows and
+//     which way up, each key leaving the other setting alone, out to the
+//     display; the lamp steady and blinking again; the sleep's setting and
+//     wake each one pulse, a setting refused with a strobe off or bit 15
+//     set, and the word's own read-back setting nothing; and word 42, the
+//     display's two sticky bits read as the display gives them and cleared
+//     by one pulse at the key alone.  A key with a strobe off, or another
+//     value, changes nothing; and with no display output 36 and 42 read
+//     UNMAPPED.
 //
 // It prints `ok:` and exits 0, or names each failure and exits 1.
 
@@ -63,6 +73,10 @@ uint64_t vma = 0x1100000000ull, q = 0x2200000000ull, md = 0x3300000000ull;
 std::deque<std::pair<unsigned, unsigned>> rm_pipe;  // the address, three clocks
 long snaps = 0, spy_writes = 0;
 unsigned last_eadr = 0, last_spy_word = 0;
+// The display output behind words 34, 36 and 42: the pulses counted, the
+// setting it holds as `cadr_display_out.sv` holds it, and its answers.
+long sleep_sets = 0, wakes = 0, clears = 0;
+unsigned last_secs = 0, held_secs = 300;
 
 uint64_t ro_model(unsigned sel, unsigned addr) {
   return 0xA5A5000000000000ull ^ (uint64_t(sel) << 40) ^ (uint64_t(addr) * 0x9E3779B97F4A7C15ull >> 8);
@@ -80,6 +94,7 @@ void Step() {
   const std::pair<unsigned, unsigned> head = rm_pipe.size() >= 3 ? rm_pipe[rm_pipe.size() - 3]
                                                                  : std::make_pair(0u, 0u);
   d->rm_word = ro_model(head.first, head.second);
+  d->sleep_q = held_secs;
   d->clk = 0;
   d->eval();
   d->clk = 1;
@@ -89,6 +104,13 @@ void Step() {
   rm_pipe.emplace_back(d->rm_sel, d->rm_addr);
   if (rm_pipe.size() > 8) rm_pipe.pop_front();
   if (d->rm_snap) ++snaps;
+  if (d->sleep_set) {
+    ++sleep_sets;
+    last_secs = d->sleep_secs;
+    held_secs = d->sleep_secs;
+  }
+  if (d->wake) ++wakes;
+  if (d->err_clear) ++clears;
   if (d->spy_we) {
     ++spy_writes;
     last_eadr = d->spy_eadr;
@@ -166,6 +188,10 @@ int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   d = new Vquux15_face;
   d->build = kBuild;
+  d->disp_fitted = 1;
+  d->asleep = 0;
+  d->underrun = 0;
+  d->rd_error = 0;
   d->rst = 1;
   for (int k = 0; k < 4; ++k) Step();
   d->rst = 0;
@@ -173,7 +199,7 @@ int main(int argc, char **argv) {
 
   // ---- what it is, and what it is not
   Want("IDENT", Read(0), kIdent);
-  for (unsigned w : {13u, 14u, 15u, 33u, 36u, 42u, 63u, 100u, 1023u})
+  for (unsigned w : {13u, 14u, 15u, 43u, 47u, 63u, 100u, 1023u})
     Want("word " + std::to_string(w) + ", which the face does not name", Read(w), kUnmapped);
 
   // ---- the reset: none from power-on, a pulse at the key alone
@@ -304,6 +330,109 @@ int main(int argc, char **argv) {
   Write(41, 0x00000000u, 0x1u);
   Want("RTC's start, one byte written", Read(41), 0x6AB30C00u);
 
+  // ---- words 33 to 36 and 42: the display output and the lamp
+  {
+    constexpr uint32_t kSimple = 0x534D504Cu, kLispm = 0x4C53504Du, kColor = 0x434F4C52u;
+    constexpr uint32_t kTvMark = 0x5456u << 16;
+    Want("33 out of reset: one SIMPLE TV, no color board", Read(33), kTvMark);
+    Write(33, kLispm);
+    Want("33 after LSPM", Read(33), kTvMark | 1u);
+    Write(33, kColor);
+    Want("33 after COLR, the first board kept", Read(33), kTvMark | 3u);
+    Write(33, kSimple, 0xEu);
+    Want("33: SMPL with a strobe off changes nothing", Read(33), kTvMark | 3u);
+    Write(33, kSimple);
+    Want("33 after SMPL", Read(33), kTvMark | 2u);
+    Write(33, ~kColor);
+    Want("33 after COLR's complement", Read(33), kTvMark);
+    Write(33, kTvMark | 3u);
+    Want("33: its own read-back written changes nothing", Read(33), kTvMark);
+
+    constexpr uint32_t kTv = 0x48545631u, kCol = 0x48545632u, kBoth = 0x48545642u;
+    constexpr uint32_t kUp = 0x48555052u, kCw = 0x48524357u, kCcw = 0x48524343u;
+    constexpr uint32_t kHdMark = 0x4844u << 16;
+    Want("34 out of reset: the first display, upright", Read(34), kHdMark | 1u);
+    Want("the display shown out of reset", d->disp_out, 1);
+    Want("the display upright out of reset", d->disp_rotate, 0);
+    Write(34, kBoth);
+    Want("34 after both", Read(34), kHdMark | 3u);
+    Want("both to the display", d->disp_out, 3);
+    Write(34, kCw);
+    Want("34 after clockwise, both kept", Read(34), kHdMark | (1u << 2) | 3u);
+    Want("clockwise to the display", d->disp_rotate, 1);
+    Write(34, kCol);
+    Want("34 after the color board, the turn kept", Read(34), kHdMark | (1u << 2) | 2u);
+    Write(34, kCcw);
+    Want("34 after anticlockwise", Read(34), kHdMark | (2u << 2) | 2u);
+    Want("anticlockwise to the display", d->disp_rotate, 2);
+    Write(34, kTv, 0x7u);
+    Want("34: a key with a strobe off changes nothing", Read(34), kHdMark | (2u << 2) | 2u);
+    Write(34, kTv);
+    Write(34, kUp);
+    Want("34 after the first display, upright", Read(34), kHdMark | 1u);
+    Want("the first display to the display", d->disp_out, 1);
+    Want("upright to the display", d->disp_rotate, 0);
+
+    constexpr uint32_t kSteady = 0x53544459u, kLampMark = 0x4C44u << 16;
+    Want("35 out of reset: blinking", Read(35), kLampMark);
+    Want("the lamp blinking out of reset", d->steady_lamps, 0);
+    Write(35, kSteady, 0xBu);
+    Want("35: STDY with a strobe off changes nothing", Read(35), kLampMark);
+    Write(35, kSteady);
+    Want("35 after STDY", Read(35), kLampMark | 1u);
+    Want("the lamp steady", d->steady_lamps, 1);
+    Write(35, ~kSteady);
+    Want("35 after its complement", Read(35), kLampMark);
+    Want("the lamp blinking again", d->steady_lamps, 0);
+
+    constexpr uint32_t kSleepKey = 0x4853u << 16;
+    constexpr uint32_t kWakeKey = 0x57414B45u, kZz = 0x5A5Au << 16;
+    Want("36 out of reset: awake, the display's own 300 s", Read(36), kZz | 300u);
+    Write(36, kSleepKey | 5u);
+    Want("a setting, one pulse", sleep_sets, 1);
+    Want("its seconds", last_secs, 5);
+    Want("36 reads what the display holds", Read(36), kZz | 5u);
+    Write(36, kSleepKey | 7u, 0xEu);
+    Want("a setting with a strobe off: no pulse", sleep_sets, 1);
+    Write(36, kSleepKey | 0x8000u | 7u);
+    Want("a setting with bit 15 set: no pulse", sleep_sets, 1);
+    Write(36, kZz | 5u);
+    Want("36's own read-back written: no setting", sleep_sets, 1);
+    Want("36's own read-back written: no wake", wakes, 0);
+    Write(36, kWakeKey);
+    Want("a wake, one pulse", wakes, 1);
+    Want("a wake sets nothing", sleep_sets, 1);
+    Write(36, kWakeKey, 0x7u);
+    Want("a wake with a strobe off: no pulse", wakes, 1);
+    d->asleep = 1;
+    Want("36 with the display asleep", Read(36), kZz | 0x8000u | 5u);
+    d->asleep = 0;
+
+    constexpr uint32_t kClear = 0x434C5244u, kDeMark = 0x4445u << 16;
+    Want("42 with nothing raised", Read(42), kDeMark);
+    d->underrun = 1;
+    Want("42 with an underrun", Read(42), kDeMark | 1u);
+    d->rd_error = 1;
+    Want("42 with both", Read(42), kDeMark | 3u);
+    d->underrun = 0;
+    Want("42 with a read error", Read(42), kDeMark | 2u);
+    Write(42, kClear, 0x7u);
+    Want("the clear with a strobe off: no pulse", clears, 0);
+    Write(42, kClear ^ 0x100u);
+    Want("another value: no pulse", clears, 0);
+    Write(42, kDeMark | 3u);
+    Want("42's own read-back written: no pulse", clears, 0);
+    Write(42, kClear);
+    Want("the clear, one pulse", clears, 1);
+    d->rd_error = 0;
+    Want("no word but 34 and 36 asks the display for anything", sleep_sets + wakes, 2);
+
+    d->disp_fitted = 0;
+    Want("36 with no display output", Read(36), kUnmapped);
+    Want("42 with no display output", Read(42), kUnmapped);
+    d->disp_fitted = 1;
+  }
+
   d->final();
   delete d;
   if (bad) {
@@ -311,6 +440,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("ok: quux15_face, %ld checks: its words, the reset, the latches, the readout's echo, "
-              "the diagnostic registers and the bitstream's words\n", checks);
+              "the diagnostic registers, the bitstream's words, and words 33 to 36 and 42\n", checks);
   return 0;
 }

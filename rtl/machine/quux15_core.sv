@@ -111,9 +111,14 @@ module quux15_core #(
     parameter int unsigned MAIN_WORDS = 32'h0020_0000,
     // The cache's words (`quux15_port.sv`): 4,096 sets of two 8-word lines.
     parameter int unsigned CACHE_WORDS = 65536,
-    // The frame buffer's words, the device window's slice 0: the video
-    // controller at 1280 by 1024, a bit a pixel.
-    parameter int unsigned FB_WORDS = 40960,
+    // **THE VIDEO CONTROLLER'S SIZE**, the board's (contract HD): feature
+    // words 11 and 12 say it, and the frame buffer, the device window's
+    // slice 0, is its words, a bit a pixel.  1280 by 1024 unless the board's
+    // top says otherwise (the Kria KR260's 1920 by 1080); muir's
+    // `--video-size`, held to `check_video_size`'s rules below.
+    parameter int unsigned VIDEO_W = 1280,
+    parameter int unsigned VIDEO_H = 1024,
+    parameter int unsigned FB_WORDS = VIDEO_W / 32 * VIDEO_H,
     // One AXI ID for every write, as the board needs (A15b.5), its writes
     // answered in order; clear, an ID a slot of the port's in-flight list.
     parameter bit ONE_WRITE_ID = 1'b1,
@@ -294,10 +299,27 @@ module quux15_core #(
     output var logic        ch_active,
     input  var logic        store_busy,
     input  var logic [4:0]  store_busy_slot,
-    output var logic        obs_transfer
+    output var logic        obs_transfer,
+
+    // The video controller's mode, word 210's black-on-white, for the
+    // board's display output (`quux15_devices.sv`).
+    output var logic        bow
 );
 
   localparam logic [13:0] RESET_PC = 14'o36000;
+
+  // The video controller's size as muir's `check_video_size` takes it: a
+  // line a whole number of words, at most 1920 by 1080 (`VIDEO_MAX_SIZE`);
+  // and the frame buffer its words.
+  if (VIDEO_W == 0 || VIDEO_H == 0 || VIDEO_W % 32 != 0 || VIDEO_W > 1920 || VIDEO_H > 1080)
+  begin : g_bad_video
+    $error("quux15_core: a video controller of %0d by %0d: a line a whole number of words, at most 1920 by 1080",
+           VIDEO_W, VIDEO_H);
+  end
+  if (FB_WORDS != VIDEO_W / 32 * VIDEO_H) begin : g_bad_fb
+    $error("quux15_core: FB_WORDS is %0d, and a video controller of %0d by %0d is %0d words",
+           FB_WORDS, VIDEO_W, VIDEO_H, VIDEO_W / 32 * VIDEO_H);
+  end
 
   // ===================================================================== types
 
@@ -1413,9 +1435,13 @@ module quux15_core #(
   // --- The register page's word `k`, read: the feature words (G2 §6.4),
   // --- the bus errors and error stop, the memory system's words (A14.9),
   // --- word 225 (A15b.1).  `ok` clear for a word not built here.
+  // Words 11 and 12 are the video controller's size, the width in <31:16>
+  // and the height in <15:0>, and one bit a pixel in <31:16> with the
+  // words a line in <15:0> (muir's `Geometry::feature_word`).
   localparam logic [31:0] FEATURES [0:15] = '{
       32'h515500f4, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
-      32'h1, 32'h5000400, 32'h10028, 32'he0000000, 32'h1, 32'h3, 32'h3, 32'h400};
+      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1, 32'h3,
+      32'h3, 32'h400};
   logic [31:0] posted_now;
   // The words `quux15_devices.sv` answers, a clock after the grant.
   function automatic logic dev_word(input logic [7:0] k);
@@ -1494,7 +1520,7 @@ module quux15_core #(
       .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
       .chaos_cbl_busy(chaos_cbl_busy), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
-      .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev));
+      .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev), .bow(bow));
 
   // --- The start at WB's head (`start_at_wb`).
   localparam logic [28:0] REGISTER_PAGE_BUS = 29'h1fff_ff00;

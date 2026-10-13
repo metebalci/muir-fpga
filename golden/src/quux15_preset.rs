@@ -109,6 +109,9 @@ pub struct Preset {
     /// Main memory's words, when not the traces' 2M (`quux15_memside.rs`'s
     /// `mainsize`).
     pub main_words: Option<usize>,
+    /// The video controller's size, when not muir's 1280 by 1024
+    /// (`quux15_devices.rs`'s `videosize`).
+    pub video: Option<(usize, usize)>,
     /// Block-disk's pack and what the run is judged by
     /// (`quux15_blockdisk.rs`).
     pub disk: Option<super::quux15_blockdisk::DiskRun>,
@@ -203,6 +206,7 @@ impl Preset {
             micro_check: true,
             mdmem: self.mdmem.clone(),
             main_words: self.main_words,
+            video: self.video,
             disk: self.disk.clone(),
             input: self.input.clone(),
             net: self.net.clone(),
