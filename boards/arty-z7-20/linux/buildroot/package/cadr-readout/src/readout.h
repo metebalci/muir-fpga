@@ -94,7 +94,7 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 #define RO_LOST_BIT   0x00010000u
 
 // The diagnostic registers this program uses, muir's `spy.rs` names.
-enum ro_spy { RO_SPY_PC = 5, RO_SPY_FLAG_1 = 8, RO_SPY_CLK_W = 3 };
+enum ro_spy { RO_SPY_OPC = 4, RO_SPY_PC = 5, RO_SPY_FLAG_1 = 8, RO_SPY_CLK_W = 3 };
 #define RO_CLK_RUN 0x1u
 
 // The reserved selector, and what the fabric answers for one.  Neither is a
@@ -153,6 +153,35 @@ int ro_is_halted(struct readout *r);
 // a refusal leaves the machine as it was found and never halted with nobody
 // to start it.
 int ro_halt_to_read(struct readout *r, int *was_running);
+// **A COUNTER STANDING STILL IS NOT YET A HALT.**  `ro_is_halted` says
+// CYCLES stood, and a machine that has stopped retiring with SRUN up --- a
+// wait that never ends, a pipeline that never drains --- stands as still as
+// a halted one.  A checkpoint is of the second, halted between two
+// microcycles, so `ro_found` asks why it stands.  On the CADR and QUUX to
+// revision 14, FLAG-1 must name a halt, as `cadr-console status` reads it:
+// SRUN down, the console's; ERR up, HALT-CONS under ERRSTOP; or -STATHALT
+// low, the statistics counter's.  On revision 15 the pipeline's own halted
+// bit must be up, the halted pipeline's word 19 `<0>` (`quux15_core.sv`'s
+// `halted`), which rises only when the drain ends.  SRUN is not enough there:
+// it follows RUN, so a write of zero lowers it on a pipeline that never
+// drains.  Returns `RO_FOUND_RUNNING` when CYCLES moved, `RO_FOUND_HALTED`,
+// `RO_FOUND_STUCK` when it stood and is not halted, or `RO_FOUND_LOST` when
+// a diagnostic register or the window did not answer; `*s` holds what was
+// read, for the caller's words (`ro_stand_text`).
+enum ro_found_is { RO_FOUND_LOST = -1, RO_FOUND_RUNNING = 0, RO_FOUND_HALTED = 1,
+		   RO_FOUND_STUCK = 2 };
+struct ro_stand {
+	int read;		/* the fields below were read */
+	uint64_t cycles;	/* CYCLES, where it stood */
+	uint16_t flag1;		/* FLAG-1 as read */
+	int srun, err, stathalt, wait;	/* FLAG-1's, in the console's senses */
+	uint16_t pc, opc;	/* fourteen bits each */
+	int drained;		/* revision 15's halted bit; -1 on the others */
+};
+int ro_found(struct readout *r, int rev15, struct ro_stand *s);
+// A machine `ro_found` found stuck, in words: where CYCLES stood, FLAG-1,
+// PC and OPC, and on revision 15 the halted bit.
+void ro_stand_text(const struct ro_stand *s, int rev15, char *out, size_t n);
 // QUUX's memory port idle and its write buffer empty (the flag word's
 // `IMG_F_MEM_DRAINED`), asked of the machine as it stands: 1, 0, or -1 when
 // the window answered for another address.  Always 0 on the CADR.

@@ -141,9 +141,10 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # are the CADR's, judged by `build/checkpoint.pass`, and 9 to 21 QUUX's,
 # judged by `build/checkpoint.quux.pass`, as are 41 to 46, revision 14's,
 # and 47 and 48, which the host check itself must fail on; 32 to 34 are the run state's,
-# which the host check itself must fail on, judged by `build/checkpoint.pass`.
+# which the host check itself must fail on, judged by `build/checkpoint.pass`,
+# as are 49 and 50, the halt's (`readout.c`'s `ro_found`).
 # A mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

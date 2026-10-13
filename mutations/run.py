@@ -3917,12 +3917,16 @@ def check_makefile():
     # a trace with a fault planted in muir's pipeline, the pipeline's bypasses
     # left out --- with the leg that must catch each named.  The core's
     # records arrive with the core, against `quux15_<program>`.
+    # `quux15_halt_probe` is `checkpoint`'s halt (`readout.c`'s `ro_found`)
+    # on revision 15's core: the same build and traces as
+    # `quux15_checkpoints`, whose records it adds nothing to, and the halt's
+    # own mutants are `CHK_MUTATE`'s 49 and 50, judged by `checkpoint`.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
                            "br_force", "br_kconfig", "machine_guard",
-                           "quux15_replay_quux", "quux15_generator_quux"}
+                           "quux15_replay_quux", "quux15_generator_quux", "quux15_halt_probe_quux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

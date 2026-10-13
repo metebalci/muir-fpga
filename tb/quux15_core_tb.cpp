@@ -1200,22 +1200,126 @@ struct TbFace {
   std::function<void()> edge;
   uint32_t echo = 0x3FFFF;
   uint64_t data = 0;
+  // **AND, FOR THE HALT'S PROBE, THE REST OF WHAT `ro_found` READS**
+  // (`quux15_face.sv`): CYCLES and TICKS on page 0, the core's committed
+  // microcycles and its clocks, the high words latched by the low; the
+  // diagnostic registers on page 1, read and written; and time passing, four
+  // clocks a word, as the board's reads take it.
+  bool probe = false;
+  uint32_t hi_cycles = 0, hi_ticks = 0;
 };
 uint32_t tb_face_read(struct readout *r, unsigned word) {
   TbFace *f = static_cast<TbFace *>(r->ctx);
   if (word == RO_ADDR) return f->echo;
   if (word == RO_DATA_LO) return static_cast<uint32_t>(f->data);
   if (word == RO_DATA_HI) return static_cast<uint32_t>(f->data >> 32);
+  if (!f->probe) return RO_UNMAPPED;
+  for (int k = 0; k < 4; ++k) f->edge();
+  if (word == RO_CYCLES) {
+    const uint64_t c = f->dut->obs_committed;
+    f->hi_cycles = static_cast<uint32_t>(c >> 32);
+    return static_cast<uint32_t>(c);
+  }
+  if (word == RO_CYCLESH) return f->hi_cycles;
+  if (word == RO_TICKS) {
+    const uint64_t t = f->dut->obs_clocks;
+    f->hi_ticks = static_cast<uint32_t>(t >> 32);
+    return static_cast<uint32_t>(t);
+  }
+  if (word == RO_TICKSH) return f->hi_ticks;
+  if (word >= RO_SPY(0) && word <= RO_SPY(15)) {
+    f->dut->spy_raddr = static_cast<uint8_t>(word - RO_SPY(0));
+    f->dut->eval();
+    return f->dut->spy_rdata;
+  }
   return RO_UNMAPPED;
 }
 void tb_face_write(struct readout *r, unsigned word, uint32_t v) {
   TbFace *f = static_cast<TbFace *>(r->ctx);
+  if (f->probe && word >= RO_SPY(0) && word <= RO_SPY(15)) {
+    // The console's write, for the clock after this edge's.
+    f->dut->spy_we = 1;
+    f->dut->spy_eadr = static_cast<uint8_t>(word - RO_SPY(0));
+    f->dut->spy_wdata = static_cast<uint16_t>(v);
+    f->edge();
+    f->dut->spy_we = 0;
+    for (int k = 0; k < 3; ++k) f->edge();
+    return;
+  }
   if (word != RO_ADDR) return;
   f->dut->rm_sel = static_cast<uint8_t>((v >> 14) & 0xF);
   f->dut->rm_addr = static_cast<uint16_t>(v & 0x3FFF);
   for (int k = 0; k < 4; ++k) f->edge();
   f->data = f->dut->rm_word;
   f->echo = v;
+}
+
+// **THE HALT'S PROBE** (`QUUX15_HALT_PROBE=<part of a run's name>`), after a
+// checkpoint run's file is held to muir's: `cadr-readout`'s `ro_found`, as
+// `cadr-checkpoint` calls it, through the face against this core, at six
+// points.  The machine as the run left it, halted and drained by the
+// console: halted.  Started again with the port's address channels held
+// shut, so that the next read or write the machine starts cannot go out:
+// stuck, SRUN up, if the rest of its program reaches one.  A write of zero
+// to RUN with the port still shut: stuck, SRUN down, the drain unended.  The
+// port let go: halted, the drain ended.  Started again: running.  A write of
+// zero to RUN: halted.  `held` is the edge's.
+const char *found_name(int f) {
+  return f == RO_FOUND_RUNNING ? "running" : f == RO_FOUND_HALTED ? "halted"
+       : f == RO_FOUND_STUCK ? "stuck" : f == RO_FOUND_LOST ? "lost" : "?";
+}
+struct ProbeTotals {
+  long runs = 0, stuck = 0;
+} probe_totals;
+std::string halt_probe(Top *dut, const Run &run, const std::function<void()> &tick, bool &held) {
+  TbFace face{dut, tick};
+  face.probe = true;
+  struct readout r;
+  std::memset(&r, 0, sizeof r);
+  r.read = tb_face_read;
+  r.write = tb_face_write;
+  r.ctx = &face;
+  dut->spy_we = 0;
+  struct ro_stand s;
+  char text[512];
+  std::string line = "halt-probe " + run.name + ":";
+  std::string why;
+  auto look = [&](const char *what, int want, bool must) {
+    const int got = ro_found(&r, 1, &s);
+    line += std::string(" ") + what + " " + found_name(got);
+    if (s.read) {
+      char b[96];
+      std::snprintf(b, sizeof b, " (SRUN %d, halted bit %d, CYCLES %llu)", s.srun, s.drained,
+                    static_cast<unsigned long long>(s.cycles));
+      line += b;
+    }
+    line += ";";
+    if (must && got != want && why.empty())
+      why = std::string("the halt's probe: ") + what + " reads " + found_name(got) + ", wanting " +
+            found_name(want);
+    return got;
+  };
+  held = false;
+  look("as left", RO_FOUND_HALTED, true);
+  held = true;
+  ro_start(&r);
+  const int stood = look("started, port shut", RO_FOUND_STUCK, false);
+  if (stood == RO_FOUND_STUCK) {
+    ro_stand_text(&s, 1, text, sizeof text);
+    line += std::string(" [") + text + "];";
+  }
+  ro_halt(&r);
+  look("RUN cleared, port shut", stood == RO_FOUND_STUCK ? RO_FOUND_STUCK : RO_FOUND_HALTED, true);
+  held = false;
+  look("port let go", RO_FOUND_HALTED, true);
+  ro_start(&r);
+  look("started", RO_FOUND_RUNNING, true);
+  ro_halt(&r);
+  look("RUN cleared", RO_FOUND_HALTED, true);
+  std::printf("%s\n", line.c_str());
+  ++probe_totals.runs;
+  probe_totals.stuck += stood == RO_FOUND_STUCK;
+  return why;
 }
 
 std::vector<uint8_t> file_bytes(const std::string &path) {
@@ -1325,8 +1429,15 @@ int run_trace(const char *path, const Run &run, int seed) {
   bool bench_bad = false;
   uint64_t clock = 0;
   PackSide pack(run.pack_blocks, run.pack_latency);
+  // The halt's probe holds the port's address channels shut.
+  bool held = false;
   auto edge = [&]() {
     bench.drive(dut, clock);
+    if (held) {
+      dut->m_arready = 0;
+      dut->m_awready = 0;
+      dut->m_wready = 0;
+    }
     if (run.pack) pack.drive(dut);
     dut->clk = 0;
     dut->eval();
@@ -1776,6 +1887,20 @@ int run_trace(const char *path, const Run &run, int seed) {
       first_column = "checkpoint";
       ++bad;
     }
+    const char *probe = std::getenv("QUUX15_HALT_PROBE");
+    if (bad == 0 && probe && run.name.find(probe) != std::string::npos) {
+      auto tick = [&]() {
+        ++clock;
+        edge();
+      };
+      const std::string pwhy = halt_probe(dut, run, tick, held);
+      if (!pwhy.empty() || bench_bad) {
+        std::fprintf(stderr, "%s%s\n", pwhy.c_str(), bench_bad ? (" the responder: " + bench_why).c_str() : "");
+        first_clock = rows.size();
+        first_column = "halt-probe";
+        ++bad;
+      }
+    }
   }
 #endif
   dut->final();
@@ -1839,6 +1964,15 @@ int main(int argc, char **argv) {
                 totals.clocks, path,
                 runs.size() > 1 ? (" in " + std::to_string(runs.size()) + " runs").c_str() : "",
                 totals.commits, totals.operands, totals.grants, totals.landed, totals.registers);
+#ifdef QUUX15_CORE
+    if (std::getenv("QUUX15_HALT_PROBE")) {
+      std::printf("halt-probe: %ld runs probed, %ld of them stuck with the port shut\n", probe_totals.runs,
+                  probe_totals.stuck);
+      // The stuck case must have been reached, or nothing was measured.
+      if (probe_totals.stuck == 0) result = 1;
+      probe_totals = ProbeTotals{};
+    }
+#endif
     if (totals.pages || totals.blocks || totals.served)
       std::printf("    block-disk: %zu rows in a transfer's window, %zu clocks of runs judged by their "
                   "results; %zu pages and %zu blocks equal to muir's at the end; the pack side served "

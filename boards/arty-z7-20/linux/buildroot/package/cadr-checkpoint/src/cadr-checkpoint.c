@@ -233,6 +233,20 @@ static int open_window(struct readout *r, struct mem_face *face, int guard, int 
 	return 0;
 }
 
+// A machine `ro_found` found stood and not halted, said: `when` it was
+// found so, and what it read.
+static void say_not_halted(int found, const struct ro_stand *s, int rev15, const char *when)
+{
+	char text[512];
+	ro_stand_text(s, rev15, text, sizeof text);
+	if (found == RO_FOUND_LOST)
+		say("%s, the machine was retiring no microcycles and the console's window "
+		    "did not answer the question why: %s", when, text);
+	else
+		say("%s, the machine has stopped retiring microcycles and is NOT HALTED: %s",
+		    when, text);
+}
+
 // --- verifying a binding, which needs no board -----------------------------
 
 static int do_verify(const char *sidecar, char **override, unsigned overrides)
@@ -415,16 +429,39 @@ int main(int argc, char **argv)
 	// --- is the only order in which the packs are certainly whole; the
 	// --- board procedure in `docs/checkpoint.md` is those five commands.
 	if (halt_only) {
-		if (ro_is_halted(&r)) {
+		// Revision 15's halt is its drain's end, which `ro_found` asks
+		// for by the machine.
+		const int rev = ro_quux_revision(&r);
+		if (rev < 0) {
+			say("the readout's register table entry %u does not answer: which "
+			    "machine this is, and so what its halt is, cannot be said",
+			    IMG_RG_QUUX_ID);
+			return 1;
+		}
+		struct ro_stand st;
+		int found = ro_found(&r, rev >= 15, &st);
+		if (found == RO_FOUND_HALTED) {
 			say("the machine is already halted at %llu microcycles",
-			    (unsigned long long)ro_cycles(&r));
+			    (unsigned long long)st.cycles);
 			return 0;
 		}
+		if (found != RO_FOUND_RUNNING) {
+			say_not_halted(found, &st, rev >= 15, "found");
+			say("nothing is written, and the machine is left as it was found");
+			return 1;
+		}
 		ro_halt(&r);
-		if (!ro_is_halted(&r)) {
+		found = ro_found(&r, rev >= 15, &st);
+		if (found == RO_FOUND_RUNNING) {
 			say("the machine did not stop: it is still retiring "
 			    "microcycles after a write of zero to the clock "
 			    "control register");
+			return 1;
+		}
+		if (found != RO_FOUND_HALTED) {
+			say_not_halted(found, &st, rev >= 15,
+				       "after a write of zero to the clock control register");
+			say("no halt is marked, and RUN is left clear");
 			return 1;
 		}
 		// **THE HALT IS THIS PROGRAM'S AND IT IS WRITTEN DOWN**, so that
@@ -622,7 +659,23 @@ int main(int argc, char **argv)
 		decl.read_only[u] = bind.u[u].read_only;
 	}
 
-	const int was_running = !ro_is_halted(&r);
+	// **A CHECKPOINT IS OF A HALTED MACHINE, AND A MACHINE THAT HAS STOPPED
+	// RETIRING IS NOT ONE.**  CYCLES stands still on both, so `ro_found`
+	// asks why it stands (`readout.h`): one stopped with SRUN up and no halt
+	// named, or on revision 15 with its pipeline undrained, is refused here,
+	// before anything is read, and left as it was found.
+	const int rev15 = quux && revision >= 15;
+	struct ro_stand stand;
+	const int found = ro_found(&r, rev15, &stand);
+	if (found != RO_FOUND_RUNNING && found != RO_FOUND_HALTED) {
+		say_not_halted(found, &stand, rev15, "found");
+		say("REFUSED: nothing is written.  A checkpoint is of a halted machine, "
+		    "and this one stands wherever it stopped; the machine is left as "
+		    "it was found.");
+		img_free(&img);
+		return 1;
+	}
+	const int was_running = found == RO_FOUND_RUNNING;
 	// **WHETHER THE MACHINE WAS RUNNING BEFORE THE HALT THIS CHECKPOINT IS
 	// TAKEN IN**: running when found, and so halted here; or halted by
 	// `--halt` for it, at the count it still stands at.
@@ -640,15 +693,24 @@ int main(int argc, char **argv)
 		    "documentation says to.  A read taken while the datapath "
 		    "moves is torn.");
 		ro_halt(&r);
-	}
-	if (!ro_is_halted(&r)) {
-		say("the machine did not stop: it was still retiring microcycles "
-		    "2 ms after a write of zero to the clock control register%s",
-		    was_running ? ", and it is started again as it was found" : "");
-		if (was_running)
+		const int after = ro_found(&r, rev15, &stand);
+		if (after == RO_FOUND_RUNNING) {
+			say("the machine did not stop: it was still retiring microcycles "
+			    "2 ms after a write of zero to the clock control register, "
+			    "and it is started again as it was found");
 			ro_start(&r);
-		img_free(&img);
-		return 1;
+			img_free(&img);
+			return 1;
+		}
+		if (after != RO_FOUND_HALTED) {
+			say_not_halted(after, &stand, rev15,
+				       "after a write of zero to the clock control register");
+			say("REFUSED: nothing is written, and it is started again as it "
+			    "was found");
+			ro_start(&r);
+			img_free(&img);
+			return 1;
+		}
 	}
 	bind.machine_halted_first = 1;
 	// **SAID BY THE OPERATOR, NOT GUESSED.**  This program cannot see
@@ -735,8 +797,13 @@ int main(int argc, char **argv)
 		say("the machine was running%s: the file records RUN and SRUN set, as "
 		    "they stood before the halt, and muir resumes it running",
 		    halted_for_it ? " until cadr-checkpoint --halt stopped it" : "");
+	else if (img.rev15)
+		// Revision 15's RUN is the console word's `<6>`, and it keeps no
+		// SRUN in its file (`chk_rtl_run_state`).
+		say("the machine was halted when found: the file records RUN %s, as read",
+		    (img.q15.tail[IMG_TL15_CONSOLE] >> 6) & 1u ? "set" : "clear");
 	else
-		say("the machine was not running when found: the file records RUN %s "
+		say("the machine was halted when found: the file records RUN %s "
 		    "and SRUN %s, as read",
 		    img_flag(&img, IMG_F_RUN) ? "set" : "clear",
 		    img_flag(&img, IMG_F_SRUN) ? "set" : "clear");

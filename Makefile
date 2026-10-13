@@ -394,7 +394,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
-       $(BUILD)/quux15_videosize.quux.pass \
+       $(BUILD)/quux15_videosize.quux.pass $(BUILD)/quux15_halt_probe.quux.pass \
        $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
@@ -1649,6 +1649,21 @@ $$(BUILD)/quux15_$(1).quux$(3).pass: $$(BUILD)/obj_quux15_core$(2)/Vquux15_core 
 endef
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),,)))
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),_b2,.b2)))
+
+# **THE HALT A CHECKPOINT IS TAKEN IN, ON THE CORE ITSELF**: `cadr-readout`'s
+# `ro_found`, as `cadr-checkpoint` calls it, through the testbench's face on
+# the checkpoints group's random-memory runs at the Kria's period, after each
+# run's file is held to muir's (`QUUX15_HALT_PROBE`): halted as the run left
+# it; stuck, SRUN up and the halted bit down, when started again with the
+# port's address channels held shut; stuck, SRUN down, after a write of zero
+# to RUN with the port still shut; halted when the port is let go; running
+# when started again; halted after a write of zero.  A run whose rest reaches
+# no memory access cannot stick, and at least one must.
+$(BUILD)/quux15_halt_probe.quux.pass: $(BUILD)/obj_quux15_core/Vquux15_core $(BUILD)/quux15_checkpoints.quux.p34.golden
+	QUUX15_SEED=1 QUUX15_HALT_PROBE=randmem $(BUILD)/obj_quux15_core/Vquux15_core \
+	    $(BUILD)/quux15_checkpoints.quux.p34.golden > $(BUILD)/quux15_halt_probe.log
+	@grep '^halt-probe:' $(BUILD)/quux15_halt_probe.log
+	@touch $@
 
 # **AND AT THE KRIA'S 32M WORDS OF MAIN MEMORY** (`boards/kria-kr260/
 # quux15_kr260.sv`'s `MAIN_WORDS`): the core built with `MAIN_WORDS` at 32M
@@ -5024,6 +5039,14 @@ CHECKPOINT_RUN_MUTANTS := 32 33 34
 # there: QUUX taking `--boards`, QUUX's sidecar written in boards, and QUUX's
 # memory said in boards.  muir has no part in it, so none is asked.
 CHECKPOINT_MEMORY_MUTANTS := 35 36 37
+# **THE HALT A CHECKPOINT IS TAKEN IN, AND ITS TWO MUTANTS, 49 AND 50.**  A
+# counter standing still is not a halt: a machine stopped retiring with SRUN
+# up and FLAG-1 naming no halt, or a revision 15 pipeline whose drain never
+# ended, is refused (`readout.c`'s `ro_found`).  The host check holds it on a
+# model of the window (`checkpoint_test.c`'s `halt_check`), and each mutant
+# must fail there: the counter alone taken as the halt, and revision 15's
+# halt read off SRUN, which follows RUN whether or not the drain ends.
+CHECKPOINT_HALT_MUTANTS := 49 50
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -5115,6 +5138,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the main memory's words: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the main memory's words --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_HALT_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the halt's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^checkpoint: FAIL: the halt: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the halt: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the halt's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 

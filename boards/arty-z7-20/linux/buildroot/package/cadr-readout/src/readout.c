@@ -154,6 +154,77 @@ int ro_halt_to_read(struct readout *r, int *was_running)
 	return -1;
 }
 
+// `readout.h` says what halted means here and why CYCLES alone is not it.
+int ro_found(struct readout *r, int rev15, struct ro_stand *s)
+{
+	memset(s, 0, sizeof *s);
+	s->drained = -1;
+	if (!ro_is_halted(r))
+		return RO_FOUND_RUNNING;
+#if CHK_MUTATE == 49
+	// A checkpoint mutant: a counter standing still taken as a halt.
+	(void)rev15;
+	return RO_FOUND_HALTED;
+#else
+	s->cycles = ro_cycles(r);
+	const uint32_t f1 = r->read(r, RO_SPY(RO_SPY_FLAG_1));
+	const uint32_t pc = r->read(r, RO_SPY(RO_SPY_PC));
+	const uint32_t opc = r->read(r, RO_SPY(RO_SPY_OPC));
+	r->reads += 3;
+	// Bit 16 is the whole answer when it is up: a diagnostic cycle the
+	// register block did not answer, with no data under it.
+	if ((f1 | pc | opc) & RO_LOST_BIT)
+		return RO_FOUND_LOST;
+	s->read = 1;
+	s->flag1 = (uint16_t)f1;
+	// `cons_flag1_of`'s senses: -WAIT and -STATHALT are active low.
+	s->wait = !(f1 & (1u << 15));
+	s->stathalt = !(f1 & (1u << 11));
+	s->err = !!(f1 & (1u << 10));
+	s->srun = !!(f1 & (1u << 8));
+	s->pc = (uint16_t)(pc & 0x3FFFu);
+	s->opc = (uint16_t)(opc & 0x3FFFu);
+	if (rev15) {
+		uint64_t w = 0;
+		if (ro_word64(r, IMG_SEL_TAIL, IMG_TL15_HALTED, &w) != 0)
+			return RO_FOUND_LOST;
+		s->drained = (int)(w & 1u);
+#if CHK_MUTATE == 50
+		// A checkpoint mutant: revision 15's halt read off SRUN, which
+		// follows RUN whether or not the drain ends.
+		return !s->srun ? RO_FOUND_HALTED : RO_FOUND_STUCK;
+#else
+		return s->drained ? RO_FOUND_HALTED : RO_FOUND_STUCK;
+#endif
+	}
+	return (!s->srun || s->err || s->stathalt) ? RO_FOUND_HALTED : RO_FOUND_STUCK;
+#endif
+}
+
+void ro_stand_text(const struct ro_stand *s, int rev15, char *out, size_t n)
+{
+	if (!s->read) {
+		snprintf(out, n, "CYCLES stood still for 2 ms, and FLAG-1, PC and OPC were "
+			 "not answered");
+		return;
+	}
+	const int at = snprintf(out, n, "CYCLES stood at %llu for 2 ms with SRUN %s, ERR %s, "
+				"-STATHALT %s, -WAIT %s (FLAG-1 0x%04x), PC %o, OPC %o",
+				(unsigned long long)s->cycles, s->srun ? "up" : "down",
+				s->err ? "up" : "down", s->stathalt ? "low" : "high",
+				s->wait ? "low" : "high", s->flag1, s->pc, s->opc);
+	if (at < 0 || (size_t)at >= n)
+		return;
+	if (rev15)
+		snprintf(out + at, n - (size_t)at, "; revision 15's pipeline has its halted bit %s%s",
+			 s->drained == 1 ? "up" : s->drained == 0 ? "down: it has not drained" : "unread",
+			 s->drained == 0 ? ", which a pipeline stopped at an error (OA-OUTSIDE-FIELDS, "
+					   "PDL-FIELD-MISMATCH) shows too" : "");
+	else
+		snprintf(out + at, n - (size_t)at, "; with SRUN up, FLAG-1 names no halt%s",
+			 s->wait ? ", and -WAIT low is a bus cycle that has not ended" : "");
+}
+
 int ro_mem_drained(struct readout *r)
 {
 	uint64_t w = 0;

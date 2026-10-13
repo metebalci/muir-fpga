@@ -641,6 +641,268 @@ static int run_state_check(const struct cadr_image *found, const struct chk_decl
 	return 0;
 }
 
+// ---- the halt: a machine that has stopped retiring is not a halted one ------
+//
+// **A CHECKPOINT IS OF A HALTED MACHINE, AND A COUNTER STANDING STILL IS NOT
+// ONE.**  A board stopped retiring with SRUN up --- ERR down, FLAG-1 naming no
+// halt, the pipeline undrained --- and the program took it as halted and
+// wrote a file of it.  This model is the console's window as `ro_found` reads
+// it: CYCLES and TICKS on page 0, FLAG-1, PC and OPC on page 1, and on
+// revision 15 the halted pipeline's word 19 through the readout, each
+// machine's halt as its fabric makes it.  The CADR's SRUN is RUN registered,
+// lowered by a write of zero whatever the machine is doing; revision 15's
+// SRUN follows RUN too, and its halted bit rises only when the drain ends
+// (`quux15_core.sv`), which on a stuck pipeline it never does.
+
+struct hmodel {
+	int rev15;
+	uint64_t cycles, ticks;
+	uint32_t hi_cycles, hi_ticks;
+	int retiring;		/* CYCLES moves */
+	int srun, err, stathalt, wait;
+	int halted, x_halted;	/* revision 15's tail word 19 */
+	int drains;		/* a write of zero stops it, and on revision 15 drains it */
+	int lost;		/* the diagnostic registers do not answer */
+	uint16_t pc, opc;
+	uint32_t ro_addr;
+	uint64_t latched;
+	int clk_writes;
+};
+
+static uint16_t hmodel_flag1(const struct hmodel *m)
+{
+	if (m->rev15)	/* `spy_rdata` at 8: PROMDISABLE, ERR the HALT bit, SSDONE, SRUN */
+		return (uint16_t)(0xe800u | (unsigned)m->x_halted << 10 | (unsigned)m->srun << 8);
+	return (uint16_t)((unsigned)!m->wait << 15 | 1u << 14 | 1u << 13 | (unsigned)!m->stathalt << 11 |
+			  (unsigned)m->err << 10 | (unsigned)m->srun << 8);
+}
+
+static uint32_t hmodel_read(struct readout *r, unsigned word)
+{
+	struct hmodel *m = r->ctx;
+	m->ticks += 16u;
+	switch (word) {
+	case RO_IDENT: return RO_IDENT_WORD;
+	case RO_CYCLES:
+		if (m->retiring)
+			m->cycles += 1000u;
+		m->hi_cycles = (uint32_t)(m->cycles >> 32);
+		return (uint32_t)m->cycles;
+	case RO_CYCLESH: return m->hi_cycles;
+	case RO_TICKS:
+		m->hi_ticks = (uint32_t)(m->ticks >> 32);
+		return (uint32_t)m->ticks;
+	case RO_TICKSH: return m->hi_ticks;
+	case RO_ADDR:
+		m->latched = RO_NO_MEMORY;
+		if (m->rev15 && m->ro_addr == ((IMG_SEL_TAIL << 14) | IMG_TL15_HALTED))
+			m->latched = (uint64_t)m->x_halted << 1 | (uint64_t)m->halted;
+		return m->ro_addr;
+	case RO_DATA_LO: return (uint32_t)m->latched;
+	case RO_DATA_HI: return (uint32_t)(m->latched >> 32);
+	default:
+		if (word >= RO_SPY(0) && word <= RO_SPY(15)) {
+			if (m->lost)
+				return RO_LOST_BIT;
+			switch (word - RO_SPY(0)) {
+			case RO_SPY_FLAG_1: return hmodel_flag1(m);
+			case RO_SPY_PC: return m->pc;
+			case RO_SPY_OPC: return m->opc;
+			default: return 0xFFFFu;
+			}
+		}
+		return RO_UNMAPPED;
+	}
+}
+
+static void hmodel_write(struct readout *r, unsigned word, uint32_t v)
+{
+	struct hmodel *m = r->ctx;
+	m->ticks += 16u;
+	if (word == RO_ADDR) {
+		m->ro_addr = v & 0x3FFFFu;
+	} else if (word == RO_SPY(RO_SPY_CLK_W)) {
+		const int run = (v & RO_CLK_RUN) != 0;
+		++m->clk_writes;
+		m->srun = run;
+		if (!run && m->drains) {
+			m->retiring = 0;
+			m->halted = 1;
+		} else if (run && m->halted) {
+			m->retiring = 1;
+			m->halted = 0;
+		}
+	}
+}
+
+// Revision 15 at the board's stuck instant: SRUN up, ERR down, FLAG-1
+// 0xe900, CYCLES standing at 2389615962 with PC 2173 and OPC 2112.
+static void hmodel_stuck15(struct hmodel *m)
+{
+	memset(m, 0, sizeof *m);
+	m->rev15 = 1;
+	m->cycles = 2389615962ull;
+	m->ticks = 5101618753ull;
+	m->srun = 1;
+	m->pc = 02173;
+	m->opc = 02112;
+}
+
+static void halt_fail(const char *what, int got, int want)
+{
+	static const char *const name[] = { "lost", "running", "halted", "stuck" };
+	fprintf(stderr, "checkpoint: FAIL: the halt: %s reads %s, wanting %s\n", what,
+		got >= -1 && got <= 2 ? name[got + 1] : "?", want >= -1 && want <= 2 ? name[want + 1] : "?");
+	++bad;
+}
+
+static int halt_found(struct hmodel *m, struct ro_stand *s)
+{
+	struct readout r;
+	memset(&r, 0, sizeof r);
+	r.read = hmodel_read;
+	r.write = hmodel_write;
+	r.ctx = m;
+	const int writes = m->clk_writes;
+	const int got = ro_found(&r, m->rev15, s);
+	if (m->clk_writes != writes) {
+		fprintf(stderr, "checkpoint: FAIL: the halt: asking wrote the clock control register\n");
+		++bad;
+	}
+	return got;
+}
+
+static void halt_text_has(const struct ro_stand *s, int rev15, const char *what, const char *want)
+{
+	char text[512];
+	ro_stand_text(s, rev15, text, sizeof text);
+	if (!strstr(text, want)) {
+		fprintf(stderr, "checkpoint: FAIL: the halt: %s's words [%s] do not say [%s]\n", what, text,
+			want);
+		++bad;
+	}
+}
+
+static void halt_check(void)
+{
+	struct hmodel m;
+	struct ro_stand s;
+	struct readout r;
+	memset(&r, 0, sizeof r);
+	r.read = hmodel_read;
+	r.write = hmodel_write;
+	r.ctx = &m;
+	const long bad_before = bad;
+	int got;
+
+	// ---- the board's: revision 15 stuck with SRUN up, as found.
+	hmodel_stuck15(&m);
+	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
+		halt_fail("revision 15 stuck, SRUN up and its halted bit down", got, RO_FOUND_STUCK);
+	if (s.flag1 != 0xe900u || !s.srun || s.err || s.drained != 0)
+		fail("the halt: revision 15 stuck: FLAG-1, SRUN, ERR and the halted bit as read",
+		     ((uint64_t)s.flag1 << 12) | (unsigned)s.srun << 8 | (unsigned)s.err << 4 | (unsigned)(s.drained & 0xF),
+		     (0xe900ull << 12) | 1u << 8);
+	halt_text_has(&s, 1, "revision 15 stuck", "SRUN up");
+	halt_text_has(&s, 1, "revision 15 stuck", "2389615962");
+	halt_text_has(&s, 1, "revision 15 stuck", "PC 2173");
+	halt_text_has(&s, 1, "revision 15 stuck", "OPC 2112");
+	halt_text_has(&s, 1, "revision 15 stuck", "FLAG-1 0xe900");
+	halt_text_has(&s, 1, "revision 15 stuck", "halted bit down");
+
+	// ---- and the same machine after a write of zero: SRUN follows RUN
+	// ---- down, and the drain never ends.
+	hmodel_stuck15(&m);
+	ro_halt(&r);
+	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
+		halt_fail("revision 15 stuck, RUN cleared and the drain not ended", got, RO_FOUND_STUCK);
+	halt_text_has(&s, 1, "revision 15 stuck and RUN cleared", "SRUN down");
+
+	// ---- revision 15 running, halted by the console, drained: halted.
+	hmodel_stuck15(&m);
+	m.retiring = 1;
+	m.drains = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_RUNNING)
+		halt_fail("revision 15 retiring", got, RO_FOUND_RUNNING);
+	ro_halt(&r);
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("revision 15 halted by a write of zero and drained", got, RO_FOUND_HALTED);
+	// ---- and found so, which is what `--already-halted` takes.
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("revision 15 found halted", got, RO_FOUND_HALTED);
+
+	// ---- revision 15 halted by its own HALT word under ERROR-STOP-ENABLE:
+	// ---- drained, SRUN down, ERR up.
+	hmodel_stuck15(&m);
+	m.srun = 0;
+	m.x_halted = 1;
+	m.halted = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("revision 15 halted by a HALT word", got, RO_FOUND_HALTED);
+
+	// ---- the CADR (and QUUX to revision 14) stuck: SRUN up, nothing in
+	// ---- FLAG-1 naming a halt, once with -WAIT low.
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
+		halt_fail("the CADR stuck, SRUN up and FLAG-1 naming no halt", got, RO_FOUND_STUCK);
+	if (s.drained != -1)
+		fail("the halt: the CADR's halted bit, which it has not got", (unsigned)s.drained, (uint64_t)-1);
+	halt_text_has(&s, 0, "the CADR stuck", "SRUN up");
+	halt_text_has(&s, 0, "the CADR stuck", "PC 2173");
+	halt_text_has(&s, 0, "the CADR stuck", "names no halt");
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	m.wait = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
+		halt_fail("the CADR stuck in a bus wait", got, RO_FOUND_STUCK);
+	halt_text_has(&s, 0, "the CADR stuck in a bus wait", "-WAIT low");
+
+	// ---- the CADR's three halts: the console's, HALT-CONS's under
+	// ---- ERRSTOP and the statistics counter's.
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	m.retiring = 1;
+	m.drains = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_RUNNING)
+		halt_fail("the CADR retiring", got, RO_FOUND_RUNNING);
+	ro_halt(&r);
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("the CADR halted by a write of zero", got, RO_FOUND_HALTED);
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	m.err = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("the CADR halted with ERR up", got, RO_FOUND_HALTED);
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	m.stathalt = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
+		halt_fail("the CADR halted by the statistics counter", got, RO_FOUND_HALTED);
+
+	// ---- a standing machine whose registers do not answer is not halted
+	// ---- either: nothing can be said of it.
+	hmodel_stuck15(&m);
+	m.rev15 = 0;
+	m.srun = 0;
+	m.lost = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_LOST)
+		halt_fail("a standing CADR whose diagnostic registers are not answered", got, RO_FOUND_LOST);
+	hmodel_stuck15(&m);
+	m.halted = 1;
+	m.srun = 0;
+	m.lost = 1;
+	if ((got = halt_found(&m, &s)) != RO_FOUND_LOST)
+		halt_fail("a standing revision 15 whose diagnostic registers are not answered", got,
+			  RO_FOUND_LOST);
+
+	if (bad != bad_before)
+		return;
+	printf("checkpoint: the halt: a machine standing with SRUN up and no halt named, or on revision 15 "
+	       "undrained, is stuck and not halted; the console's, HALT-CONS's, the statistics counter's "
+	       "and revision 15's drained halt are halts\n");
+}
+
 // ---- QUUX's main memory in its own words ----------------------------------
 
 static void memory_fail(const char *what, const char *got, const char *want)
@@ -813,6 +1075,9 @@ int main(int argc, char **argv)
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
+
+	// ---- the halt a checkpoint is taken in ------------------------------
+	halt_check();
 
 	// ---- SHA-256, against the standard's own vectors ---------------------
 	//

@@ -35,6 +35,25 @@ a daemon and has no init script, because it halts the machine while it reads.
    written with RUN and SRUN set, as they stood, and muir resumes it running
    from where it stood, with no `continue`. A machine found halted is
    written halted.
+
+   A microcycle counter standing still is not yet a halt. A machine that
+   has stopped retiring microcycles with SRUN up, in a wait that never ends
+   or a pipeline that never drains, stands as still as a halted one, and a
+   checkpoint is of a halted machine. So when the counter stands, the
+   program asks why. On the CADR and on QUUX up to revision 14, FLAG-1 must
+   name a halt: SRUN down (the console's), ERR up (HALT-CONS under
+   ERRSTOP), or -STATHALT low (the statistics counter's). On revision 15
+   the pipeline's own halted bit must be up, word 19 of the halted
+   pipeline's readout, which rises only when the drain ends; SRUN follows
+   RUN there, so it falls on a write of zero whether or not the drain ends.
+   A machine that stands and is not halted is refused, found so or after
+   the program's own halt: nothing is written, the program says where the
+   counter stood, FLAG-1, PC and OPC, and exits non-zero. A machine it
+   halted is started again as it was found. On revision 15 a pipeline
+   stopped at an error (OA-OUTSIDE-FIELDS, PDL-FIELD-MISMATCH) reads the
+   same way, and is refused too: it has not drained either. So is a
+   revision 15 machine held in reset, whose halted bit is down. `--halt`
+   refuses the same machines and marks no halt.
 4. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
    DDR through `/dev/mem`. Main memory is read at the machine's own amount,
@@ -700,7 +719,9 @@ On a card of the older two-partition shape that mount is `/dev/mmcblk0p2`, and
 the bay is that partition's own root rather than `packs/` in it.
 
 `--already-halted` refuses to read a machine that is still retiring
-microcycles, so the order cannot be got wrong silently. `--halt` writes down
+microcycles, so the order cannot be got wrong silently, and both it and
+`--halt` refuse a machine that has stopped retiring without halting (step 3
+above). `--halt` writes down
 the microcycle count it halted the machine at, in
 `/var/run/cadr-checkpoint-halted`, and `--already-halted` records the
 machine as running when the count still stands there, since it was running

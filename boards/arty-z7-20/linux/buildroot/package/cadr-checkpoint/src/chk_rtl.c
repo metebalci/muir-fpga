@@ -1875,6 +1875,10 @@ const char *chk_rtl_mutation(void)
 	return "revision 14's write-back's end left out of the memory port";
 #elif CHK_MUTATE == 46
 	return "revision 14's map levels read from the window, which has none";
+#elif CHK_MUTATE == 49
+	return "a machine whose counter stands taken as halted, SRUN up and FLAG-1 naming no halt";
+#elif CHK_MUTATE == 50
+	return "revision 15 taken as halted on SRUN down, its pipeline's halted bit not asked";
 #elif CHK_MUTATE == 47
 	return "revision 14's LC<33:32> written 0";
 #elif CHK_MUTATE == 48
