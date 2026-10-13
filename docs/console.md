@@ -1456,12 +1456,27 @@ PROM is running from word 0 again with `PROMDISABLE` clear. The button is what
 starts a halted machine. That is why muir's `continue` and `step` send you here
 when `RUN` is clear.
 
+**QUUX revision 15 has no button.** Its face has no word 13, so `boot` there
+writes the keyboard's cold boot word, `0xF9FC26`, to the input page's `KEY`
+instead. The machine takes that word as the keyboard's boot: it clears `RUN`,
+as the console does, and presses `-BOOT` the clock after. The PC is then at the
+PROM's first instruction, 36000. The word stays in the keyboard's queue, and
+its low six bits, `0o46`, ask for a cold boot. So `boot` gives a fresh machine
+without rebooting the board: the band boots from the disk to the Lisp
+Listener, as after the power comes on. `boot` writes the word only after the
+page reads `INPT` and its queue has room. It reports the word handed to the
+machine (`KEY` reads it back with the queue empty and `LOST` unchanged), the PC
+and CYCLES either side, and whether the PC is in the PROM. The CADR and QUUX
+revisions 12 to 14 keep word 13. On any other revision, or on a fabric that
+does not say which machine it is, `boot` refuses, writes nothing and exits 1.
+
 **And `boot` is what takes a hold off.** An init step can leave the machine
 unbooted, as muir's `--no-auto-boot` does: it halts the machine before the disk
 pack program presents the drive and leaves a marker at `/var/run/cadr-held`.
 While that file exists, `start` and `step` refuse. They print muir's own
 sentence for the state: "the machine is halted, its RUN clear: boot presses the
-button that starts it". `boot` presses the button and removes the marker.
+button that starts it". `boot` presses the button and removes the marker. A
+refused `boot` leaves it, since nothing was started.
 Nothing in the fabric knows about any of this, since `RUN` is still preset at
 reset. The marker is the whole of the contract, and the host check holds all
 three behaviors.

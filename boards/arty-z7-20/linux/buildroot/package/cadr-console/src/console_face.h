@@ -580,6 +580,12 @@ struct console {
 	// Wait, in microseconds.  The board sleeps; the model advances its
 	// machine.  `pack_side.h`'s `pause` one seam along.
 	void (*pause)(struct console *c, unsigned us);
+	// **THE INPUT PAGE, `rtl/plumbing/cadr_input_cables.sv`'s**, for the one
+	// command that needs it: `boot` on QUUX revision 15, whose face has no
+	// word 13 and which boots on the keyboard's boot word instead.  NULL
+	// where the program has not mapped the page; `boot` then refuses there.
+	uint32_t (*in_read)(struct console *c, unsigned word);
+	void (*in_write)(struct console *c, unsigned word, uint32_t v);
 	void *ctx;
 	// The tally.  `lost` counts diagnostic cycles that came back with bit
 	// 16 up: a grant that never came or a register block that never
@@ -715,11 +721,52 @@ void cons_start(struct console *c);
 // map.  A boot is not a reset.
 void cons_boot(struct console *c);
 
+// **QUUX REVISION 15 HAS NO BUTTON, AND BOOTS ON THE KEYBOARD'S BOOT WORD.**
+// Its face (`rtl/plumbing/quux15_face.sv`) has no word 13: a read there is
+// `UNMAPPED` and a store is dropped.  Its one boot is the keyboard's: a word
+// whose bits 13 to 6 are 0o360 (`ioboard::boot_word`) reaching the machine
+// through the input page's KEY (`rtl/plumbing/cadr_input_cables.sv`, word 2)
+// halts it --- RUN cleared, as this console clears it --- and presses
+// `-BOOT` the clock after, as the console's mode register gives it
+// (`rtl/machine/quux15_core.sv`, `kbd_boot`).  The PC is then at the PROM's
+// first instruction, 36000 (muir's `QUUX_PROM_BASE`).  The word stays in the
+// keyboard's queue for the microcode to read after the PROM, and its low six
+// bits, 0o46, are what make it a COLD boot (`ukbd.lisp`: "5-0 46 (octal) if
+// cold, 62 (octal) if warm").  `boot` writes the cold one: a fresh machine, the
+// band booted from the disk, as after the power comes on.
+//
+// The input page's words are `cadr-terminal/src/input_face.h`'s, copied
+// because Buildroot builds this package from its own directory alone; the
+// word is `input_keys.h`'s `key_boot_word(1)`.
+#define CONS_IN_IDENT_WORD   0x494E5054u	/* "INPT" */
+enum cons_in { CONS_IN_IDENT = 0, CONS_IN_STAT = 1, CONS_IN_KEY = 2, CONS_IN_LOST = 6 };
+#define CONS_IN_ST_ROOM      (1u << 2)
+#define CONS_IN_ST_QUEUED(st) (((st) >> 8) & 0x3Fu)
+// KEY's read: the word last handed to the card, and this bit once one has been.
+#define CONS_IN_KEY_HANDED   (1u << 24)
+#define CONS_KEY_BOOT_COLD   0x00F9FC26u
+// QUUX's boot PROM in the control store: 1K instructions from 36000.
+#define CONS_QUUX_PROM_FIRST 036000u
+#define CONS_QUUX_PROM_LAST  037777u
+// How many times `boot` reads KEY back, `CONS_IN_POLL_US` apart, before it
+// says the word was not handed over.
+#define CONS_IN_POLLS        100u
+#define CONS_IN_POLL_US      10u
+
+// How `boot` booted, or why it did not.  It refuses, writing NOTHING, on a
+// machine it has no boot for: a revision it has not met, or a fabric that did
+// not say which machine it is.  Word 13 is the boot of the CADR and of QUUX
+// revisions 12 to 14; the keyboard's boot word is revision 15's.
+enum cons_boot_how { CONS_BOOT_BY_BUTTON = 0, CONS_BOOT_BY_KEYBOARD, CONS_BOOT_REFUSED };
+
 // What `boot` reports: the machine either side of the press.  The button is
 // let go before the write is answered --- `cadr_console.sv` holds `BVALID`
 // off for the length of the pulse --- so `after` is a machine already running
 // the PROM again and not one with a finger on it.
 struct cons_boot_report {
+	int how;			/* `enum cons_boot_how` */
+	char why[160];			/* a refusal's reason */
+	unsigned revision;		/* QUUX's, 0 on the CADR */
 	uint64_t cycles_before, cycles_after;
 	uint16_t pc_before, pc_after;
 	int lost_before, lost_after;	/* a diagnostic cycle was not answered */
@@ -728,7 +775,16 @@ struct cons_boot_report {
 	int held;			/* the line was still down when read */
 	int running;			/* CYCLES moved over the settle */
 	int promdisable;		/* FLAG-1's bit, which a boot clears */
+	// The keyboard's boot word, revision 15's: KEY read back after the
+	// store, the queue's count then, and LOST either side.
+	uint32_t key_after;
+	unsigned queued;
+	uint32_t in_lost_before, in_lost_after;
+	int handed;			/* KEY read the word back, the queue empty, nothing lost */
+	int in_prom;			/* the PC after was in QUUX's PROM */
 };
+// 0 when the machine was booted and nothing was lost; -1 when `boot` refused,
+// the word was not handed over, or a diagnostic cycle was not answered.
 int cons_boot_and_report(struct console *c, unsigned settle_us, struct cons_boot_report *r);
 void cons_say_boot(const struct cons_boot_report *r);
 
@@ -769,6 +825,10 @@ int cons_held(const char *path);
 // Take the hold off: remove the marker.  Returns 0 if it is gone afterwards,
 // whether or not it was there to begin with.
 int cons_release_held(const char *path);
+// **`boot`, WHOLE**: the boot and its lines, then the hold at `held_path`
+// taken off --- only when the machine was booted, since a refused boot
+// started nothing.  The command's exit status: 0 booted, 1 not.
+int cons_boot_command(struct console *c, unsigned settle_us, const char *held_path);
 
 // --- WHAT IS NOT IN THIS FILE, AND WHY ------------------------------------
 //

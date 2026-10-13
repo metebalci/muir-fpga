@@ -104,6 +104,9 @@ struct mmio {
 	volatile uint32_t *regs;
 	int mem;			/* /dev/mem, for examine and deposit */
 	uint32_t regs_phys;
+	// The input page, mapped when `boot` first needs it: revision 15's
+	// boot is the keyboard's boot word.  Mapping touches no register.
+	volatile uint32_t *in;
 };
 
 static uint32_t mmio_read(struct console *c, unsigned word)
@@ -115,6 +118,28 @@ static void mmio_write(struct console *c, unsigned word, uint32_t v)
 {
 	struct mmio *m = c->ctx;
 	m->regs[word] = v;
+	__sync_synchronize();
+}
+// The input page on the faces' port, three pages above the pack side
+// (<cadr/cadr_board.h>).  The guard has read the tally, so the fabric is
+// there to answer it; `boot` reads IDENT before it believes anything else.
+static volatile uint32_t *mmio_in(struct mmio *m)
+{
+	if (!m->in)
+		m->in = cadr_map(m->mem, CADR_BOARD_INPUT_BASE, 4096, "the input page");
+	return m->in;
+}
+static uint32_t mmio_in_read(struct console *c, unsigned word)
+{
+	volatile uint32_t *in = mmio_in(c->ctx);
+	return in ? in[word] : 0u;
+}
+static void mmio_in_write(struct console *c, unsigned word, uint32_t v)
+{
+	volatile uint32_t *in = mmio_in(c->ctx);
+	if (!in)
+		return;
+	in[word] = v;
 	__sync_synchronize();
 }
 static void mmio_pause(struct console *c, unsigned us)
@@ -300,20 +325,13 @@ static void do_step(struct console *c, unsigned n)
 // **THE BUTTON, AND IT IS WHAT TAKES THE HOLD OFF.**  muir's prompt does the
 // same: its `Command::Boot` presses and then clears its own hold, with the
 // comment "the button starts the machine: it presets RUN, and a finger on it
-// is all a CADR is given.  So the hold comes off with it."
-static void do_boot(struct console *c, unsigned settle_us)
+// is all a CADR is given.  So the hold comes off with it."  On QUUX revision
+// 15, which has no button, the keyboard's boot word does the same; on a
+// machine this program has no boot for, nothing is written and the hold
+// stays.  `cons_boot_command` is the whole of it, in the face.
+static int do_boot(struct console *c, unsigned settle_us)
 {
-	struct cons_boot_report r;
-	cons_boot_and_report(c, settle_us, &r);
-	cons_say_boot(&r);
-	if (cons_held(CONS_HELD_PATH)) {
-		if (cons_release_held(CONS_HELD_PATH) == 0)
-			say("boot: the machine was being held unbooted (%s); the hold is off",
-			    CONS_HELD_PATH);
-		else
-			say("boot: the machine was being held unbooted and %s could not be "
-			    "removed, so start and step will go on refusing", CONS_HELD_PATH);
-	}
+	return cons_boot_command(c, settle_us, CONS_HELD_PATH);
 }
 
 // Whether a command that runs the machine must refuse.  The marker means an
@@ -333,7 +351,8 @@ static void help(void)
 {
 	say("halt            0 into the clock control register: RUN clear (CC's first act on a debuggee)");
 	say("start           1 into it: RUN");
-	say("boot            the light panel's button: it presets RUN, and the machine runs from the PROM at 0");
+	say("boot            the light panel's button: it presets RUN, and the machine runs from the PROM at 0;");
+	say("                on QUUX revision 15, which has no button, the keyboard's cold boot word");
 	say("step [N]        CC's CC-CLOCK, 2 then 0, N times: one microcycle each, CYCLES either side");
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
@@ -467,7 +486,7 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		say("start: 1 written to the clock control register (EADR 3); RUN is set");
 		do_status(c, settle_us);
 	} else if (!strcmp(cmd, "boot"))
-		do_boot(c, settle_us);
+		exit_status = do_boot(c, settle_us);
 	else if (!strcmp(cmd, "step")) {
 		if (refuse_while_held("step"))
 			return 0;
@@ -761,6 +780,7 @@ int main(int argc, char **argv)
 	struct mmio m;
 	m.mem = mem;
 	m.regs_phys = regs_phys;
+	m.in = NULL;
 	m.regs = cadr_map(mem, regs_phys, 4096, "the console's registers");
 	if (!m.regs)
 		return 1;
@@ -770,6 +790,8 @@ int main(int argc, char **argv)
 	con.read = mmio_read;
 	con.write = mmio_write;
 	con.pause = mmio_pause;
+	con.in_read = mmio_in_read;
+	con.in_write = mmio_in_write;
 	con.ctx = &m;
 
 	// 2. The face is there, or nothing is.

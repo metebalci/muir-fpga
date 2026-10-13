@@ -188,6 +188,33 @@ struct model {
 	uint32_t ro_asked, ro_echo, ro_lo, ro_hi;
 	unsigned ro_stale;
 	unsigned ro_writes;
+	// **REVISION 15's BOOT, WHICH IS THE KEYBOARD'S AND NOT WORD 13's.**  Its
+	// face (`rtl/plumbing/quux15_face.sv`) has no word 13: a read there is
+	// `UNMAPPED` and a store is dropped.  `boot_word_writes` counts every
+	// store to word 13 whatever the face makes of it, so that a check can
+	// say NONE was made.  The machine boots on the keyboard's boot word
+	// instead (`quux15_input.sv`'s `boot`, `ioboard::boot_word`'s match),
+	// which `quux15_core.sv` takes as RUN cleared and then `-BOOT`: the PC
+	// at the PROM's first instruction, 36000.
+	int no_boot_word;
+	unsigned boot_word_writes;
+	int kbd_boots;
+	unsigned kbd_boot_count;
+	// **AND THE INPUT PAGE** (`cadr_input_cables.sv`), as far as that boot
+	// needs it: IDENT, STAT's room and queue count, KEY (written: queued;
+	// read: the word last handed to the card, bit 24 once one has been) and
+	// LOST.  `in_full` drops every word and counts it, as a full queue does;
+	// `in_stuck` keeps every word queued and hands none over.  Every store
+	// is counted, KEY's apart from the rest.
+	// `in_drop` drops a word at the store although STAT said there was
+	// room, as a queue another program filled in between would; `in_lag`
+	// holds a word in the queue for that many reads of STAT before it is
+	// handed over, as a queue with words ahead of it does.
+	uint32_t in_ident;
+	int in_full, in_stuck, in_drop;
+	unsigned in_lag, in_lag_left;
+	unsigned in_queued, in_lost, in_key_writes, in_other_writes;
+	uint32_t in_key, in_last_written, in_pending;
 };
 
 static void model_advance(struct model *m, uint64_t t)
@@ -389,7 +416,10 @@ static uint32_t model_read(struct console *c, unsigned word)
 	// presses, and the line itself --- which is always back up by the time
 	// a read can happen, the fabric holding the write's answer off for the
 	// length of the pulse.
-	case CONS_BOOT: return (CONS_BOOT_KEY & 0xFFFF0000u) | ((m->boots & 0xFFu) << 8);
+	case CONS_BOOT:
+		if (m->no_boot_word)
+			return CONS_UNMAPPED;
+		return (CONS_BOOT_KEY & 0xFFFF0000u) | ((m->boots & 0xFFu) << 8);
 	// The debug cable's role: the key's top half as a marker, the connects
 	// (seven bits, the eighth having gone to the crossed-cable bit),
 	// and the connector --- what was asked for and what happened.
@@ -441,6 +471,11 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 	// key is what makes it a press: a value that means nothing --- zero off
 	// a dead bus, all ones off an undriven one --- must not stop a machine.
 	if (word == CONS_BOOT) {
+		++m->boot_word_writes;
+		if (m->no_boot_word) {
+			m->boot_pressed = 0;
+			return;
+		}
 		m->boot_pressed = (v == CONS_BOOT_KEY) || m->boot_deaf_to_the_key;
 		if (!m->boot_pressed)
 			return;
@@ -584,13 +619,91 @@ static void model_pause(struct console *c, unsigned us)
 	model_advance(c->ctx, (uint64_t)us * CONS_TICKS_PER_US);
 }
 
+// The input page.  Words 0, 1, 2 and 6 are what `boot` reads; the rest read
+// 0, as nothing here needs them.
+static void model_in_hand(struct model *m, uint32_t v);
+
+static uint32_t model_in_read(struct console *c, unsigned word)
+{
+	struct model *m = c->ctx;
+	model_advance(m, 8);
+	if (word == 1 && m->in_lag_left && --m->in_lag_left == 0) {
+		m->in_queued = 0;
+		model_in_hand(m, m->in_pending);
+	}
+	switch (word) {
+	case 0: return m->in_ident;
+	case 1: return (m->in_full ? 0u : 1u << 2) | ((m->in_queued & 0x3Fu) << 8);
+	case 2: return m->in_key;
+	case 6: return m->in_lost;
+	default: return 0u;
+	}
+}
+
+static void model_in_write(struct console *c, unsigned word, uint32_t v)
+{
+	struct model *m = c->ctx;
+	model_advance(m, 8);
+	if (word != 2) {
+		++m->in_other_writes;
+		return;
+	}
+	++m->in_key_writes;
+	m->in_last_written = v;
+	if (m->in_full) {
+		++m->in_lost;
+		return;
+	}
+	if (m->in_drop) {
+		++m->in_lost;
+		return;
+	}
+	if (m->in_stuck) {
+		++m->in_queued;
+		return;
+	}
+	if (m->in_lag) {
+		m->in_queued = 1;
+		m->in_pending = v;
+		m->in_lag_left = m->in_lag;
+		return;
+	}
+	model_in_hand(m, v);
+}
+
+// The word handed to the card, and what the machine does with it.
+static void model_in_hand(struct model *m, uint32_t v)
+{
+	m->in_key = (1u << 24) | (v & 0xFFFFFFu);
+	// `ioboard::boot_word`: bits 13 to 6 are 0o360.  RUN cleared, the
+	// machine drained, then `-BOOT`: running again from the PROM.
+	if (m->kbd_boots && ((v >> 6) & 0377u) == 0360u) {
+		++m->kbd_boot_count;
+		m->run = 1;
+		m->f1.srun = 1;
+		m->pc = 036000;
+	}
+}
+
 static void attach(struct console *c, struct model *m)
 {
 	cons_init(c);
 	c->read = model_read;
 	c->write = model_write;
 	c->pause = model_pause;
+	c->in_read = model_in_read;
+	c->in_write = model_in_write;
 	c->ctx = m;
+}
+
+// QUUX revision 15 on the Kria: entry 21 with a 19 ns period, its face
+// without word 13, and a machine that boots on the keyboard's boot word.
+#define MODEL_REV15_ENTRY 0x5155260000F4ull
+static void model_rev15(struct model *m)
+{
+	m->ro_entry21 = MODEL_REV15_ENTRY;
+	m->no_boot_word = 1;
+	m->kbd_boots = 1;
 }
 
 static void model_init(struct model *m)
@@ -598,6 +711,7 @@ static void model_init(struct model *m)
 	memset(m, 0, sizeof *m);
 	m->ident = CONS_IDENT_WORD;
 	m->grant = 1;
+	m->in_ident = 0x494E5054u;	/* "INPT" */
 	// Sixteen distinct words, so that a register index off by one lands on
 	// a word it cannot be mistaken for.  Registers 3, 8 and 9 are the
 	// board's own and are not settable here.
@@ -1661,6 +1775,8 @@ static void check_boot(void)
 	struct cons_boot_report r;
 	model_init(&m);
 	attach(&c, &m);
+	// The CADR, which says so at the readout window's entry 21.
+	m.ro_entry21 = CONS_RO_NO_MEMORY;
 
 	// A HALTED machine: the button is what starts one, which is the whole
 	// reason `continue` and `step` send you here on muir.
@@ -1732,6 +1848,259 @@ static void check_boot(void)
 		ac.write(&ac, CONS_BOOT, 0u);
 		CHECK(any.boots == 1,
 		      "the wrong-key check cannot see a fabric that boots on any value");
+	}
+}
+
+// **`boot` ON QUUX REVISION 15, WHOSE FACE HAS NO WORD 13.**  It boots on
+// the keyboard's cold boot word, written to the input page's KEY: the machine
+// halts (RUN cleared, as the console clears it) and `-BOOT` is pressed the
+// clock after (`quux15_core.sv`).  So `boot` there writes NOTHING to word 13
+// and exactly one word to KEY, and that word is the cold one, which the
+// microcode reads back after the PROM to choose cold from warm.  And on a
+// machine this program has no boot for --- a revision it has not met, or a
+// fabric that did not say which machine it is --- `boot` refuses and writes
+// nothing anywhere.
+static void check_boot_rev15(void)
+{
+	struct model m;
+	struct console c;
+	struct cons_boot_report r;
+	// `ukbd.lisp`'s fields, put together here and not taken from the
+	// program: bits 23-19 ones, the source 1 in 18-16, 15-10 ones, 9-6
+	// zero, and 0o46 in 5-0 for a cold boot.
+	const uint32_t cold = (037u << 19) | (1u << 16) | (077u << 10) | 046u;
+	CHECK(cold == 0x00F9FC26u, "the cold boot word is %06x", cold);
+
+	// 1. A HALTED machine, the word handed over only at the third read of
+	// STAT, so that `boot` must wait for it.
+	model_init(&m);
+	attach(&c, &m);
+	model_rev15(&m);
+	m.in_lag = 3;
+	cons_halt(&c);
+	m.pc = 05163;
+	capture_start();
+	int rc = cons_boot_and_report(&c, 2000, &r);
+	cons_say_boot(&r);
+	{
+		const char *out = capture_end();
+		CHECK(m.boot_word_writes == 0,
+		      "boot on revision 15 wrote word 13, which its face does not have (%u stores)",
+		      m.boot_word_writes);
+		CHECK(m.in_key_writes == 1 && m.in_last_written == cold,
+		      "boot on revision 15 did not write the cold boot word to KEY once: %u stores, "
+		      "the last %08x", m.in_key_writes, m.in_last_written);
+		CHECK(m.in_other_writes == 0, "boot wrote %u other words of the input page",
+		      m.in_other_writes);
+		CHECK(m.kbd_boot_count == 1 && m.run == 1 && m.pc == 036000,
+		      "the machine was not booted: %u boots, RUN %d, PC %o", m.kbd_boot_count, m.run,
+		      m.pc);
+		CHECK(rc == 0, "boot on revision 15 answered %d", rc);
+		CHECK(r.how == CONS_BOOT_BY_KEYBOARD && r.revision == 15 && r.handed && r.in_prom &&
+		      r.running && r.key_after == (CONS_IN_KEY_HANDED | cold) && r.queued == 0,
+		      "revision 15's report: how %d, revision %u, handed %d, in the PROM %d, running %d, "
+		      "KEY %08x, queued %u", r.how, r.revision, r.handed, r.in_prom, r.running,
+		      r.key_after, r.queued);
+		CHECK(strstr(out, "boot: QUUX revision 15 has no light panel's button; the keyboard's "
+				  "cold boot word 0x00f9fc26 written to the input page's KEY") != NULL,
+		      "boot did not say which word it wrote where: [%s]", out);
+		CHECK(strstr(out, "KEY reads back 0x01f9fc26 with the queue empty, LOST 0 then 0 --- "
+				  "the word was handed to the machine") != NULL,
+		      "boot did not say the word was handed over: [%s]", out);
+		CHECK(strstr(out, "boot: PC 5163 before, 36000 after") != NULL,
+		      "boot did not give the PC either side: [%s]", out);
+		CHECK(strstr(out, "boot: RUNNING, the PC in the PROM (36000-37777) --- the boot PROM "
+				  "is running") != NULL,
+		      "boot did not say the PROM is running: [%s]", out);
+		CHECK(strstr(out, "word 13") == NULL, "boot on revision 15 talked of word 13: [%s]",
+		      out);
+	}
+
+	// 2. A RUNNING machine, the same again: the second boot is a second
+	// word, and KEY reading the same word as before is still a hand-over.
+	m.pc = 04321;
+	capture_start();
+	rc = cons_boot_and_report(&c, 2000, &r);
+	cons_say_boot(&r);
+	capture_end();
+	CHECK(rc == 0 && m.boot_word_writes == 0 && m.in_key_writes == 2 && m.kbd_boot_count == 2 &&
+	      m.pc == 036000, "the second boot on revision 15: answered %d, %u word 13 stores, %u KEY "
+	      "stores, %u boots, PC %o", rc, m.boot_word_writes, m.in_key_writes, m.kbd_boot_count,
+	      m.pc);
+
+	// 2b. A SECOND WORD that stays in the queue, or that the queue drops
+	// although it had room, behind a first that was handed over: KEY reads
+	// the same word as the boot it does not belong to, so the queue's
+	// count and LOST are what say it was not this one.
+	for (int drop = 0; drop < 2; ++drop) {
+		model_init(&m);
+		attach(&c, &m);
+		model_rev15(&m);
+		capture_start();
+		rc = cons_boot_and_report(&c, 2000, &r);
+		capture_end();
+		CHECK(rc == 0 && m.kbd_boot_count == 1, "the first boot (%d) answered %d", drop, rc);
+		if (drop)
+			m.in_drop = 1;
+		else
+			m.in_stuck = 1;
+		m.pc = 04321;
+		capture_start();
+		rc = cons_boot_and_report(&c, 2000, &r);
+		cons_say_boot(&r);
+		const char *out = capture_end();
+		CHECK(rc != 0 && !r.handed && m.kbd_boot_count == 1,
+		      "a second word %s was reported handed over: answered %d, %u boots",
+		      drop ? "dropped" : "left in the queue", rc, m.kbd_boot_count);
+		CHECK(strstr(out, drop ? "LOST 0 then 1" : "1 word queued") != NULL,
+		      "the second word's fate was not said: [%s]", out);
+	}
+
+	// 2c. A FABRIC THAT TAKES THE WORD AND DOES NOT BOOT: handed over, and
+	// the PC where it was, so the PROM is NOT said to be running.
+	model_init(&m);
+	attach(&c, &m);
+	model_rev15(&m);
+	m.kbd_boots = 0;
+	m.run = 1;
+	m.pc = 04321;
+	capture_start();
+	rc = cons_boot_and_report(&c, 2000, &r);
+	cons_say_boot(&r);
+	{
+		const char *out = capture_end();
+		CHECK(r.handed && !r.in_prom, "a machine that did not boot: handed %d, in the PROM %d",
+		      r.handed, r.in_prom);
+		CHECK(strstr(out, "boot: RUNNING, the PC not in the PROM (36000-37777) --- the machine "
+				  "did not come back: ask `status`") != NULL,
+		      "a machine that did not boot was said to: [%s]", out);
+	}
+
+	// 3. A WORD NOT HANDED OVER is said so, and is not a boot.
+	model_init(&m);
+	attach(&c, &m);
+	model_rev15(&m);
+	m.in_stuck = 1;
+	m.pc = 01234;
+	capture_start();
+	rc = cons_boot_and_report(&c, 2000, &r);
+	cons_say_boot(&r);
+	{
+		const char *out = capture_end();
+		CHECK(rc != 0, "a word left in the queue was reported as a boot");
+		CHECK(strstr(out, "boot: THE WORD WAS NOT HANDED TO THE MACHINE") != NULL,
+		      "a word left in the queue was not reported: [%s]", out);
+		CHECK(m.boot_word_writes == 0, "a word not handed over sent boot to word 13");
+	}
+
+	// 4. THE REFUSALS, each with NOTHING written to word 13 or to the
+	// input page, and the machine where it was.
+	static const struct {
+		uint64_t entry;
+		int rev15, full, ident_wrong, unmapped;
+		const char *line;
+	} t[] = {
+		{ 0x515506000104ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 16: this program has no boot "
+		  "for it" },
+		{ 0x5155060000B4ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 11: this program has no boot "
+		  "for it" },
+		{ 0x123456789ABCull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- the fabric did not say which machine it is" },
+		{ MODEL_REV15_ENTRY, 1, 1, 0, 0,
+		  "boot: refused, nothing written --- the keyboard's queue has no room, so the word "
+		  "would be dropped" },
+		{ MODEL_REV15_ENTRY, 1, 0, 1, 0,
+		  "boot: refused, nothing written --- the input page reads 0x4e4f4e45, not \"INPT\"" },
+		{ MODEL_REV15_ENTRY, 1, 0, 0, 1,
+		  "boot: refused, nothing written --- the input page is not mapped" },
+	};
+	for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+		model_init(&m);
+		attach(&c, &m);
+		if (t[i].rev15)
+			model_rev15(&m);
+		m.ro_entry21 = t[i].entry;
+		m.in_full = t[i].full;
+		if (t[i].ident_wrong)
+			m.in_ident = 0x4E4F4E45u;	/* "NONE", the default slave's */
+		if (t[i].unmapped) {
+			c.in_read = NULL;
+			c.in_write = NULL;
+		}
+		cons_halt(&c);
+		m.pc = 01234;
+		capture_start();
+		rc = cons_boot_and_report(&c, 2000, &r);
+		cons_say_boot(&r);
+		const char *out = capture_end();
+		CHECK(rc != 0 && r.how == CONS_BOOT_REFUSED, "refusal (%u) answered %d as %d", i, rc,
+		      r.how);
+		CHECK(m.boot_word_writes == 0 && m.in_key_writes == 0 && m.in_other_writes == 0,
+		      "refusal (%u) wrote: %u word 13 stores, %u KEY stores, %u others", i,
+		      m.boot_word_writes, m.in_key_writes, m.in_other_writes);
+		CHECK(m.run == 0 && m.pc == 01234, "refusal (%u) moved the machine: RUN %d PC %o", i,
+		      m.run, m.pc);
+		CHECK(strstr(out, t[i].line) != NULL, "refusal (%u) said [%s], wanting [%s]", i, out,
+		      t[i].line);
+	}
+
+	// 5. THE MACHINES WITH A BUTTON keep it: the CADR and revisions 12 to
+	// 14 press word 13 with the key and write nothing to the input page.
+	static const uint64_t button[] = {
+		CONS_RO_NO_MEMORY, 0x515504010000ull, 0x5155050000D4ull, 0x5155060000E5ull,
+	};
+	for (unsigned i = 0; i < sizeof button / sizeof button[0]; ++i) {
+		model_init(&m);
+		attach(&c, &m);
+		m.ro_entry21 = button[i];
+		cons_halt(&c);
+		capture_start();
+		rc = cons_boot_and_report(&c, 2000, &r);
+		cons_say_boot(&r);
+		capture_end();
+		CHECK(rc == 0 && m.boots == 1 && m.boot_word_writes == 1 && m.in_key_writes == 0 &&
+		      m.run == 1 && m.pc == 0,
+		      "the button (%u): answered %d, %u presses, %u word 13 stores, %u KEY stores, "
+		      "RUN %d, PC %o", i, rc, m.boots, m.boot_word_writes, m.in_key_writes, m.run, m.pc);
+		CHECK(r.how == CONS_BOOT_BY_BUTTON, "the button (%u) reported as %d", i, r.how);
+	}
+
+	// 6. THE COMMAND WHOLE, AND THE HOLD: a boot takes the hold off and
+	// answers 0; a refusal leaves the hold, since nothing was started, and
+	// answers 1.
+	{
+		char path[] = "/tmp/cadr-held-boot-testXXXXXX";
+		const int fd = mkstemp(path);
+		CHECK(fd >= 0, "could not make the marker file the test needs");
+		if (fd >= 0)
+			close(fd);
+		model_init(&m);
+		attach(&c, &m);
+		m.ro_entry21 = 0x515506000104ull;	/* revision 16 */
+		cons_halt(&c);
+		capture_start();
+		rc = cons_boot_command(&c, 2000, path);
+		capture_end();
+		CHECK(rc == 1 && cons_held(path) == 1,
+		      "a refused boot answered %d and left the hold %s", rc,
+		      cons_held(path) ? "on" : "OFF");
+		model_init(&m);
+		attach(&c, &m);
+		model_rev15(&m);
+		cons_halt(&c);
+		capture_start();
+		rc = cons_boot_command(&c, 2000, path);
+		{
+			const char *out = capture_end();
+			CHECK(rc == 0 && cons_held(path) == 0 && m.kbd_boot_count == 1,
+			      "revision 15's boot answered %d, the hold %s, %u boots", rc,
+			      cons_held(path) ? "STILL ON" : "off", m.kbd_boot_count);
+			CHECK(strstr(out, "the hold is off") != NULL,
+			      "the hold's release was not said: [%s]", out);
+		}
+		cons_release_held(path);
 	}
 }
 
@@ -3704,6 +4073,7 @@ int main(int argc, char **argv)
 	check_parse_u32();
 	check_halt_and_start();
 	check_boot();
+	check_boot_rev15();
 	check_held();
 	check_trace_keys();
 	check_trace_chaos();
@@ -3756,6 +4126,13 @@ int main(int argc, char **argv)
 	       "      machine and on a running one alike, counted and reported with the PC and\n"
 	       "      CYCLES either side; twelve values that are not the key press nothing, and\n"
 	       "      a modeled fabric that boots on any value is caught by the same twelve\n"
+	       "    boot on QUUX revision 15, which has no word 13: the keyboard's cold boot\n"
+	       "      word 0xF9FC26 to the input page's KEY and nothing to word 13, waited for\n"
+	       "      until KEY reads it back with the queue empty and LOST unchanged, the PC\n"
+	       "      then in the PROM at 36000; a full queue, a page that is not \"INPT\" or\n"
+	       "      one not mapped, a revision not met and a machine not known all refused\n"
+	       "      with nothing written, and the hold left on; the CADR and revisions 12\n"
+	       "      to 14 keep the button\n"
 	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
 	       "      holding 0, -1, nothing or a word REFUSED with nothing signaled, since\n"

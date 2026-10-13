@@ -19,6 +19,8 @@ void cons_init(struct console *c)
 	c->read = NULL;
 	c->write = NULL;
 	c->pause = NULL;
+	c->in_read = NULL;
+	c->in_write = NULL;
 	c->ctx = NULL;
 	c->reads = c->writes = c->lost = 0;
 }
@@ -274,11 +276,82 @@ void cons_boot(struct console *c)
 	++c->writes;
 }
 
+// Which boot this machine has, from what the fabric says it is.  0 with
+// `how` set, or -1 with the refusal's reason in `why`.
+static int boot_how(struct console *c, struct cons_boot_report *r)
+{
+	struct cons_machine_id id;
+	if (cons_read_machine_id(c, &id) < 0 || !id.known) {
+		r->how = CONS_BOOT_REFUSED;
+		snprintf(r->why, sizeof r->why,
+			 "the fabric did not say which machine it is (`machine` says what it read)");
+		return -1;
+	}
+	r->revision = id.revision;
+	if (!id.quux || (id.revision >= 12 && id.revision <= 14)) {
+		r->how = CONS_BOOT_BY_BUTTON;
+		return 0;
+	}
+	if (id.revision == 15) {
+		r->how = CONS_BOOT_BY_KEYBOARD;
+		return 0;
+	}
+	r->how = CONS_BOOT_REFUSED;
+	snprintf(r->why, sizeof r->why, "QUUX revision %u: this program has no boot for it",
+		 id.revision);
+	return -1;
+}
+
+// The keyboard's cold boot word into KEY, after the page has said it is the
+// input page and its queue has room: a word that would be dropped is not
+// written.  0 having written it, -1 with nothing written and the reason.
+static int keyboard_boot(struct console *c, struct cons_boot_report *r)
+{
+	if (!c->in_read || !c->in_write) {
+		snprintf(r->why, sizeof r->why, "the input page is not mapped");
+		return -1;
+	}
+	const uint32_t ident = c->in_read(c, CONS_IN_IDENT);
+	if (ident != CONS_IN_IDENT_WORD) {
+		snprintf(r->why, sizeof r->why, "the input page reads 0x%08x, not \"INPT\"", ident);
+		return -1;
+	}
+	if (!(c->in_read(c, CONS_IN_STAT) & CONS_IN_ST_ROOM)) {
+		snprintf(r->why, sizeof r->why,
+			 "the keyboard's queue has no room, so the word would be dropped");
+		return -1;
+	}
+	r->in_lost_before = c->in_read(c, CONS_IN_LOST);
+	c->in_write(c, CONS_IN_KEY, CONS_KEY_BOOT_COLD);
+	// **HANDED OVER IS KEY READING THE WORD BACK WITH THE QUEUE EMPTY**:
+	// the queue is in order, so once it is empty every word written before
+	// the read has gone to the machine, this one among them.
+	uint32_t st = 0;
+	for (unsigned k = 0; k < CONS_IN_POLLS; ++k) {
+		st = c->in_read(c, CONS_IN_STAT);
+		r->key_after = c->in_read(c, CONS_IN_KEY);
+		if (CONS_IN_ST_QUEUED(st) == 0 &&
+		    r->key_after == (CONS_IN_KEY_HANDED | CONS_KEY_BOOT_COLD))
+			break;
+		if (c->pause)
+			c->pause(c, CONS_IN_POLL_US);
+	}
+	r->queued = CONS_IN_ST_QUEUED(st);
+	r->in_lost_after = c->in_read(c, CONS_IN_LOST);
+	r->handed = r->queued == 0 && r->key_after == (CONS_IN_KEY_HANDED | CONS_KEY_BOOT_COLD) &&
+		    r->in_lost_after == r->in_lost_before;
+	return 0;
+}
+
 int cons_boot_and_report(struct console *c, unsigned settle_us,
 			 struct cons_boot_report *r)
 {
 	uint16_t pc = 0, f1 = 0;
 	memset(r, 0, sizeof *r);
+	// Which boot, before anything is written: a machine this program has
+	// no boot for is refused with nothing written at all.
+	if (boot_how(c, r) < 0)
+		return -1;
 	// Before: where the machine was and how far it had got.  A machine
 	// halted from the console answers these perfectly well --- the
 	// diagnostic bus does not need the machine to be running --- so a
@@ -288,25 +361,37 @@ int cons_boot_and_report(struct console *c, unsigned settle_us,
 		r->lost_before = 1;
 	r->pc_before = pc & 0x3FFFu;
 
-	cons_boot(c);
-
-	// After: the press's own register, then the machine.  Word 13 is read
-	// first because it is the only thing that says the press HAPPENED ---
-	// a wrong key is dropped in silence, which is what the key is for, and
-	// the count is how a caller tells a press from a typo.
-	r->word = c->read(c, CONS_BOOT);
-	r->presses = (r->word >> 8) & 0xFFu;
-	r->held = r->word & 1u;
+	if (r->how == CONS_BOOT_BY_KEYBOARD) {
+		if (keyboard_boot(c, r) < 0) {
+			r->how = CONS_BOOT_REFUSED;
+			return -1;
+		}
+	} else {
+		cons_boot(c);
+		// After: the press's own register, then the machine.  Word 13
+		// is read first because it is the only thing that says the
+		// press HAPPENED --- a wrong key is dropped in silence, which
+		// is what the key is for, and the count is how a caller tells
+		// a press from a typo.
+		r->word = c->read(c, CONS_BOOT);
+		r->presses = (r->word >> 8) & 0xFFu;
+		r->held = r->word & 1u;
+	}
 
 	r->cycles_after = cons_cycles(c);
 	pc = 0;
 	if (cons_spy_read(c, SPY_PC, &pc) < 0)
 		r->lost_after = 1;
 	r->pc_after = pc & 0x3FFFu;
-	if (cons_spy_read(c, SPY_FLAG_1, &f1) < 0)
-		r->lost_after = 1;
-	else
-		r->promdisable = cons_flag1_of(f1).promdisable;
+	r->in_prom = r->pc_after >= CONS_QUUX_PROM_FIRST && r->pc_after <= CONS_QUUX_PROM_LAST;
+	// FLAG-1's PROMDISABLE is the CADR's overlay; QUUX's PROM is never
+	// overlaid, so revision 15's is the PC's place instead.
+	if (r->how == CONS_BOOT_BY_BUTTON) {
+		if (cons_spy_read(c, SPY_FLAG_1, &f1) < 0)
+			r->lost_after = 1;
+		else
+			r->promdisable = cons_flag1_of(f1).promdisable;
+	}
 
 	// **RUNNING IS THE COUNTER MOVING AND NOTHING ELSE**, as it is in
 	// `cons_status`: the PC of a machine running the PROM is a moving
@@ -318,7 +403,27 @@ int cons_boot_and_report(struct console *c, unsigned settle_us,
 		r->running = later != r->cycles_after;
 		r->cycles_after = later;
 	}
+	if (r->how == CONS_BOOT_BY_KEYBOARD && !r->handed)
+		return -1;
 	return (r->lost_before || r->lost_after) ? -1 : 0;
+}
+
+int cons_boot_command(struct console *c, unsigned settle_us, const char *held_path)
+{
+	struct cons_boot_report r;
+	const int rc = cons_boot_and_report(c, settle_us, &r);
+	cons_say_boot(&r);
+	if (r.how == CONS_BOOT_REFUSED)
+		return 1;
+	if (cons_held(held_path)) {
+		if (cons_release_held(held_path) == 0)
+			say("boot: the machine was being held unbooted (%s); the hold is off",
+			    held_path);
+		else
+			say("boot: the machine was being held unbooted and %s could not be "
+			    "removed, so start and step will go on refusing", held_path);
+	}
+	return rc == 0 ? 0 : 1;
 }
 
 int cons_held(const char *path)
@@ -732,10 +837,28 @@ void cons_say_step(const struct cons_step *s)
 
 void cons_say_boot(const struct cons_boot_report *r)
 {
-	say("boot: the light panel's button pressed and let go --- "
-	    "word 13 reads 0x%08x, %u press%s since the console came up, the line %s",
-	    r->word, r->presses, r->presses == 1 ? "" : "es",
-	    r->held ? "STILL DOWN" : "back up");
+	if (r->how == CONS_BOOT_REFUSED) {
+		say("boot: refused, nothing written --- %s", r->why);
+		return;
+	}
+	if (r->how == CONS_BOOT_BY_KEYBOARD) {
+		say("boot: QUUX revision %u has no light panel's button; the keyboard's cold boot "
+		    "word 0x%08x written to the input page's KEY, which halts the machine and "
+		    "presses -BOOT", r->revision, CONS_KEY_BOOT_COLD);
+		if (r->handed)
+			say("boot: KEY reads back 0x%08x with the queue empty, LOST %u then %u --- "
+			    "the word was handed to the machine", r->key_after, r->in_lost_before,
+			    r->in_lost_after);
+		else
+			say("boot: THE WORD WAS NOT HANDED TO THE MACHINE --- KEY reads 0x%08x, "
+			    "%u word%s queued, LOST %u then %u", r->key_after, r->queued,
+			    r->queued == 1 ? "" : "s", r->in_lost_before, r->in_lost_after);
+	} else {
+		say("boot: the light panel's button pressed and let go --- "
+		    "word 13 reads 0x%08x, %u press%s since the console came up, the line %s",
+		    r->word, r->presses, r->presses == 1 ? "" : "es",
+		    r->held ? "STILL DOWN" : "back up");
+	}
 	if (r->lost_before || r->lost_after) {
 		say("boot: a diagnostic cycle was not answered, so the PC either "
 		    "side of the press is not data");
@@ -744,6 +867,15 @@ void cons_say_boot(const struct cons_boot_report *r)
 		    r->pc_before, r->pc_after,
 		    (unsigned long long)r->cycles_before,
 		    (unsigned long long)r->cycles_after);
+	}
+	if (r->how == CONS_BOOT_BY_KEYBOARD) {
+		say("boot: %s, the PC %s --- %s",
+		    r->running ? "RUNNING" : "NOT RUNNING",
+		    r->in_prom ? "in the PROM (36000-37777)" : "not in the PROM (36000-37777)",
+		    r->running && r->in_prom && r->handed
+			    ? "the boot PROM is running"
+			    : "the machine did not come back: ask `status`");
+		return;
 	}
 	say("boot: %s, PROMDISABLE %s --- %s",
 	    r->running ? "RUNNING" : "NOT RUNNING",
