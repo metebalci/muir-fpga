@@ -1338,6 +1338,78 @@ int main(int argc, char **argv) {
       if (cleared & 040000u) Fail("CRC Error after Clear Receiver", cleared, cleared & ~040000u);
     }
 
+    // --- **A CLEAR RECEIVER OR A RESET WRITTEN WHILE A FRAME STREAMS IN
+    // DROPS THE REST OF THE STREAM AND ITS DONE.**  Receive Done does not
+    // rise, Lost Count does not move, CRC Error stays down, the bit count
+    // reads 0 and the buffer reads 0, as Receive Done down gives it.  That is
+    // the netlist board's answer to a frame cleared past its destination word
+    // (muir's `data/CADRIO.netlist`: RRESET takes RBCT and RACT to 0 through
+    // 0B08, and Receive Done is RCV BUSY and not RACT, 0E03), and every frame
+    // on this seam is past it, since the far end has the whole frame before
+    // its first word streams.  Reset is `-INIT` into the same RRESET.  The
+    // stream is a word a tick, so a frame of 256 words takes 256 ticks and a
+    // Unibus cycle started right after the commit lands inside it.  The next
+    // frame given lands whole.
+    auto drop_mid_stream = [&](unsigned command, const char *what) {
+      auto say = [&](const char *check) {
+        static std::string s;
+        s = std::string(what) + " mid-stream: " + check;
+        return s.c_str();
+      };
+      std::vector<uint16_t> big(256);
+      for (unsigned k = 0; k + 2 < big.size(); ++k) big[k] = (uint16_t)(0100000u | k);
+      big[big.size() - 3] = kMyAddr;          // the destination
+      big[big.size() - 2] = 0003101;          // the source
+      big.back() = CheckWord(std::vector<uint16_t>(big.begin(), big.end() - 1));
+      for (unsigned k = 0; k < big.size(); ++k)
+        b.Write(CHAOS_PAGE + 4 * (CH_RX_WIN + k), big[k]);
+      b.Write(CHAOS_PAGE + 4 * 4, (uint32_t)big.size());
+      b.Write(CHAOS_PAGE + 4 * 5, 2u);
+      const long stream_from = tick;
+      b.UbWrite(UB_CH_CSR, command);
+      const long cleared_at = tick;
+      if (cleared_at - stream_from >= (long)big.size())
+        Fail(say("the write landed inside the stream (ticks after the commit)"),
+             (unsigned long)(cleared_at - stream_from), big.size());
+      b.Idle(600);
+      const unsigned csr = b.UbRead(UB_CH_CSR);
+      if (csr & 0100000u) Fail(say("Receive Done"), csr, csr & ~0100000u);
+      if (csr & 040000u) Fail(say("CRC Error"), csr, csr & ~040000u);
+      if (csr & 017000u) Fail(say("Lost Count"), (csr & 017000u) >> 9, 0);
+      const unsigned bits = b.UbRead(UB_CH_BITS);
+      if (bits != 0u) Fail(say("the bit count"), bits, 0);
+      unsigned nonzero = 0;
+      for (unsigned k = 0; k < big.size(); ++k)
+        if (b.UbRead(UB_CH_RDBUF) != 0u) ++nonzero;
+      if (nonzero) Fail(say("buffer reads that were not 0"), nonzero, 0);
+      const unsigned after = b.UbRead(UB_CH_CSR);
+      if (after & 0177000u) Fail(say("the CSR's upper bits after the reads"), after, after & ~0177000u);
+      // The cable sees the buffer free again: RX_ARMED and not RX_BUSY.
+      const uint32_t st = b.Read(CHAOS_PAGE + 4);
+      if ((st & 6u) != 4u) Fail(say("STAT's RX_ARMED and RX_BUSY"), st & 6u, 4u);
+      // The next frame lands whole.
+      for (unsigned k = 0; k < in.size(); ++k)
+        b.Write(CHAOS_PAGE + 4 * (CH_RX_WIN + k), in[k]);
+      b.Write(CHAOS_PAGE + 4 * 4, (uint32_t)in.size());
+      b.Write(CHAOS_PAGE + 4 * 5, 2u);
+      b.Idle(600);
+      ++frames_in;
+      const unsigned next = b.UbRead(UB_CH_CSR);
+      if (!(next & 0100000u)) Fail(say("Receive Done for the next frame"), next, next | 0100000u);
+      if (next & 017000u) Fail(say("Lost Count with the next frame"), (next & 017000u) >> 9, 0);
+      if (b.UbRead(UB_CH_BITS) != in.size() * 16 - 1)
+        Fail(say("the bit count of the next frame"), b.UbRead(UB_CH_BITS), in.size() * 16 - 1);
+      unsigned wrong = 0;
+      for (unsigned k = 0; k < in.size(); ++k)
+        if (b.UbRead(UB_CH_RDBUF) != in[k]) ++wrong;
+      if (wrong) Fail(say("words of the next frame that landed garbled"), wrong, 0);
+      if (b.UbRead(UB_CH_CSR) & 040000u) Fail(say("CRC Error after the next frame is read"), 1, 0);
+      b.UbWrite(UB_CH_CSR, 010u);
+      b.Idle(4);
+    };
+    drop_mid_stream(010u, "Clear Receiver");
+    drop_mid_stream(020000u, "Reset");
+
     // ------------------------------------------------------------------
     // THE CARD'S FOUR BITS: A RUN OF REFUSALS, THE SATURATION, AND THE TWO
     // EVENTS THAT CLEAR THEM

@@ -1437,6 +1437,159 @@ int main(int argc, char **argv) {
     if (bad) return 1;
   }
 
+  // ---- a clear or a Reset landing while a frame streams in ----------------
+  //
+  // **THE REST OF THE STREAM AND ITS DONE ARE DROPPED**: no Receive Done, no
+  // Lost Count, CRC Error down, the bit count and the buffer reading 0, and
+  // the next frame lands whole (the card's note at `rx_mid` has the netlist's
+  // account).  muir's trace cannot reach it --- a frame lands there at one
+  // instant, and the run above streams it on ticks no row lands in --- so
+  // the store is swept across the stream a tick at a time, and where it
+  // landed is read off the card's own outputs: CSR bit 0, which the Clear
+  // Receiver also sets, and Reset's `chaos_reset`.  `-UB INIT` is placed on
+  // its tick directly.  The far end leaves its stream one tick after
+  // `chaos_reset`, with no done, as `cadr_chaos_cable.sv` does.  A store that
+  // lands before the first word lets the frame in whole; one on a word, in
+  // the idle tick before the done or on the done's own tick leaves nothing.
+  {
+    const long N = 40, S = 120;   // the frame's words; where its stream starts
+    auto word = [](long j) { return (unsigned)((0100000u | (j * 0421u)) & 0xffffu); };
+    // Where the stores landed, by kind: before, on the first word, inside,
+    // on the last word, in the idle tick, on the done.
+    long where[4][6] = {};
+    const char *hows[] = {"Clear Receiver", "Reset", "-UB INIT", "Clear Receiver, then -UB INIT,"};
+    for (int how = 0; how < 4; ++how) {
+      for (long m = 0; m <= S + N + 2; ++m) {
+        Dut c;
+        c.d->chaos_address = 03101;
+        c.Idle(4);
+        long k = 0;
+        bool leaving = false, gone = false;
+        // One edge, with the stream's inputs for position `k - S` and
+        // `-UB INIT` where asked.
+        auto edge = [&](bool init) {
+          const long s = k - S;
+          c.d->chaos_rx_valid = 0;
+          c.d->chaos_rx_done = 0;
+          c.d->chaos_rx_bits = N * 16;
+          c.d->ub_init = init;
+          if (!gone && s >= 0 && s < N) {
+            c.d->chaos_rx_valid = 1;
+            c.d->chaos_rx_word = word(s);
+          } else if (!gone && s == N + 1) {
+            c.d->chaos_rx_done = 1;
+          }
+          c.Rise();
+          c.Fall();
+          ++k;
+          if (leaving) gone = true;
+          if (c.d->chaos_reset) leaving = true;
+        };
+        auto cycle = [&](unsigned addr, int write, unsigned wdata) {
+          c.d->ub_msyn = 1;
+          c.d->ub_addr = addr;
+          c.d->ub_write = write;
+          c.d->ub_wdata = wdata;
+          long waited = 0;
+          do {
+            edge(false);
+            ++waited;
+          } while (!c.d->ub_ssyn && waited < 600);
+          for (long h = 0; h < kMsynHoldT; ++h) edge(false);
+          const unsigned got = c.d->ub_rdata;
+          c.d->ub_msyn = 0;
+          edge(false);
+          edge(false);
+          return got;
+        };
+        long landed = -1000;   // the stream position of the landing edge
+        long init_at = -1;     // the fourth's -UB INIT, twelve ticks after the clear
+        while (k < S + N + 8) {
+          if (how != 2 && k == m) {
+            // The cycle is run edge by edge here, to see its landing.
+            c.d->ub_msyn = 1;
+            c.d->ub_addr = kChaosCsr;
+            c.d->ub_write = 1;
+            c.d->ub_wdata = how == 1 ? 020000u : 011u;
+            long waited = 0, held = -1;
+            while (held < kMsynHoldT && waited < 600) {
+              const long s = k - S;
+              edge(false);
+              ++waited;
+              if (landed == -1000 && (how == 1 ? c.d->chaos_reset : (c.d->chaos_csr & 1u))) landed = s;
+              if (held >= 0) ++held;
+              else if (c.d->ub_ssyn) held = 0;
+            }
+            c.d->ub_msyn = 0;
+            if (how == 3 && landed != -1000) init_at = landed + S + 12;
+          } else if ((how == 2 && k == m) || (how == 3 && k == init_at)) {
+            if (how == 2) landed = k - S;
+            edge(true);
+          } else {
+            edge(false);
+          }
+        }
+        for (int e = 0; e < 8; ++e) edge(false);
+        if (landed == -1000) {
+          std::fprintf(stderr, "FAIL: a mid-stream %s, its store from tick %ld, never landed\n", hows[how], m);
+          ++bad;
+          continue;
+        }
+        const long s = landed;
+        const int kind = s < 0 ? 0 : s == 0 ? 1 : s < N - 1 ? 2 : s == N - 1 ? 3 : s == N ? 4 : 5;
+        if (s > N + 1) continue;   // after the done: an ordinary clear
+        ++where[how][kind];
+        const int before = bad;
+        auto want = [&](const char *what, unsigned long got, unsigned long w) {
+          if (got != w) {
+            if (bad < 25)
+              std::fprintf(stderr, "FAIL: a %s landing at stream position %ld: %s is 0%lo, wanting 0%lo\n",
+                           hows[how], s, what, got, w);
+            ++bad;
+          }
+        };
+        // A Clear Receiver landing before the stream lets the frame in whole;
+        // a Reset before it ends the stream before its first word is taken.
+        // The fourth's -UB INIT, twelve ticks after its clear, ends the
+        // stream or drops it, or clears a frame that has landed.
+        const bool lands = how == 0 && s < 0;
+        want("Receive Done", c.d->chaos_csr >> 15, lands ? 1u : 0u);
+        want("CRC Error and Lost Count", c.d->chaos_csr & 057000u, 0u);
+        want("the bit count", c.d->chaos_bits, lands ? (unsigned)(N * 16 - 1) : 0u);
+        unsigned off = 0;
+        for (long j = 0; j < N; ++j)
+          if (cycle(kChaosRbuf, 0, 0) != (lands ? word(j) : 0u)) ++off;
+        want(lands ? "words read that are not the frame's" : "buffer reads that are not 0", off, 0u);
+        // The next frame lands whole.
+        cycle(kChaosCsr, 1, 010u);
+        leaving = gone = false;
+        k = S - 4;
+        while (k < S + N + 8) edge(false);
+        want("Receive Done for the next frame", c.d->chaos_csr >> 15, 1u);
+        want("Lost Count with the next frame", (c.d->chaos_csr >> 9) & 017u, 0u);
+        want("the bit count of the next frame", c.d->chaos_bits, (unsigned)(N * 16 - 1));
+        off = 0;
+        for (long j = 0; j < N; ++j)
+          if (cycle(kChaosRbuf, 0, 0) != word(j)) ++off;
+        want("words of the next frame that are not its own", off, 0u);
+        if (bad != before && bad >= 25) return 1;
+      }
+    }
+    // The sweep must have put every kind of store at every place.
+    for (int how = 0; how < 4; ++how)
+      for (int kind = 0; kind < 6; ++kind)
+        if (!where[how][kind]) {
+          std::fprintf(stderr, "FAIL: no mid-stream %s landed at place %d of the stream\n", hows[how], kind);
+          ++bad;
+        }
+    if (bad) return 1;
+    std::printf("ok: mid-stream stores, landing before the stream, on the first word, inside, on the last\n"
+                "    word, in the idle tick and on the done:");
+    for (int how = 0; how < 4; ++how)
+      std::printf(" %s %ld/%ld/%ld/%ld/%ld/%ld%s", hows[how], where[how][0], where[how][1], where[how][2],
+                  where[how][3], where[how][4], where[how][5], how < 3 ? ";" : "\n");
+  }
+
   // ---- what the run saw, against what the generator says it made -----------
   int thin = 0;
   auto same = [&](const char *what, long got, long want) {

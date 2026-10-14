@@ -199,6 +199,122 @@ int main(int argc, char **argv) {
     }
   }
   std::fclose(f);
+
+  // **A CLEAR RECEIVER OR A RESET WHILE A FRAME STREAMS IN DROPS THE REST OF
+  // THE STREAM AND ITS DONE** (`cadr_io_board.sv` has the netlist's
+  // account): no Receive Done, no Lost Count, CRC Error down, the bit count
+  // and the buffer reading 0, and the next frame lands whole.  Not in muir's
+  // script, where a frame is one row and nothing lands inside it.  The far
+  // end leaves its stream, with no done, one clock after `chaos_reset`, as
+  // `cadr_chaos_cable.sv` does.  The command lands with the first word, the
+  // second, one in the middle, the last, and in the idle clock before the
+  // done.
+  {
+    const unsigned N = 40;
+    auto dfail = [&](const char *what, uint64_t got, uint64_t want) {
+      if (bad < 20) std::fprintf(stderr, "%s is %" PRIx64 ", wanting %" PRIx64 "\n", what, got, want);
+      ++bad;
+    };
+    auto word = [](unsigned j) { return (0100000u | (j * 0421u)) & 0xffffu; };
+    auto rd1 = [&](unsigned k) {
+      idle();
+      dut->rd = 1;
+      dut->rd_k = k;
+      dut->eval();
+      const unsigned w = dut->rd_word;
+      tick();
+      return w;
+    };
+    auto wr1 = [&](unsigned k, unsigned v) {
+      idle();
+      dut->wr = 1;
+      dut->wr_k = k;
+      dut->wdata = v;
+      tick();
+    };
+    // A frame of N words, and the command in the clock of word `at` (N: the
+    // idle clock before the done; N + 1: the done's; ~0u: none), and a Reset
+    // in the clock of word `at2` after it.
+    auto stream = [&](unsigned at, int how, unsigned at2 = ~0u) {
+      bool leaving = false, gone = false;
+      for (unsigned j = 0; j <= N && !gone; ++j) {
+        idle();
+        if (j < N) {
+          dut->chaos_rx_valid = 1;
+          dut->chaos_rx_word = word(j);
+        }
+        dut->chaos_rx_bits = N * 16;
+        if (j == at) {
+          if (how == 2) {
+            dut->dev_reset = 1;
+          } else {
+            dut->wr = 1;
+            dut->wr_k = 0;
+            dut->wdata = how == 0 ? 010u : 020000u;
+          }
+        }
+        if (j == at2) {
+          dut->wr = 1;
+          dut->wr_k = 0;
+          dut->wdata = 020000u;
+        }
+        tick();
+        if (leaving) gone = true;
+        if (dut->chaos_reset) leaving = true;
+      }
+      if (!gone) {
+        idle();
+        dut->chaos_rx_done = 1;
+        dut->chaos_rx_bits = N * 16;
+        if (at == N + 1) {
+          if (how == 2) {
+            dut->dev_reset = 1;
+          } else {
+            dut->wr = 1;
+            dut->wr_k = 0;
+            dut->wdata = how == 0 ? 010u : 020000u;
+          }
+        }
+        tick();
+      }
+    };
+    const char *hows[] = {"Clear Receiver", "Reset", "RESET-DEVICES", "Clear Receiver, then Reset,"};
+    long drops = 0;
+    for (int how = 0; how < 4; ++how) {
+      for (unsigned at : {0u, 1u, N / 2, N - 1, N, N + 1}) {
+        if (how == 3 && at >= N - 1) continue;
+        const long before = bad;
+        wr1(0, 010u);
+        // The fourth: a Reset after a drop began ends it, the stream gone
+        // with no done.
+        if (how == 3) stream(at, 0, at + 1);
+        else stream(at, how);
+        const unsigned csr = rd1(0);
+        if (csr & 0177000u) dfail("the CSR's Receive Done, CRC Error and Lost Count after a drop", csr, csr & ~0177000u);
+        const unsigned bits = rd1(3);
+        if (bits != 0u) dfail("the bit count after a drop", bits, 0);
+        unsigned nonzero = 0;
+        for (unsigned j = 0; j < N; ++j)
+          if (rd1(2) != 0u) ++nonzero;
+        if (nonzero) dfail("buffer reads that were not 0 after a drop", nonzero, 0);
+        // The next frame lands whole.
+        stream(~0u, 0);
+        const unsigned next = rd1(0);
+        if (!(next & 0100000u)) dfail("Receive Done for the frame after a drop", next, next | 0100000u);
+        if (next & 017000u) dfail("Lost Count with the frame after a drop", (next & 017000u) >> 9, 0);
+        if (rd1(3) != N * 16 - 1) dfail("the bit count of the frame after a drop", rd1(3), N * 16 - 1);
+        unsigned wrong = 0;
+        for (unsigned j = 0; j < N; ++j)
+          if (rd1(2) != word(j)) ++wrong;
+        if (wrong) dfail("words of the frame after a drop that landed garbled", wrong, 0);
+        if (bad != before) std::fprintf(stderr, "  (that was %s in the clock of word %u)\n", hows[how], at);
+        ++drops;
+      }
+    }
+    wr1(0, 010u);
+    if (!bad) std::printf("ok: %ld clears and resets mid-stream dropped the rest of the stream and its done\n", drops);
+  }
+
   if (stray) fail("words sent with no START", stray, 0);
   if (unread) fail("clocks with Receive Done down and the pointer not 0 or a read taken", unread, 0);
   if (!bad && (reads == 0 || frames == 0 || losts == 0 || dones == 0 || sends == 0 || resets == 0 ||

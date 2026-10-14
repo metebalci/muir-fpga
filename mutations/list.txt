@@ -10868,6 +10868,155 @@ if {0 && $held ne $want} {
         end else begin
 @end
 
+@mutation iob-a-mid-stream-clear-sets-no-drop
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver landing while a frame streams in drops the rest of the
+@note stream and its done, as the netlist board drops a frame cleared past its
+@note destination word: RRESET takes RBCT and RACT to 0 and Receive Done is
+@note RCV BUSY and not RACT.  A card that set no drop takes the rest of the
+@note stream as a frame of its own, and its done commits it garbled.
+@old
+                if (rx_mid) ch_drop <= 1'b1;
+@new
+                if (rx_mid) ch_drop <= ch_drop;
+@end
+
+@mutation iob-the-drop-lets-the-done-commit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The drop is set, and the done at the end of the stream commits the
+@note frame anyway: Receive Done rises over a frame whose first words the
+@note clear threw away.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation iob-the-drop-outlives-the-done
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The drop is not ended by the done that ends its stream, so the next
+@note frame, which the receiver has room for, is dropped too.
+@old
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
+@new
+      if (chaos_reset) ch_drop <= 1'b0;
+@end
+
+@mutation iob-the-drop-outlives-a-reset
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Reset after a drop began ends the far end's stream with no done, so
+@note only the Reset can end the drop.  A drop that waited for a done would
+@note take the next frame's.
+@old
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
+@new
+      if (chaos_rx_done) ch_drop <= 1'b0;
+@end
+
+@mutation iob-a-reset-takes-the-word-after-it
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The far end ends its stream one tick after `chaos_reset`, so the word
+@note in that tick is the last.  A card that took it starts a frame on it
+@note that never gets its done, and the next frame lands at the wrong places.
+@old
+  assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
+@new
+  assign rx_in      = chaos_rx_valid && !ch_rdone && (!chaos_reset || 1'b1);
+@end
+
+@mutation iob-a-reset-takes-the-done-after-it
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Reset landing in the idle tick before the done: the done comes in
+@note the tick `chaos_reset` is up, and a card that took it commits a frame
+@note the Reset threw away.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation iob-a-clear-in-the-idle-tick-is-not-mid-stream
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver in the idle tick between the last word and the done
+@note is mid-stream: no word is on the seam, but the frame's words are in.
+@note A card that looked only at the word on the seam lets the done commit
+@note the words the clear threw away.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = (chaos_rx_valid || (ch_fill != 9'd0 && 1'b0)) && !chaos_rx_done;
+@end
+
+@mutation iob-a-clear-with-the-first-word-is-not-mid-stream
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver landing with the first word: the word is taken and
+@note then the clear, as muir's `write` advances to the instant first, so the
+@note stream has begun.  A card that looked only at the words already in
+@note takes the rest as a frame.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = ((chaos_rx_valid && 1'b0) || ch_fill != 9'd0) && !chaos_rx_done;
+@end
+
+@mutation iob-a-clear-on-the-done-drops-the-next-frame
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver on the done's own tick clears the frame the done
+@note commits, and is not mid-stream.  A card that set a drop there keeps it
+@note past the done and drops the next frame.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && (!chaos_rx_done || 1'b1);
+@end
+
+@mutation iob-seam-a-mid-stream-clear-sets-no-drop
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver landing while a frame streams in drops the rest of the
+@note stream and its done, as the netlist board drops a frame cleared past its
+@note destination word: RRESET takes RBCT and RACT to 0 and Receive Done is
+@note RCV BUSY and not RACT.  A card that set no drop takes the rest of the
+@note stream as a frame of its own, and its done commits it garbled.
+@old
+                if (rx_mid) ch_drop <= 1'b1;
+@new
+                if (rx_mid) ch_drop <= ch_drop;
+@end
+
+@mutation iob-seam-the-drop-lets-the-done-commit
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note The drop is set, and the done at the end of the stream commits the
+@note frame anyway: Receive Done rises over a frame whose first words the
+@note clear threw away.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation iob-seam-a-reset-takes-the-word-after-it
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note The far end ends its stream one tick after `chaos_reset`, so the word
+@note in that tick is the last.  A card that took it starts a frame on it
+@note that never gets its done, and the next frame lands at the wrong places.
+@old
+  assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
+@new
+  assign rx_in      = chaos_rx_valid && !ch_rdone && (!chaos_reset || 1'b1);
+@end
+
 @mutation iob-the-transmit-count-stops-at-the-end
 @check iob
 @file rtl/machine/cadr_io_board.sv
@@ -11119,9 +11268,9 @@ if {0 && $held ne $want} {
 @note 258 send 64 that do).  The bound one word low takes the 48-bit run.
 @note Caught at the run of 257 words written handed back.
 @old
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd32);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd32);
 @end
 
 @mutation iob-a-64-bit-frame-is-refused
@@ -11132,9 +11281,9 @@ if {0 && $held ne $want} {
 @note nor counts one lost.  Caught first at the lost-count section's frames,
 @note which are 64 bits.
 @old
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd64);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd64);
 @end
 
 @mutation iob-the-bit-count-stops-at-7777
@@ -31644,10 +31793,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @old
               ch_hi_set <= 1'b0;
               ch_lost   <= 4'd0;
+              if (rx_mid) ch_drop <= 1'b1;
             end
             if (wdata[8]) begin   // Clear Transmitter
 @new
               ch_hi_set <= 1'b0;
+              if (rx_mid) ch_drop <= 1'b1;
             end
             if (wdata[8]) begin   // Clear Transmitter
 @end
@@ -31750,7 +31901,7 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The far end's commit is held a clock before Receive Done rises: the
 @note frame lands a clock after muir's grid has it.
 @old
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
 @new
   logic        done_q;
   logic [12:0] bits_q;
@@ -31758,7 +31909,7 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     done_q <= chaos_rx_done;
     bits_q <= chaos_rx_bits;
   end
-  assign taken_now  = done_q && (bits_q > 13'd48);
+  assign taken_now  = done_q && !ch_drop && !chaos_reset && (bits_q > 13'd48);
 @end
 
 @mutation quux15-net-clear-receiver-keeps-the-pointer
@@ -31921,9 +32072,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note low takes the 48-bit runs the script hands back.  Caught at those
 @note runs.
 @old
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd32);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd32);
 @end
 
 @mutation quux15-net-a-64-bit-frame-is-refused
@@ -31932,9 +32083,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The same bound one word high refuses the 64 bits of 258 words
 @note written, which land on the netlist board.  Caught at those frames.
 @old
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd64);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd64);
 @end
 
 @mutation quux15-net-the-bit-count-stops-at-7777
@@ -31959,6 +32110,117 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
   initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'hFFFF;
 @new
   initial for (int ch_k = 0; ch_k < CH_WORDS; ch_k++) ch_rcv[ch_k] = 16'h0000;
+@end
+
+@mutation quux15-chaos-a-mid-stream-clear-sets-no-drop
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Clear Receiver landing while a frame streams in drops the rest of the
+@note stream and its done, as the netlist board drops a frame cleared past its
+@note destination word: RRESET takes RBCT and RACT to 0 and Receive Done is
+@note RCV BUSY and not RACT.  A card that set no drop takes the rest of the
+@note stream as a frame of its own, and its done commits it garbled.
+@old
+              if (rx_mid) ch_drop <= 1'b1;
+@new
+              if (rx_mid) ch_drop <= ch_drop;
+@end
+
+@mutation quux15-chaos-the-drop-lets-the-done-commit
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The drop is set, and the done at the end of the stream commits the
+@note frame anyway: Receive Done rises over a frame whose first words the
+@note clear threw away.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation quux15-chaos-the-drop-outlives-the-done
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The drop is not ended by the done that ends its stream, so the next
+@note frame, which the receiver has room for, is dropped too.
+@old
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
+@new
+      if (chaos_reset) ch_drop <= 1'b0;
+@end
+
+@mutation quux15-chaos-the-drop-outlives-a-reset
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Reset after a drop began ends the far end's stream with no done, so
+@note only the Reset can end the drop.  A drop that waited for a done would
+@note take the next frame's.
+@old
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
+@new
+      if (chaos_rx_done) ch_drop <= 1'b0;
+@end
+
+@mutation quux15-chaos-a-reset-takes-the-word-after-it
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The far end ends its stream one clock after `chaos_reset`, so the word
+@note in that clock is the last.  A card that took it starts a frame on it
+@note that never gets its done, and the next frame lands at the wrong places.
+@old
+  assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
+@new
+  assign rx_in      = chaos_rx_valid && !ch_rdone && (!chaos_reset || 1'b1);
+@end
+
+@mutation quux15-chaos-a-reset-takes-the-done-after-it
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Reset landing in the idle clock before the done: the done comes in
+@note the clock `chaos_reset` is up, and a card that took it commits a frame
+@note the Reset threw away.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation quux15-chaos-a-clear-in-the-idle-tick-is-not-mid-stream
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Clear Receiver in the idle clock between the last word and the done
+@note is mid-stream: no word is on the seam, but the frame's words are in.
+@note A card that looked only at the word on the seam lets the done commit
+@note the words the clear threw away.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = (chaos_rx_valid || (ch_fill != 9'd0 && 1'b0)) && !chaos_rx_done;
+@end
+
+@mutation quux15-chaos-a-clear-with-the-first-word-is-not-mid-stream
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Clear Receiver landing with the first word: the word is taken and
+@note then the clear, as muir's `write` advances to the instant first, so the
+@note stream has begun.  A card that looked only at the words already in
+@note takes the rest as a frame.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = ((chaos_rx_valid && 1'b0) || ch_fill != 9'd0) && !chaos_rx_done;
+@end
+
+@mutation quux15-chaos-a-clear-on-the-done-drops-the-next-frame
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Clear Receiver on the done's own clock clears the frame the done
+@note commits, and is not mid-stream.  A card that set a drop there keeps it
+@note past the done and drops the next frame.
+@old
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+@new
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && (!chaos_rx_done || 1'b1);
 @end
 
 # ---------------------------------------------------------------------------

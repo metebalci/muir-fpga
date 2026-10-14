@@ -852,6 +852,7 @@ module cadr_io_board (
   logic        ch_tdone, ch_tabort, ch_rdone, ch_crc;
   logic [3:0]  ch_lost;
   logic [15:0] ch_rd;        // the buffer's word at the pointer, a tick behind
+  logic        ch_drop;      // the stream coming in is dropped: its done commits nothing
 
   // The two checkers, Fairchild 9401s: the one at LMTBUF 0C09 makes the
   // check word as the words are written (`ch_xcheck`, then the source at
@@ -1020,16 +1021,39 @@ module cadr_io_board (
   // above a partial first word, which share its place (muir's `land`).  The
   // first word goes in last, merged over what its place held, at the done:
   // a partial word on the board writes only its own bits.
-  logic        rx_in, rx_first, taken_now, commit;
+  logic        rx_in, rx_first, taken_now, commit, rx_mid;
   logic [11:0] rx_top_bit;    // the frame's last bit, in twelve bits
   logic [15:0] rx_low, rx_merged;
-  assign rx_in      = chaos_rx_valid && !ch_rdone;
+  // **A CLEAR RECEIVER OR A RESET LANDING WHILE A FRAME STREAMS IN DROPS THE
+  // REST OF THE STREAM AND ITS DONE**: no Receive Done and no Lost Count,
+  // and RBCT, CRC Error and the pointer as the clear left them.  That is the
+  // netlist board's answer to a frame cleared past its destination word
+  // (muir's `data/CADRIO.netlist`: RRESET, which Clear Receiver and `-INIT`
+  // drive through `-CLR RCV BUSY` at 0E10, takes RBCT and RACT to 0 through
+  // 0B08, and Receive Done is RCV BUSY and not RACT at 0E03), and every frame
+  // on this seam is past it: the far end has the whole frame before its
+  // first word streams.  A Clear Receiver sets `ch_drop`, and the done
+  // that ends the stream commits nothing.  A Reset tells the far end on
+  // `chaos_reset`, and the far end ends its stream there with no done
+  // (`cadr_chaos_cable.sv`), so nothing that comes in the tick `chaos_reset`
+  // is up is taken, and a drop ends with it.
+  // TWO LIMITS.  A clear or Reset between the far end's commit and the first
+  // word on the seam lands before the stream, and the frame is taken whole;
+  // a golden scenario must put no clear or Reset between muir's cable frame
+  // and the card's stream, and `tb/cadr_io_board_tb.cpp` refuses a trace
+  // that puts any row inside a stream.  And a dropped stream's words go into
+  // the buffer where the seam's order puts them, those after the clear again
+  // from the frame's first place, where the board stores nothing past RRESET;
+  // what a read round the buffer past a later frame shows of them is held by
+  // nothing.
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+  assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
   assign rx_first   = rx_in && ch_fill == 9'd0;
   assign rx_top_bit = chaos_rx_bits[11:0] - 12'd1;
   // A run of 48 bits or fewer --- the check, source and destination words
   // and nothing after them --- is taken by no receiver, its destination
   // matching or not: no Receive Done and no Lost Count (muir's `arrive`).
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
   assign commit     = taken_now && !ch_rdone;
   assign rx_low     = (chaos_rx_bits[3:0] == 4'd0) ? 16'hFFFF : ~(16'hFFFF << chaos_rx_bits[3:0]);
   assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
@@ -1346,6 +1370,7 @@ module cadr_io_board (
       ch_xcheck   <= 16'd0;
       ch_taken    <= 1'b0;
       ch_fill     <= 9'd0;
+      ch_drop     <= 1'b0;
       ch_top      <= 8'd0;
       ch_w0       <= 16'd0;
       ch_hi       <= 16'd0;
@@ -1448,6 +1473,7 @@ module cadr_io_board (
         ch_fill   <= 9'd0;
         ch_hi_set <= 1'b0;
       end
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
       if (taken_now) begin
         if (ch_rdone) begin
           ch_lost <= ch_lost + 4'd1;
@@ -1860,6 +1886,7 @@ module cadr_io_board (
                 ch_fill   <= 9'd0;
                 ch_hi_set <= 1'b0;
                 ch_lost   <= 4'd0;
+                if (rx_mid) ch_drop <= 1'b1;
               end
               if (c_wdata[8]) begin   // Clear Transmitter
                 ch_xn          <= 8'd0;

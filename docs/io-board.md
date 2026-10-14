@@ -939,10 +939,18 @@ latch it takes sixty nanoseconds into a frame, the instant one cell past the
 destination word at which a refused frame is counted, and the rule that a
 Clear Receiver written inside a frame's first twelve microseconds does not let
 that frame in. The fabric decides once, at the instant of the commit, from
-Receive Done as it stands then. A busy receiver here also does not abort the
-sender, because there is no sender on this side of the seam to abort: the
-retry that AIM-628 gives the sending interface is carried by the Linux
-program instead.
+Receive Done as it stands then. A Clear Receiver, a Reset or `-UB INIT` that
+lands while a frame streams in from the seam drops the rest of that stream and
+its done, with no Receive Done, no Lost Count and the bit count 0. That is the
+board's netlist answer, since every frame on the seam is past its destination
+word. It has two limits. A clear or Reset between the far end's commit and the
+first word on the seam comes before the stream, and the frame is taken whole;
+and what a read round the buffer shows of a dropped stream's words is held by
+nothing. Revision 15's Chaosnet interface carries the same rule
+(`rtl/machine/cadr_io_board.sv`, `rtl/machine/quux15_chaos.sv`). A busy
+receiver here also does not abort the sender, because there is no sender on
+this side of the seam to abort: the retry that AIM-628 gives the sending
+interface is carried by the Linux program instead.
 
 The serial port's line is the `cadr-serial` program's, offered on a TCP socket
 as muir's `--serial` does. **The baud-rate generator is deliberately not on

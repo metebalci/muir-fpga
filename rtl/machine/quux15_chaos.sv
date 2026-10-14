@@ -184,6 +184,7 @@ module quux15_chaos (
   logic        ch_tdone, ch_tabort, ch_rdone, ch_crc;
   logic [3:0]  ch_lost;
   logic [15:0] ch_rd;        // the buffer's word at the pointer
+  logic        ch_drop;      // the stream coming in is dropped: its done commits nothing
 
   // Where the next word of a packet goes, and the check it carries on.
   logic [7:0]  ch_wn;
@@ -261,16 +262,26 @@ module quux15_chaos (
   // and every one past them is older and gone, but for the 257th's bits
   // above a partial first word, which share its place (muir's `land`).  The
   // first word goes in last, merged over what the place held, at the done.
-  logic        rx_in, rx_first, taken_now, commit;
+  logic        rx_in, rx_first, taken_now, commit, rx_mid;
   logic [11:0] rx_top_bit;    // the frame's last bit, in twelve bits
   logic [15:0] rx_low, rx_merged;
-  assign rx_in      = chaos_rx_valid && !ch_rdone;
+  // **A CLEAR RECEIVER OR A RESET LANDING WHILE A FRAME STREAMS IN DROPS THE
+  // REST OF THE STREAM AND ITS DONE**, as `cadr_io_board.sv`'s card does,
+  // for the netlist's reason given there and with the same two limits: a
+  // clear or Reset between the far end's commit and the first word on the
+  // seam lands before the stream, and what a read round the buffer shows of
+  // a dropped stream's words is held by nothing.  A Clear Receiver sets
+  // `ch_drop`, and the done that ends the stream commits nothing; a Reset's
+  // `chaos_reset` ends the far end's stream with no done, so nothing that
+  // comes in the clock it is up is taken, and a drop ends with it.
+  assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
+  assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
   assign rx_first   = rx_in && ch_fill == 9'd0;
   assign rx_top_bit = chaos_rx_bits[11:0] - 12'd1;
   // A run of 48 bits or fewer --- the check, source and destination words
   // and nothing after them --- is taken by no receiver, its destination
   // matching or not: no Receive Done and no Lost Count (muir's `arrive`).
-  assign taken_now  = chaos_rx_done && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
   assign commit     = taken_now && !ch_rdone;
   assign rx_low     = (chaos_rx_bits[3:0] == 4'd0) ? 16'hFFFF : ~(16'hFFFF << chaos_rx_bits[3:0]);
   assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
@@ -318,6 +329,7 @@ module quux15_chaos (
       ch_xcheck   <= 16'd0;
       ch_taken    <= 1'b0;
       ch_fill     <= 9'd0;
+      ch_drop     <= 1'b0;
       ch_top      <= 8'd0;
       ch_w0       <= 16'd0;
       ch_hi       <= 16'd0;
@@ -375,6 +387,7 @@ module quux15_chaos (
         ch_fill   <= 9'd0;
         ch_hi_set <= 1'b0;
       end
+      if (chaos_rx_done || chaos_reset) ch_drop <= 1'b0;
       if (taken_now) begin
         // A packet committed on a full buffer is dropped whole and counted.
         if (ch_rdone) begin
@@ -413,6 +426,7 @@ module quux15_chaos (
               ch_fill   <= 9'd0;
               ch_hi_set <= 1'b0;
               ch_lost   <= 4'd0;
+              if (rx_mid) ch_drop <= 1'b1;
             end
             if (wdata[8]) begin   // Clear Transmitter
               ch_xn          <= 8'd0;
