@@ -33,35 +33,32 @@
 // are the share's 0, in order, and the master's one write ID answers them in
 // order.  Whether port 0 should carry more is MP8 step 3's.
 //
-// **THE MACHINE'S RESET IS MADE HERE, BECAUSE THE MACHINE'S MASTER IS THE
-// MACHINE'S.**  On the CADR the adapter is this module's and the gate resets
-// it only once the share has drained, so the machine's reset never cuts a
-// transaction in half.  Revision 15's master is inside the core, so the
-// core's reset is the master's: a reset taken with a write granted and its
-// second beat still to come leaves the share and the bridge waiting for that
-// beat for ever, and one taken with a read outstanding hands the restarted
-// machine's first line fill the old line's beats.  So a reset the top asks
-// for (`mach_req`: the fabric's, the console's RESET key, the processor's) is
-// first a HOLD --- the share grants nothing new, to anybody --- and the core
-// goes into reset (`mach_rst`) only from the clock the share is idle, and
-// stays there while the request stands.  Grants the core asked for and the
-// share has not given are asked for again after the reset or not at all,
-// which no master can tell from a wait.  A processor reset puts the share
-// into reset at once (the gate), which is idle; the core then follows,
-// because what the bridge had of its transactions is gone with the bridge.
+// **THE MACHINE'S RESET IS THE CORE'S OWN, AS ON THE OTHER BOARDS.**  On the
+// CADR the adapter is this module's and the gate resets it only once the
+// share has drained.  Revision 15's master is inside the core, and the core
+// drains its own port before a reset the board asks for (`quux15_core.sv`'s
+// `rst_req`): its queued and in-flight writes land and its fills come in,
+// through the share, which keeps granting while it does.  So nothing here
+// holds the share for the machine's reset, and the top level gives the core
+// its two resets: the request (KEY1, the console's RESET key, and the port
+// not yet live, below) and the hard reset (the processor's, which resets the
+// bridge, and the clock's lock), taken at once.
 //
 // **AND THE MACHINE WAITS FOR ITS MEMORY**, as the CADR does on this board:
-// the core is held in reset from the fabric's reset until the port has been
-// live once (`may_start`, the gate's latch), so its first line fill meets an
-// open port.  Revision 15 has no memory timeout, so a fill at a shut port
-// would only wait; the hold is what makes the boot meet the port's order on
-// every board, as the Zynq boards meet it by their processing system coming
-// up first.  `tb/quux15_f2sdram_tb.cpp`'s OPEN holds both halves.
+// the top level asks for the core's reset from the fabric's configuration
+// until the port has been live once (`may_start`, the gate's latch), so its
+// first line fill meets an open port.  It is a request and never a hard
+// reset; the port is empty then, so the core is in reset at once.  Revision
+// 15 has no memory timeout, so a fill at a shut port would only wait; the
+// hold is what makes the boot meet the port's order on every board, as the
+// Zynq boards meet it by their processing system coming up first.
+// `tb/quux15_f2sdram_tb.cpp`'s OPEN holds it.
 //
-// **THE FABRIC'S RESET REACHES THE SHARE ONLY THROUGH THE GATE'S DRAIN**, as
-// in `cadr_f2sdram_port.sv`, so the pack side and the display keep running
-// until the share is idle: the top level gives the pack side the fabric's
-// reset at its own `fabric_rst` and the display `!live`.
+// **THE CLOCK'S LOCK RESETS THE SHARE AT ONCE** (`lock_rst`), as it resets
+// the core: the gate drains on it and re-arms `may_start`, and the share and
+// the adapter take it directly, so that a core reset mid-transaction cannot
+// leave the share waiting for its beats.  KEY1 does not reach the share:
+// the pack side takes it at its own `fabric_rst` and the display `!live`.
 //
 // **THE TALLY IS READ ON `h2f_gp_in`** as `cadr_f2sdram_port.sv` has it:
 // `h2f_gp_out[1]` low for the answers, `cadr_mem_count.sv`'s bits 31 to 0,
@@ -75,14 +72,10 @@
 
 module quux15_f2sdram_port (
     input  var logic clk,
-    // The fabric's reset.  It resets the tally at once and the port only
-    // through the gate's drain.
+    // The fabric's reset: the tally's.
     input  var logic rst,
-
-    // --- the machine's reset ----------------------------------------------
-    // What the top asks for, and what the core is given: see the header.
-    input  var logic        mach_req,
-    output var logic        mach_rst,
+    // The clock's lock: the gate's reset, and the share's at once.
+    input  var logic lock_rst,
 
     // --- the machine's master, AXI4 at 64 bits (`quux15_axi_master.sv`) ----
     input  var logic [31:0] s_awaddr,
@@ -216,33 +209,16 @@ module quux15_f2sdram_port (
   // ------------------------------------------------------------ the gate
   logic port_rst, gate_hold, idle;
   cadr_f2sdram_gate u_gate (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(lock_rst),
       .h2f_reset(h2f_reset), .gp_open(gp_open), .req_n(warm_req_n),
       .idle(idle),
       .hold(gate_hold), .port_rst(port_rst), .ack_n(warm_ack_n), .live(live),
       .may_start(may_start)
   );
 
-  // ------------------------------------------------- the machine's reset
-  //
-  // A reset is asked for by the request or by the port not having been live
-  // (`want`), and is pending (`pend`) from then until the core has been in
-  // reset with the request gone.  While it is pending the share grants
-  // nothing new; from the clock the share is idle the core is in reset, and
-  // it stays there while the request stands.  **BOTH REGISTERS ARE KEPT IN
-  // THE SENSE THEY POWER UP IN**: `pend_n` and `run` come up zero, which is
-  // a reset pending and the core in it, so the core sees no clock out of
-  // reset before the port's first edge.  `mach_rst` is `run` inverted.
-  logic want, pend_n, run;
-  assign want = mach_req || !may_start;
-  always_ff @(posedge clk) begin
-    if (want) pend_n <= 1'b0;
-    else if (!run) pend_n <= 1'b1;
-  end
-  always_ff @(posedge clk) begin
-    run <= !((!pend_n && idle) || (!run && want));
-  end
-  assign mach_rst = !run;
+  // The share's reset: the gate's, or the clock's lock at once.
+  logic share_rst;
+  assign share_rst = port_rst || lock_rst;
 
   // --------------------------------------------- the master's AXI3 shape
   logic [31:0] b_awaddr, b_araddr;
@@ -342,7 +318,7 @@ module quux15_f2sdram_port (
   end
 
   cadr_f2sdram_share #(.N(3)) u_share (
-      .clk(clk), .rst(port_rst), .hold(gate_hold || !pend_n), .idle(idle),
+      .clk(clk), .rst(share_rst), .hold(gate_hold), .idle(idle),
       .s_awaddr(h_awaddr), .s_awlen(h_awlen), .s_awsize(h_awsize), .s_awburst(h_awburst),
       .s_awvalid(h_awvalid), .s_awready(h_awready),
       .s_wdata(h_wdata), .s_wstrb(h_wstrb), .s_wlast(h_wlast), .s_wvalid(h_wvalid),

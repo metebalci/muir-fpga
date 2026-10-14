@@ -13,10 +13,17 @@
 //
 // WHAT IS HELD, IN THE ORDER IT RUNS.
 //
+//   THE CORE'S TWO RESETS (`quux15_core.sv`'s `rq_*`), as the shell sees
+//   them: the hard `rst` (the processor's reset, the clock's lock) and the
+//   request `rst_req` (KEY1, the console's RESET key, the port not yet
+//   live).  The shell's `rst_on` is played as a core whose port drains at
+//   once: in reset while either stands.  Below, "in reset" is that.
+//
 //   THE MACHINE WAITS FOR ITS MEMORY.  With the processor in reset, and then
 //   out of it with only the tally's select bit written, the core is held in
-//   reset and LEDR6 is dark; with the open bit the port is live within a
-//   handful of clocks, LEDR6 lights and the core is let go.  The tally reads
+//   reset and LEDR6 is dark, by the request alone once the processor is out
+//   of its reset; with the open bit the port is live within a handful of
+//   clocks, LEDR6 lights and the core is let go.  The tally reads
 //   the marker in both halves by the select bit.
 //
 //   ITS MEMORY IS THE PROCESSOR'S.  A write of the core's master reaches the
@@ -30,7 +37,8 @@
 //   microcycles, the disk, an error halt, each its own LED and no other, with
 //   LEDR1 lit for the clock's lock, LEDR6 for the port, LEDR5 and LEDR7 dark.
 //
-//   THE CONSOLE'S RESET KEY resets the core and lets it go.  The console
+//   THE CONSOLE'S RESET KEY asks for the core's reset, never the hard one,
+//   and lets it go.  The console
 //   face's word 40 is the period and word 37 main memory's 512 units.
 //
 //   KEY0 AND THE SWITCHES DO NOTHING: revision 15 has no `-BOOT2` and no
@@ -43,8 +51,8 @@
 //   it.
 //
 //   KEY1 AND THE CLOCK'S LOCK: either puts the core into reset for as long
-//   as it lasts, and once it is over the core is let go again, the port being
-//   open already.
+//   as it lasts, KEY1 by the request and the lock by the hard reset, and
+//   once it is over the core is let go again, the port being open already.
 //
 //   THE VIDEO BUS: HSYNC once a line of 1688 pixels for 112 of them, DE on
 //   1280 pixels of a line, the forwarded clock running.
@@ -309,7 +317,18 @@ LwMaster lw;
 Video video;
 bool hps_in_reset = true;
 
+// The core in reset by either, as a core whose port drains at once.
+bool InReset() { return CORE_I(rst) || CORE_I(rst_req); }
+// The clocks the core's request and its hard reset have stood, counted by
+// every tick.
+long req_clocks = 0, hard_clocks = 0;
+
 void Tick() {
+  CORE_O(rst_on) = InReset();
+  CORE_O(rst_pend) = 0;
+  CORE_O(rst_cut) = 0;
+  if (CORE_I(rst_req)) ++req_clocks;
+  if (CORE_I(rst)) ++hard_clocks;
   top->clock50_0 = 0;
   top->eval();
   mem.Drive(hps_in_reset);
@@ -456,7 +475,7 @@ long RstTicks(long n) {
   long held = 0;
   for (long i = 0; i < n; ++i) {
     Tick();
-    if (CORE_I(rst)) ++held;
+    if (InReset()) ++held;
   }
   return held;
 }
@@ -496,20 +515,23 @@ int main(int argc, char **argv) {
   HPS_O(hps_h2f_reset_reset) = 0;
   HPS_O(hps_hps_gp_gp_out) = 2;   // only the tally's select bit
   held = 0;
-  long lit6 = 0;
+  long lit6 = 0, hard = 0;
   for (int i = 0; i < 400; ++i) {
     Tick();
-    if (CORE_I(rst)) ++held;
+    if (InReset()) ++held;
+    if (i >= 12 && CORE_I(rst)) ++hard;
     if (Lit(kPort)) ++lit6;
   }
   Check(held == 400, "with only h2f_gp_out[1] written the core was out of reset %ld clocks of 400", 400 - held);
+  Check(hard == 0, "with the port not yet live the core had its hard reset %ld clocks, wanting the request alone",
+        hard);
   Check(lit6 == 0, "with only h2f_gp_out[1] written LEDR6 was lit %ld clocks", lit6);
   const uint32_t tally_high = HPS_I(hps_hps_gp_gp_in);
   HPS_O(hps_hps_gp_gp_out) = 1;
   // Three synchronizer stages and the gate's register for the port; the
   // latch, the pending reset and the core's run register after it.
   const long to_live = Until([] { return Lit(kPort); }, 50);
-  const long to_run = Until([] { return CORE_I(rst) == 0; }, 50);
+  const long to_run = Until([] { return !InReset(); }, 50);
   Check(to_live >= 0 && to_live <= 6, "LEDR6 lit %ld clocks after h2f_gp_out[0], wanting within 6", to_live);
   Check(to_run >= 0 && to_run <= 4, "the core left reset %ld clocks after the port was live, wanting within 4",
         to_run);
@@ -594,13 +616,16 @@ int main(int argc, char **argv) {
 
   // ================================ the console's RESET key
   {
-    Check(CORE_I(rst) == 0, "the core in reset before the console's RESET key");
+    Check(!InReset(), "the core in reset before the console's RESET key");
+    // The write is answered once the core has been through its reset, so
+    // the reset is over when it returns.
+    req_clocks = hard_clocks = 0;
     LwWrite(kResetWord, kResetKey);
-    long rose = Until([] { return CORE_I(rst) != 0; }, 100);
-    Check(rose >= 0, "the console's RESET key never reset the core");
-    long fell = Until([] { return CORE_I(rst) == 0; }, 500);
-    Check(fell >= 0, "the core stayed in reset after the console's RESET key");
-    std::printf("ok: the console's RESET key held the core in reset %ld clocks\n", fell);
+    Check(req_clocks > 0, "the console's RESET key never asked for the core's reset");
+    Check(hard_clocks == 0, "the console's RESET key gave the core its hard reset for %ld clocks", hard_clocks);
+    Check(!InReset(), "the core still in reset when the console's RESET write was answered");
+    std::printf("ok: the console's RESET key asked for the core's reset %ld clocks, answered after it\n",
+                req_clocks);
   }
 
   // ================================ KEY0 and the switches do nothing
@@ -637,14 +662,14 @@ int main(int argc, char **argv) {
     // Three synchronizer stages and a register into the request, a register
     // for it, and the pending reset and the run register: within 12.
     const long rose = Until([] { return CORE_I(rst) != 0; }, 100);
-    Check(rose >= 0 && rose <= 12, "the core went into reset %ld clocks after the processor's, wanting within 12",
+    Check(rose >= 0 && rose <= 12, "the core had its hard reset %ld clocks after the processor's, wanting within 12",
           rose);
     held = RstTicks(300);
     Check(held == 300, "the core was out of reset %ld clocks of 300 in the processor's reset", 300 - held);
     Check(!Lit(kPort), "LEDR6 lit in the processor's reset");
     HPS_O(hps_h2f_reset_reset) = 0;
     hps_in_reset = false;
-    const long fell = Until([] { return CORE_I(rst) == 0; }, 100);
+    const long fell = Until([] { return !InReset(); }, 100);
     Check(fell >= 0 && fell <= 12, "the core left reset %ld clocks after the processor's, wanting within 12", fell);
     Check(!Lit(kPort), "LEDR6 lit with the port not yet opened again");
     HPS_O(hps_hps_gp_gp_out) = 1;
@@ -655,20 +680,27 @@ int main(int argc, char **argv) {
   // ================================ KEY1 and the clock's lock
   {
     top->btn = 1;   // KEY1 pressed
-    const long rose = Until([] { return CORE_I(rst) != 0; }, 100);
+    const long rose = Until([] { return InReset(); }, 100);
     Check(rose >= 0 && rose <= 12, "the core went into reset %ld clocks after KEY1, wanting within 12", rose);
-    held = RstTicks(300);
+    long key_hard = 0;
+    held = 0;
+    for (int i = 0; i < 300; ++i) {
+      Tick();
+      if (InReset()) ++held;
+      if (CORE_I(rst)) ++key_hard;
+    }
     Check(held == 300, "the core was out of reset %ld clocks of 300 with KEY1 held", 300 - held);
+    Check(key_hard == 0, "KEY1 gave the core its hard reset for %ld clocks, wanting the request alone", key_hard);
     Check(!Lit(kRun), "LEDR0 lit with KEY1 held");
     top->btn = 3;
-    const long fell = Until([] { return CORE_I(rst) == 0; }, 200);
+    const long fell = Until([] { return !InReset(); }, 200);
     Check(fell >= 0 && fell <= 30, "the core left reset %ld clocks after KEY1, wanting within 30", fell);
     r->quux15_de25__DOT__u_pll__DOT__tbo_unlock = 1;
     const long rose2 = Until([] { return CORE_I(rst) != 0; }, 100);
-    Check(rose2 >= 0 && rose2 <= 12, "the core went into reset %ld clocks after the lock was lost", rose2);
+    Check(rose2 >= 0 && rose2 <= 12, "the core had its hard reset %ld clocks after the lock was lost", rose2);
     Run(100);
     r->quux15_de25__DOT__u_pll__DOT__tbo_unlock = 0;
-    const long fell2 = Until([] { return CORE_I(rst) == 0; }, 200);
+    const long fell2 = Until([] { return !InReset(); }, 200);
     Check(fell2 >= 0 && fell2 <= 30, "the core left reset %ld clocks after the lock came back", fell2);
     std::printf("ok: KEY1 and the clock's lock each reset the core, within %ld and %ld clocks, and let it go\n", rose,
                 rose2);

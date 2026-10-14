@@ -36,6 +36,15 @@
 //
 // THE CONFIGURATIONS.
 //
+// THE CORE'S RESET is played here as `quux15_core.sv` takes it (its
+// `rq_*`), since this file is the core's port side: the processor's reset,
+// which the board's top gives the core as its hard reset, at once; a
+// request --- the testbench's, a clock long, or the port not yet live, as
+// the top asks --- latched, the port side then offering nothing new, and the
+// master reset once nothing of its is open, for 64 clocks at least and while
+// the request stands.  The share must let that drain finish: nothing in the
+// port holds it for the machine's reset.
+//
 //   OPEN       the processor in reset at first, then out of it with the port
 //              shut, then software opens it.  The master is held in reset
 //              (`mach_rst`) until the port is live and let go within
@@ -49,12 +58,12 @@
 //              time, the machine is not reset, and once the port opens every
 //              queued write lands, in order.
 //   RESET      the machine's reset asked for in the middle of the traffic, a
-//              clock at a time: the core goes into reset only once the share
-//              has nothing granted and nothing outstanding --- at that clock
-//              the bridge holds nothing of the machine's, no fill the master
-//              took is still to come, and only the second halves of writes
-//              split at 4 KiB are unanswered --- and every fill after it is
-//              the bridge's line, with no beat of an older one in it.
+//              clock at a time: the drain ends within `kDrainBound` clocks,
+//              the share granting the master what it owes; at the reset the
+//              bridge holds nothing of the machine's, no fill the master took
+//              is still to come and no write is unanswered, split at 4 KiB
+//              or not; and every fill after it is the bridge's line, with no
+//              beat of an older one in it.
 //   HANDSHAKE  the processor asks the fabric to be quiet: from `kHeldSlack`
 //              clocks after the request nothing new is put to the bridge,
 //              the acknowledgment comes only once nothing is outstanding,
@@ -67,6 +76,7 @@
 //
 // Each configuration runs under three seeds and two sets of readies.
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -90,6 +100,9 @@ constexpr int kMachine = 0, kPack = 1, kDisplay = 2;
 // From the port going live to the master out of reset: `may_start` the clock
 // after `live`, `pend_n` the clock after that, and `run` the next.
 constexpr long kReleaseBound = 3;
+// A drain through the share, the bridge answering in its own time: far
+// above what one takes, far below the core's bound of 2^16.
+constexpr long kDrainBound = 4000;
 // From the shut, the request or the processor's reset at the port's pins to
 // the share granting nothing new: three synchronizer stages, the gate's
 // `hold`, and a grant registered on the edge before it.
@@ -182,6 +195,10 @@ struct Run {
   uint32_t cur_line = 0, next_id = 0, ans_id = 0;
   long writes = 0, reads = 0, splits = 0, two_beat = 0, resets = 0, queued_while_shut = 0;
   bool mach_rst_prev = true;
+  // The core's reset rule (the header): the request, its state, its clocks.
+  enum { kCoreRun, kCoreDrain, kCoreReset } core = kCoreReset;
+  bool tb_req = false;
+  long core_count = 0, drain_from = -1, longest_drain = 0;
   bool stopped = false;   // the port side asks nothing more: the tally is read
   long live_rise = -1, released = -1, last_reset = -1;
 
@@ -306,8 +323,11 @@ struct Run {
       d->f2s_rlast = b.sent + 1 == b.len;
     }
 
-    // The machine's port side, while the core is out of reset.
-    const bool core_run = !d->mach_rst;
+    // The core's reset, as its state stands this clock.
+    d->mach_rst = d->h2f_reset || core == kCoreReset;
+    // The machine's port side, while the core is out of reset; nothing new
+    // offered while it drains.
+    const bool core_run = !d->mach_rst && core == kCoreRun;
     // Beside the other two masters the machine leaves gaps: with every
     // write posted back to back the share's hold, which grants nobody else
     // while the machine asks or waits, starves both (measured: the pack side
@@ -320,7 +340,7 @@ struct Run {
       to_write.pop_front();
       w_on = true;
     }
-    d->w_req = core_run && w_on;
+    d->w_req = !d->mach_rst && w_on;
     d->w_bus = cur.w;
     d->w_word = cur.word;
     d->w_id = next_id & 15;
@@ -332,7 +352,7 @@ struct Run {
         ar_on = true;
       }
     }
-    d->ar_req = core_run && ar_on;
+    d->ar_req = !d->mach_rst && ar_on;
     d->ar_line = cur_line;
 
     // The pack side.
@@ -515,8 +535,7 @@ struct Run {
         if (x.first == kMachine && cfg != kHps) fail("the core reset with a write of its own unanswered at the bridge");
       if (!w_early.empty() && cfg != kHps) fail("the core reset with a write beat at the bridge and no address");
       if (rd_wait && cfg != kHps) fail("the core reset with a line fill it took still to come");
-      for (auto &x : inflight)
-        if (!x.split && cfg != kHps) fail("the core reset with a whole write unanswered");
+      if (!inflight.empty() && cfg != kHps) fail("the core reset with a write of its own unanswered");
       // What the reset leaves: an unanswered write's bytes may or may not
       // be memory's; the next word written there settles them.
       for (auto &x : inflight) {
@@ -534,6 +553,30 @@ struct Run {
     }
     if (!d->mach_rst && mach_rst_prev) released = t;
     mach_rst_prev = d->mach_rst;
+
+    // ---- the core's reset rule, at the edge.
+    const bool req = tb_req || !d->may_start;
+    if (d->h2f_reset) {
+      core = req ? kCoreReset : kCoreRun;
+      core_count = 0;
+    } else if (core == kCoreRun) {
+      if (req) {
+        core = kCoreDrain;
+        drain_from = t;
+      }
+    } else if (core == kCoreDrain) {
+      if (!w_on && !ar_on && !rd_wait && inflight.empty()) {
+        core = kCoreReset;
+        core_count = 0;
+        longest_drain = std::max(longest_drain, t - drain_from);
+      } else if (t - drain_from > kDrainBound) {
+        fail("the master's drain did not end: the share does not let it finish");
+        core = kCoreReset;
+      }
+    } else {
+      if (core_count < 64) ++core_count;
+      else if (!req) core = kCoreRun;
+    }
 
     // ---- the pack side.
     if (others) {
@@ -635,7 +678,8 @@ struct Run {
     d->gp_open = 0;
     d->gp_half = 0;
     d->warm_req_n = 1;
-    d->mach_req = 0;
+    tb_req = false;
+    d->mach_rst = 1;   // the core powers up in its reset
     for (int k = 0; k < 4; ++k) {
       d->clk = 0;
       d->eval();
@@ -670,8 +714,7 @@ struct Run {
           if (d->mach_rst) fail("the machine reset while the port is shut");
         }
       }
-      if (cfg == kReset && t > 1000 && t % 1777 == 0 && t < limit / 2) d->mach_req = 1;
-      else d->mach_req = cfg == kHps ? d->h2f_reset : 0;
+      tb_req = cfg == kReset && t > 1000 && t % 1777 == 0 && t < limit / 2;
       if (cfg == kHandshake) {
         if (t == quiet_at) {
           d->warm_req_n = 0;
@@ -774,9 +817,10 @@ struct Run {
       return 1;
     }
     std::printf("ok: seed %" PRIu64 ", %-9s readies %3u%%: %ld writes (%ld of two beats, %ld split at 4 KiB), %ld "
-                "line reads, %ld resets, live at %ld, let go at %ld; pack %ld bursts, display %ld; %ld clocks\n",
-                seed, config_name(cfg), ready_pct, writes, two_beat, splits, reads, resets, live_rise, released,
-                pk_bursts, dp_bursts, t);
+                "line reads, %ld resets (the longest drain %ld clocks), live at %ld, let go at %ld; pack %ld bursts, "
+                "display %ld; %ld clocks\n",
+                seed, config_name(cfg), ready_pct, writes, two_beat, splits, reads, resets, longest_drain, live_rise,
+                released, pk_bursts, dp_bursts, t);
     return 0;
   }
 };

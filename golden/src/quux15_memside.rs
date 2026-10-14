@@ -1070,6 +1070,57 @@ fn recency(way: u64, seed: u64) -> Preset {
     p
 }
 
+/// **The read-back program** (`tb/quux15_reset_axi_tb.cpp`'s, A15b.5's
+/// Drains and its board-reset clarification): a reset the board asks for
+/// lands every write the port has granted, so a program restarted after it
+/// reads back what it wrote before it.  Phase 1 reads one word of each of
+/// four lines, so that the cache holds them, then writes 32 words, the even
+/// ones on those four lines (lanes 1, 3, 4, 6), the odd ones a line each of
+/// their own, never cached; values 0o3456000000 + i.  Phase 2, at the
+/// trace's `# resume` address, copies each written word to 0o10000 + i
+/// (pass 1: a cached line's word read from the cache, an uncached one's
+/// from memory), evicts the four lines (two reads of their set, 32768 and
+/// 65536 words on), and copies the cached lines' 16 words again to
+/// 0o11000 + j (pass 2: from memory).  Run whole, as here, it reads back
+/// what it wrote; the testbench restarts it at phase 2 after a reset in
+/// phase 1 and holds what it reads to what the port granted before it.
+pub fn reset_back() -> Vec<(String, Preset)> {
+    const LINES: [u64; 4] = [0o4000, 0o4010, 0o4020, 0o4030];
+    const LANES: [u64; 4] = [1, 3, 4, 6];
+    let mut a: Vec<u64> = Vec::new();
+    for j in 0..16u64 {
+        a.push(LINES[(j / 4) as usize] + LANES[(j % 4) as usize]);
+        a.push(0o5000 + 8 * j + (j % 8));
+    }
+    let mut p = run();
+    for &l in &LINES {
+        p.read(PHYS | l, 0o20);
+    }
+    for (i, &w) in a.iter().enumerate() {
+        p.write(0o3456000000 + i as u64, PHYS | w);
+    }
+    p.fill(4);
+    p.resume = Some(p.at());
+    for (i, &w) in a.iter().enumerate() {
+        p.read(PHYS | w, 0o20);
+        let b = p.k(PHYS | (0o10000 + i as u64));
+        p.op(ALU | SETA | a_src(b) | START_WRITE);
+        p.fill(2);
+    }
+    for &l in &LINES {
+        p.read(PHYS | (l + 0o100000), 0o21);
+        p.read(PHYS | (l + 0o200000), 0o21);
+    }
+    for j in 0..16usize {
+        p.read(PHYS | a[2 * j], 0o20);
+        let b = p.k(PHYS | (0o11000 + j as u64));
+        p.op(ALU | SETA | a_src(b) | START_WRITE);
+        p.fill(2);
+    }
+    p.stop();
+    vec![("readback".into(), p)]
+}
+
 #[allow(dead_code)]
 fn _uses() {
     let _ = (P, M_ZERO);

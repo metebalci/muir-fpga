@@ -23,10 +23,26 @@
 //     4  TICKS    the clocks since reset, <31:0>: a tick is the machine's
 //                 clock, the period word 40 says
 //     5  TICKSH   <63:32>, latched when TICKS was read
-//     6  RESET    a write of `RESET_KEY` and of nothing else resets the
-//                 machine for `RESET_T` clocks; it reads the key's top half
-//                 in <31:16>, the resets since the face came up in <15:8>
-//                 (saturating) and <0> a reset now
+//     6  RESET    a write of `RESET_KEY` and of nothing else asks for the
+//                 machine's reset, a request `RESET_T` clocks long, which
+//                 the core latches and takes once its memory port has
+//                 drained (`quux15_core.sv`'s `rq_*`).  **THE WRITE IS
+//                 ANSWERED ONCE THE MACHINE HAS BEEN THROUGH ITS RESET, OR
+//                 AFTER `ANSWER_T` CLOCKS, WHICHEVER COMES FIRST**: its B is
+//                 held until then, and never longer, since a write on this
+//                 port that nothing answers hangs both Arm cores.  It reads
+//                 the key's top half in <31:16>, the resets since the face
+//                 came up in <15:8> (saturating), and
+//                   <0> a reset now: the request, the drain or the machine
+//                       in its reset
+//                   <1> the drain: the port not yet quiet
+//                   <2> the last RESET write was answered at `ANSWER_T`,
+//                       the machine not through its reset by then; cleared
+//                       by the next RESET write
+//                   <3> the reset cut the memory port: a drain met the
+//                       core's bound, and the machine is held in reset
+//                       until the port's own reset (sticky, the core's
+//                       `rst_cut`)
 //     7  VMA      <31:0> of VMA; **its read latches Q and MD beside it**
 //     8  Q        <31:0> of Q, latched when VMA was read
 //     9  MD       <31:0> of MD, latched when VMA was read
@@ -105,6 +121,10 @@ module quux15_face #(
     parameter logic [31:0] UNMAPPED   = ~IDENT,
     parameter logic [31:0] RESET_KEY  = 32'h5253_4554,
     parameter int unsigned RESET_T    = 64,
+    // The longest a RESET write waits for its answer: 2^17 clocks, past
+    // the core's drain bound (2^16) and its reset, so that an answer at the
+    // bound finds a cut drain already recorded in word 6's <3>.
+    parameter int unsigned ANSWER_T   = 131072,
     // Main memory, in 64K-word units, and the video controller's size.
     parameter int unsigned MAIN_UNITS = 32,
     parameter int unsigned VIDEO_W    = 1280,
@@ -169,8 +189,12 @@ module quux15_face #(
     input  var logic        s_rready,
     // --- The build stamp.
     input  var logic [31:0] build,
-    // --- The machine.
-    output var logic        mach_rst,
+    // --- The machine: the reset asked for, and the core's answer to it
+    // --- (`quux15_core.sv`'s `rst_pend`, `rst_on`, `rst_cut`).
+    output var logic        mach_req,
+    input  var logic        mach_pend,
+    input  var logic        mach_on,
+    input  var logic        mach_cut,
     output var logic [31:0] rtc_start,
     input  var logic [63:0] committed,
     input  var logic [47:0] clocks,
@@ -215,13 +239,17 @@ module quux15_face #(
   logic [9:0]  w_word, r_word;
   logic        wr, rd;
   logic [31:0] wr_data, wr_mask, rd_data;
+  // The write channel's answer, held while a RESET write waits (`ans_hold`).
+  logic        regs_bvalid, regs_bready, ans_hold;
+  assign s_bvalid    = regs_bvalid && !ans_hold;
+  assign regs_bready = s_bready && !ans_hold;
 
   cadr_gp_regs #(.ID_W(ID_W), .LEN_W(LEN_W)) u_regs (
       .clk(clk), .rst(rst),
       .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awid(s_awid), .s_awvalid(s_awvalid),
       .s_awready(s_awready), .s_wdata(s_wdata), .s_wstrb(s_wstrb), .s_wlast(s_wlast),
       .s_wvalid(s_wvalid), .s_wready(s_wready), .s_bresp(s_bresp), .s_bid(s_bid),
-      .s_bvalid(s_bvalid), .s_bready(s_bready),
+      .s_bvalid(regs_bvalid), .s_bready(regs_bready),
       .s_araddr(s_araddr), .s_arlen(s_arlen), .s_arid(s_arid), .s_arvalid(s_arvalid),
       .s_arready(s_arready), .s_rdata(s_rdata), .s_rresp(s_rresp), .s_rid(s_rid),
       .s_rlast(s_rlast), .s_rvalid(s_rvalid), .s_rready(s_rready),
@@ -229,23 +257,45 @@ module quux15_face #(
       .r_word(r_word), .rd(rd), .rd_data(rd_data)
   );
 
-  // --- The machine's reset: RESET's key's pulse.
+  // --- The machine's reset: RESET's key's request, a pulse the core
+  // --- latches; and the write's answer, held until the machine has been in
+  // --- its reset and out of it (`ans_seen`, then all three low), or until
+  // --- `ANSWER_T` clocks have gone (`ans_bound`).
   logic [6:0]  reset_left;
   logic [7:0]  resets;
-  logic        key_ok;
+  logic        key_ok, ans_seen, ans_bound;
+  logic [17:0] ans_count;
   assign key_ok = wr && w_word == 10'd6 && wr_mask == 32'hFFFF_FFFF && wr_data == RESET_KEY;
   always_ff @(posedge clk) begin
     if (rst) begin
       reset_left <= '0;
       resets     <= '0;
+      ans_hold   <= 1'b0;
+      ans_seen   <= 1'b0;
+      ans_bound  <= 1'b0;
+      ans_count  <= '0;
     end else if (key_ok) begin
       reset_left <= 7'(RESET_T);
       if (resets != 8'hFF) resets <= resets + 8'd1;
-    end else if (reset_left != '0) begin
-      reset_left <= reset_left - 7'd1;
+      ans_hold   <= 1'b1;
+      ans_seen   <= 1'b0;
+      ans_bound  <= 1'b0;
+      ans_count  <= '0;
+    end else begin
+      if (reset_left != '0) reset_left <= reset_left - 7'd1;
+      if (ans_hold) begin
+        ans_count <= ans_count + 18'd1;
+        if (mach_on) ans_seen <= 1'b1;
+        if (ans_seen && !mach_on && !mach_pend && reset_left == '0) begin
+          ans_hold <= 1'b0;
+        end else if (32'(ans_count) + 1 >= ANSWER_T) begin
+          ans_hold  <= 1'b0;
+          ans_bound <= 1'b1;
+        end
+      end
     end
   end
-  assign mach_rst = reset_left != '0;
+  assign mach_req = reset_left != '0;
 
   // --- Words 33 to 36 and 42: the display output and the lamp, as
   // --- `cadr_console.sv` has them.  A whole-word key is compared with the
@@ -394,7 +444,8 @@ module quux15_face #(
         10'd3:  rd_data = cycles_hi;
         10'd4:  rd_data = tick_lo;
         10'd5:  rd_data = ticks_hi;
-        10'd6:  rd_data = {RESET_KEY[31:16], resets, 7'd0, reset_left != '0};
+        10'd6:  rd_data = {RESET_KEY[31:16], resets, 4'd0, mach_cut, ans_bound, mach_pend,
+                           reset_left != '0 || mach_pend || mach_on};
         10'd7:  rd_data = vma_lo;
         10'd8:  rd_data = q_l;
         10'd9:  rd_data = md_l;

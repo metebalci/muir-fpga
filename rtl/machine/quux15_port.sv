@@ -68,6 +68,16 @@
 // newer one.  muir's word is written at once, so the lookup that follows
 // sees it, and so does this one.
 //
+// **A RESET THE BOARD ASKS FOR DRAINS THE PORT FIRST** (A15b.5's Drains and
+// its board-reset clarification; `quux15_core.sv`'s `rq_*`): while `hold`
+// is up the port grants nothing new --- no P or T lookup, no write start,
+// no post, no word of D's --- and what it has taken goes on: every queued
+// and in-flight write lands, D's included, a fill whose address is out or
+// waiting on the read rule comes in, and the lines' write buffer is
+// written.  `quiet` says all of that is over and no lookup made at the last
+// clock's end may still make a fill: the core's reset may then rise with no
+// VALID up on the master and nothing owed to it.
+//
 // **THE CACHE**: 2 ways a set, `SETS` sets of 8 words, the set the line's
 // low bits, LRU by the way used last; tags and lines in `quux15_tdp.sv`
 // RAMs (a line 8 words of five bytes, so that a word is written with its
@@ -95,6 +105,9 @@ module quux15_port #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // The core's HARD reset alone (`quux15_core.sv`'s `rst`): the port's own
+    // and the clock's lock.  It clears the cache's valid bits as well.
+    input  var logic        hard,
 
     // --- P: the processor's read.
     output var logic        p_busy,
@@ -153,6 +166,12 @@ module quux15_port #(
     // The file device's completion this clock: every line invalid, and
     // every lookup waits a set's clock each (`Port::sweep`; A15b.6).
     input  var logic        sweep_go,
+    // A reset asked for (`quux15_core.sv`): grant nothing new.  And nothing
+    // queued, in flight, filling or buffered, no lookup outstanding: the
+    // port has nothing of its own left and the master owes and is owed
+    // nothing.
+    input  var logic        hold,
+    output var logic        quiet,
     // The master's declared constants and its writes' ID mode
     // (`quux15_axi_master.sv`).
     output var logic        one_write_id,
@@ -302,7 +321,13 @@ module quux15_port #(
   // The cache's valid bits, a way's in RAM (`quux15_validmap.sv`), which
   // the sweep clears in its first clock; and the way each set used last, in
   // RAM too (`quux15_recency.sv`).  An empty cache at power-on, as a
-  // bitstream holds it, which -RESET leaves as it is.
+  // bitstream holds it, which -RESET and a reset the board asks for leave
+  // as they are: every write the cache took has landed by then.  **A HARD
+  // RESET CLEARS IT** (`hard`): it drops the queue and the in-flight list,
+  // whose words the cache already holds, so no line may outlive it.  The
+  // valid maps clear every group of both ways in one clock (their `rst`),
+  // inside the reset, so the first lookup after it finds the cache empty;
+  // each way's map is the one every lookup (P, T and W) reads.
   logic          mru_f;
   logic          v0p, v0t, v0w, v1p, v1t, v1w;
   // The fill installed at the last edge: its set and way.
@@ -449,16 +474,16 @@ module quux15_port #(
   logic [3:0] q_after_accept;
   logic       post_push, w_push;
   logic [2:0] w_slot;
-  assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping || d_force;
+  assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping || d_force || hold;
   always_comb begin
     q_after_accept = q_count - {3'd0, mw_taken};
     // A transfer's write waited long enough has the next free entry.
-    post_ok = (q_after_accept + {3'd0, d_reserve}) < 4'(QN);
+    post_ok = (q_after_accept + {3'd0, d_reserve}) < 4'(QN) && !hold;
   end
   assign post_push = post_req && post_ok;
   always_comb begin
     w_ok = !((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == w_bus[28:3]) && !sweeping
-        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN) && !hold;
   end
   always_comb begin
     w_push = w_req && w_ok;
@@ -470,7 +495,7 @@ module quux15_port #(
   logic t_issue, t_wanted;
   always_comb begin
     t_wanted = t_start || tst == T_RETRY || (tst == T_LOOK && t_cancel);
-    t_issue  = t_wanted && !f_exists && !sweeping && !d_force;
+    t_issue  = t_wanted && !f_exists && !sweeping && !d_force && !hold;
   end
   always_comb begin
     t_ready  = tst == T_HIT || (tst == T_FILL && fs == F_LAND);
@@ -507,7 +532,7 @@ module quux15_port #(
     lb_hit    = lb_v && lb_line == d_addr[27:3];
     d_w_block = ((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == d_line)
              || (lp_v && lp_bus[28:3] == d_line) || (lt_v && lt_bus[28:3] == d_line);
-    d_push    = d_req && d_write && !d_w_block && !install
+    d_push    = d_req && d_write && !d_w_block && !install && !hold
              && (q_after_accept + {3'd0, post_push} + {3'd0, w_push}) < 4'(QN);
     // At the queue's tail, behind every entry before it: a planted
     // fault's puts it at the head (`d_ahead`).
@@ -521,7 +546,7 @@ module quux15_port #(
     // A table read asked for now would look up beside it, unless the
     // transfer is let in and holds it.
     d_fill_go   = d_fill_want && (fs == F_NONE || fs == F_LAND) && !lp_v && !lt_v && !p_req
-               && (d_force || !(t_start || tst == T_RETRY)) && !sweeping;
+               && (d_force || !(t_start || tst == T_RETRY)) && !sweeping && !hold;
   end
 
   // The way each set used last: a P hit's, a T hit's and an install's
@@ -537,11 +562,11 @@ module quux15_port #(
   logic          v_we0, v_we1;
   logic [SB-1:0] v_wa;
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid0 (
-      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(!d_push),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v0p), .rbit1(v0t), .rbit2(v0w));
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid1 (
-      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v1p), .rbit1(v1t), .rbit2(v1w));
   // The valid maps' writes: a fill's install, or a transfer's write
@@ -613,6 +638,9 @@ module quux15_port #(
       idle_n = queue_n == 4'd0 && inflight_n == 5'd0 && !fill_n && !sweep_go && sweep_left == 16'd0;
     end
     empty      = q_pcount == 4'd0 && f_pcount == n_land_p;
+    // The queue, the in-flight list, the fill, the lines' write buffer, and
+    // the lookups made at the last clock's end, each empty.
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
   end
 
   // **THE BUFFER'S NEXT ENTRIES, WITH ITS OLDEST DRAINED AND WITHOUT**,
@@ -865,6 +893,11 @@ module quux15_port #(
         $error("quux15_port: the lines' write buffer overflows");
       if (post_push && !(tl_v && tl_line == post_bus[28:3]))
         $error("quux15_port: a posted word whose line no table read found");
+      // **QUIET AT DELIVERY**: in the clock the core's reset is decided on
+      // `quiet`, the master has no VALID up and owes and is owed nothing.
+      if (hold && quiet && (m_arvalid || m_awvalid || m_wvalid || master.rstate != '0
+                            || master.cont_v || f_count != 5'd0))
+        $error("quux15_port: quiet, and the master has a VALID up or a transaction open");
     end
   end
 `endif

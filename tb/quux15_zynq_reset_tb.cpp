@@ -12,15 +12,23 @@
 // own (`S_AXI_HP0`'s on the Arty Z7-20, `pl_resetn0` on the Kria KR260), level
 // 0 of `cadr_sim_level`, which this file drives.
 //
-// WHAT IS HELD, by the core's `rst` as the shell sees it:
-//   - with the port in reset, the core is in reset every clock, the
+// WHAT IS HELD, by the core's two resets as the shell sees them, its hard
+// `rst` and its request `rst_req` (`quux15_core.sv`'s `rq_*`):
+//   - with the port in reset, the core's hard reset is up every clock, the
 //     fabric's own reset long over (the MMCM's stub locks at once);
 //   - the port let out of reset, the core is let go within `kBound` clocks,
 //     the synchronizer's three stages and the register behind them;
-//   - the port put back into reset under a running core, the core is in
-//     reset again within `kBound` clocks and stays there while the port is.
+//   - the port put back into reset under a running core, the hard reset is
+//     up again within `kBound` clocks and stays there while the port is;
+//   - the console face's RESET key, written on the face's page, is a
+//     request and never the hard reset; the write is answered once the core
+//     has been through its reset (the shell's `rst_on`, which this file plays
+//     as a core whose port drains at once), and, with a core that never
+//     takes the request, at the face's bound (`ANSWER_T`), word 6 then
+//     saying so in its <2>;
+//   - on the Arty Z7-20, BTN1 is a request and never the hard reset.
 // The processing system's ports are otherwise idle: its general-purpose
-// masters ask nothing and its memory answers nothing.
+// masters ask only for the face's words and its memory answers nothing.
 
 #include <cstdarg>
 #include <cstdio>
@@ -32,6 +40,8 @@
 using Top = Vquux15_arty;
 using Root = Vquux15_arty___024root;
 #define CORE_I(n) (r->quux15_arty__DOT__u_core__DOT__tbi_##n)
+#define CORE_O(n) (r->quux15_arty__DOT__u_core__DOT__tbo_##n)
+constexpr unsigned kFace = 0x80000000u;
 #define BOARD "the Arty Z7-20"
 #else
 #include "Vquux15_kr260.h"
@@ -40,6 +50,8 @@ using Root = Vquux15_arty___024root;
 using Top = Vquux15_kr260;
 using Root = Vquux15_kr260___024root;
 #define CORE_I(n) (r->quux15_kr260__DOT__u_core__DOT__tbi_##n)
+#define CORE_O(n) (r->quux15_kr260__DOT__u_core__DOT__tbo_##n)
+constexpr unsigned kFace = 0xB0000000u;
 #define BOARD "the Kria KR260"
 #endif
 #include "verilated.h"
@@ -53,7 +65,19 @@ long t = 0;
 int fails = 0;
 int level0 = 0;
 constexpr long kBound = 8;
+// The face's bound on its answer to a RESET write (`quux15_face.sv`).
+constexpr long kAnswerBound = 131072;
+// Whether the shell plays a core that takes its request: its `rst_on` the
+// hard reset or the request, as a core whose port is empty.
+bool core_takes = true;
 
+// The processing system's store and load on the face's port (GP 1): 0 idle,
+// 1 address and word offered, 2 waiting for B, 3 read offered, 4 waiting for
+// R.  What came back, and the clocks.
+int gp_state = 0;
+unsigned gp_addr = 0, gp_data = 0, gp_read = 0;
+bool aw_out = false, w_out = false, ar_out = false;
+long gp_wrote = -1, gp_answered = -1;
 void Check(bool ok, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void Check(bool ok, const char *fmt, ...) {
   if (ok) return;
@@ -67,6 +91,9 @@ void Check(bool ok, const char *fmt, ...) {
 }
 
 void Tick() {
+  CORE_O(rst_on) = core_takes && (CORE_I(rst) || CORE_I(rst_req));
+  CORE_O(rst_pend) = 0;
+  CORE_O(rst_cut) = 0;
 #ifdef QUUX15_ARTY
   top->sysclk = 0;
   top->eval();
@@ -79,6 +106,15 @@ void Tick() {
   top->eval();
 #endif
   ++t;
+}
+
+long ReqHeld(long n) {
+  long held = 0;
+  for (long i = 0; i < n; ++i) {
+    Tick();
+    if (CORE_I(rst_req)) ++held;
+  }
+  return held;
 }
 
 long Held(long n) {
@@ -103,13 +139,59 @@ long Until(F cond, long limit) {
 
 // The processing system's side, through `tb/cadr_sim_axi.sv`: masters that
 // ask nothing, memory that answers nothing, and the port's reset.
-void cadr_sim_gp(int, svBit, svBit, svBit, int, int, svBit, svBit, int, int, int, svBit, int *awaddr,
-                            int *awlen, int *awid, svBit *awvalid, int *wdata, int *wstrb, svBit *wlast,
-                            svBit *wvalid, svBit *bready, int *araddr, int *arlen, int *arid, svBit *arvalid,
-                            svBit *rready) {
+void cadr_sim_gp(int port, svBit awready, svBit wready, svBit bvalid, int, int, svBit arready, svBit rvalid,
+                 int rdata, int, int, svBit, int *awaddr, int *awlen, int *awid, svBit *awvalid, int *wdata,
+                 int *wstrb, svBit *wlast, svBit *wvalid, svBit *bready, int *araddr, int *arlen, int *arid,
+                 svBit *arvalid, svBit *rready) {
   *awaddr = *awlen = *awid = *wdata = *wstrb = *araddr = *arlen = *arid = 0;
   *awvalid = *wvalid = *wlast = *arvalid = 0;
   *bready = *rready = 1;
+  if (port != 1) return;
+  // A handshake: what this side drove from the last edge, and the other
+  // side's ready before this one.
+  static bool aw_drv = false, w_drv = false, ar_drv = false;
+  if (gp_state == 1) {
+    if (aw_drv && awready) aw_out = false;
+    if (w_drv && wready) w_out = false;
+    if (!aw_out && !w_out) gp_state = 2;
+  } else if (gp_state == 2 && bvalid) {
+    gp_answered = t;
+    gp_state = 0;
+  } else if (gp_state == 3 && ar_drv && arready) {
+    ar_out = false;
+    gp_state = 4;
+  } else if (gp_state == 4 && rvalid) {
+    gp_read = static_cast<unsigned>(rdata);
+    gp_state = 0;
+  }
+  aw_drv = aw_out;
+  w_drv = w_out;
+  ar_drv = ar_out;
+  *awaddr = static_cast<int>(gp_addr);
+  *araddr = static_cast<int>(gp_addr);
+  *wdata = static_cast<int>(gp_data);
+  *wstrb = 0xF;
+  *wlast = 1;
+  *awvalid = aw_out;
+  *wvalid = w_out;
+  *arvalid = ar_out;
+}
+
+// The face's word `k`, written and answered, or read.
+void FaceWrite(unsigned k, unsigned v) {
+  gp_addr = kFace + 4 * k;
+  gp_data = v;
+  aw_out = w_out = true;
+  gp_state = 1;
+  gp_wrote = t;
+  gp_answered = -1;
+}
+unsigned FaceRead(unsigned k) {
+  gp_addr = kFace + 4 * k;
+  ar_out = true;
+  gp_state = 3;
+  for (int i = 0; i < 200 && gp_state != 0; ++i) Tick();
+  return gp_read;
 }
 
 void cadr_sim_mem(int, svBit, int, int, int, svBit, long long, int, svBit, svBit, svBit, int, int, int,
@@ -153,6 +235,53 @@ int main(int argc, char **argv) {
   Check(held == 200, "the core was out of reset %ld clocks of 200 with its port in reset again", 200 - held);
   level0 = 1;
   Check(Until([] { return CORE_I(rst) == 0; }, 100) >= 0, "the core never left reset after its port did again");
+  Held(50);
+
+  // The console face's RESET key: a request, the hard reset untouched, the
+  // write answered once the core has been through its reset.
+  constexpr unsigned kResetWord = 6, kResetKey = 0x52534554u;
+  FaceWrite(kResetWord, kResetKey);
+  long req_seen = 0, hard_seen = 0;
+  for (int i = 0; i < 2000 && gp_answered < 0; ++i) {
+    Tick();
+    if (CORE_I(rst_req)) ++req_seen;
+    if (CORE_I(rst)) ++hard_seen;
+  }
+  const long answered = gp_answered - gp_wrote;
+  Check(req_seen > 0, "the face's RESET key never asked for the core's reset");
+  Check(hard_seen == 0, "the face's RESET key gave the core its hard reset for %ld clocks", hard_seen);
+  Check(gp_answered >= 0 && answered < 200, "the RESET write was answered %ld clocks after it, wanting soon after "
+        "the core's reset", answered);
+  unsigned w6 = FaceRead(kResetWord);
+  Check((w6 & 0xFFFF0000u) == 0x52530000u && (w6 & 0xF) == 0, "word 6 reads %08x after a reset the core took", w6);
+  // A core that never takes the request: the answer at the face's bound,
+  // and word 6 says so.
+  core_takes = false;
+  Held(10);
+  FaceWrite(kResetWord, kResetKey);
+  for (long i = 0; i < kAnswerBound + 1000 && gp_answered < 0; ++i) Tick();
+  const long bounded = gp_answered < 0 ? -1 : gp_answered - gp_wrote;
+  Check(bounded >= kAnswerBound && bounded <= kAnswerBound + 16,
+        "with the core not taking the request the RESET write was answered %ld clocks after it, wanting the "
+        "face's bound, %ld", bounded, kAnswerBound);
+  w6 = FaceRead(kResetWord);
+  Check(((w6 >> 2) & 1) == 1, "word 6 reads %08x after an answer at the bound, wanting <2> set", w6);
+  core_takes = true;
+  Held(100);
+#ifdef QUUX15_ARTY
+  // BTN1: a request, the hard reset untouched.
+  top->btn = 2;
+  const long btn_req = ReqHeld(100);
+  long btn_hard = 0;
+  for (int i = 0; i < 100; ++i) {
+    Tick();
+    if (CORE_I(rst)) ++btn_hard;
+  }
+  top->btn = 0;
+  Check(btn_req >= 100 - kBound, "BTN1 held asked for the core's reset %ld clocks of 100", btn_req);
+  Check(btn_hard == 0, "BTN1 gave the core its hard reset for %ld clocks", btn_hard);
+  Check(Until([] { return CORE_I(rst_req) == 0; }, 100) >= 0, "the request stood after BTN1 was let go");
+#endif
 
   delete top;
   if (fails) {
@@ -160,6 +289,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("quux15 reset hold, %s: ok, the core held while its memory port is in reset, let go %ld clocks after "
-              "it, reset again %ld clocks after it\n", BOARD, let_go, caught);
+              "it, reset again %ld clocks after it; the RESET key a request, answered %ld clocks after the write, "
+              "and at the face's bound, %ld, when the core does not take it\n", BOARD, let_go, caught, answered,
+              bounded);
   return 0;
 }

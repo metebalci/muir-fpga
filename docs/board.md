@@ -548,13 +548,38 @@ because it resets the bridge too. `tb/cadr_board_reset_tb.cpp` holds all of
 this on each board's own top level, and `tb/cadr_f2sdram_reset_tb.cpp` holds
 the memory port.
 
-The Zynq boards' memory ports keep the same rule. The machine's adapter on
-`S_AXI_HP0` takes the port's reset alone. The machine drops its request in
-reset, so the adapter finishes the transaction in hand and goes idle. The
-display on `S_AXI_HP3` takes BTN1 at its own `fabric_rst`, which resets its
-sleep setting at once. Its fetch finishes the job it has in hand, a line or a
-band, and is reset only then. `tb/cadr_board_reset_tb.cpp` holds a read on
-each port and a write on `S_AXI_HP0` unanswered across the button.
+The Zynq boards' memory ports keep the same rule. On the CADR, the machine's
+adapter on `S_AXI_HP0` takes the port's reset alone. The machine drops its
+request in reset, so the adapter finishes the transaction in hand and goes
+idle. The display on `S_AXI_HP3` takes BTN1 at its own `fabric_rst`, which
+resets its sleep setting at once. Its fetch finishes the job it has in hand, a
+line or a band, and is reset only then. `tb/cadr_board_reset_tb.cpp` holds a
+read on each port and a write on `S_AXI_HP0` unanswered across the button.
+
+On QUUX revision 15 the memory port's master is inside the core
+(`rtl/machine/quux15_core.sv`), so the rule is kept in the core. BTN1, the
+DE25-Nano's KEY1 and the console face's RESET key are a request, which the core
+latches. From then on its memory port grants nothing new. Every write it has
+queued or in flight lands, block-disk's included, and every fill it has asked
+for comes in. Only then is the core reset, for at least 64 clocks and for as
+long as the request stands. So the master's reset finds nothing open, and the
+cache, which no reset clears, holds what main memory holds. A bouncing button
+is a series of such resets, each one harmless. The request does not wait for
+the machine to halt, so an error-halted machine is reset the same way.
+Block-disk's transfer may be cut by it, its block partly moved.
+
+**The drain is bounded.** If the port has not gone quiet within 65,536 clocks,
+its other side has stopped answering. The core is then reset and held in reset
+until the port's own reset comes, and word 6 of the console face records it
+(`docs/console.md`, Revision 15's console face). The machine never runs on
+after a cut drain. The port's own reset (`S_AXI_HP0`'s on the Arty Z7-20,
+`pl_resetn0` on the Kria KR260, the processor's reset on the DE25-Nano) and the
+clock's lock reset the core at once. Such a reset drops the writes the port
+had queued or in flight, so it clears the cache too, in the reset's first
+clock, before the core can look anything up. `tb/quux15_reset_axi_tb.cpp` holds the
+rule behind each board's adapter, and `tb/quux15_zynq_reset_tb.cpp` and
+`tb/quux15_de25_top_tb.cpp` hold which input each top level gives as a request
+and which as the hard reset.
 
 Two other things press the same boot line. The first is the keyboard's boot
 chord. Holding both Controls and both Metas with Rubout cold-boots the machine,

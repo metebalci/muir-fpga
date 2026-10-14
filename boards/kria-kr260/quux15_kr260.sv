@@ -165,7 +165,11 @@ module quux15_kr260 #(
   //
   // The MMCM's lock, synchronized; the ports' `pl_resetn0` (EMIO GPIO 95),
   // synchronized; and the console face's reset, RESET's key's pulse.  The
-  // machine is held while any is.
+  // first two are the core's hard reset, taken at once; the third is a
+  // request, which the core takes once its memory port has drained, the
+  // master's writes landed and its reads in (`quux15_core.sv`'s `rq_*`).
+  // `mach_rst` is the core's reset as it is, for the lamps and the input
+  // page.
   logic [3:0] rst_sync;
   logic       rst;
   always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked};
@@ -177,8 +181,13 @@ module quux15_kr260 #(
   logic axi_rst;
   assign axi_rst = !port_rst_sync[2];
 
-  logic face_rst, mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+  logic face_req, hard_rst, mach_req, mach_rst;
+  logic core_rst_pend, core_rst_on, core_rst_cut;
+  always_ff @(posedge clk) begin
+    hard_rst <= rst || axi_rst;
+    mach_req <= face_req;
+    mach_rst <= core_rst_on;
+  end
 
   // ---------------------------------------------------------- the machine
   logic [15:0] obs_cs, obs_rd, obs_ex, obs_wb, obs_commit;
@@ -248,7 +257,8 @@ module quux15_kr260 #(
       .MAIN_BASE(MAIN_BASE),
       .DISPLAY_BASE(DISPLAY_BASE)
   ) u_core (
-      .clk(clk), .rst(mach_rst),
+      .clk(clk), .rst(hard_rst), .rst_req(mach_req),
+      .rst_pend(core_rst_pend), .rst_on(core_rst_on), .rst_cut(core_rst_cut),
       .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
       .obs_pdlptr(obs_pdlptr), .obs_pdlidx(obs_pdlidx), .obs_spcptr(obs_spcptr),
       .obs_q(obs_q), .obs_vma(obs_vma), .obs_md(obs_md), .obs_lc(obs_lc), .obs_ic(obs_ic),
@@ -750,7 +760,8 @@ module quux15_kr260 #(
       .s_rdata(gp1c_rdata), .s_rresp(gp1c_rresp), .s_rid(gp1c_rid),
       .s_rlast(gp1c_rlast), .s_rvalid(gp1c_rvalid), .s_rready(gp1c_rready),
       .build(build),
-      .mach_rst(face_rst), .rtc_start(rtc_start),
+      .mach_req(face_req), .mach_pend(core_rst_pend), .mach_on(core_rst_on), .mach_cut(core_rst_cut),
+      .rtc_start(rtc_start),
       .committed(obs_committed), .clocks(obs_clocks),
       .vma(obs_vma), .q(obs_q), .md(obs_md),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),

@@ -68,7 +68,8 @@
 //     constant.  No debug cable either (contract Q5): JA's pads undriven.
 //   - **THE BUTTONS, THE SWITCHES AND THE LAMPS KEEP `cadr_arty.sv`'s
 //     MEANINGS WHERE REVISION 15 HAS THE SIGNAL**:
-//       BTN1  the fabric's reset, which holds the machine with the rest.
+//       BTN1  the fabric's reset, and the machine's once its memory port
+//             has drained (the resets, below).
 //       BTN0  unused: revision 15 has no `-BOOT2`; the console's mode
 //             register and the keyboard's boot word boot it.
 //       SW0   unused: revision 15 has no no-auto-boot; it comes out of reset
@@ -181,12 +182,24 @@ module quux15_arty #(
   // The fabric's: the MMCM's lock and BTN1, synchronized (`cadr_arty.sv`'s
   // `rst`).  The ports': each of the processing system's own, synchronized,
   // for the faces and masters on that port, as `cadr_arty.sv` takes them.
-  // The machine's: the fabric's, `S_AXI_HP0`'s, and the console face's
-  // RESET key, so the machine is held while main memory's port is dead.
-  logic [3:0] rst_sync;
-  logic       rst;
-  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[1]};
-  assign rst = rst_sync[3];
+  // The machine's, two: the HARD reset, the MMCM's lock and `S_AXI_HP0`'s,
+  // taken by the core at once, so the machine is held while main memory's
+  // port is dead; and the REQUEST, BTN1 and the console face's RESET key,
+  // which the core takes once its memory port has drained, the master's
+  // writes landed and its reads in (`quux15_core.sv`'s `rq_*`).  **BTN1
+  // NEEDS NO DEBOUNCING**: the core latches a request, and each bounce of
+  // the press is a drained reset, harmless.  `mach_rst` is the core's
+  // reset as it is, for the lamps and the input page.
+  logic [3:0] rst_sync, lock_sync, btn_sync;
+  logic       rst, lock_rst, btn_req;
+  always_ff @(posedge clk) begin
+    rst_sync  <= {rst_sync[2:0], !mmcm_locked || btn[1]};
+    lock_sync <= {lock_sync[2:0], !mmcm_locked};
+    btn_sync  <= {btn_sync[2:0], btn[1]};
+  end
+  assign rst      = rst_sync[3];
+  assign lock_rst = lock_sync[3];
+  assign btn_req  = btn_sync[3];
 
   logic hp0_aresetn, hp2_aresetn, hp3_aresetn, gp0_aresetn, gp1_aresetn;
   logic [2:0] port_rst_sync, gp0_rst_sync, pack_rst_sync, gp1_rst_sync, disp_rst_sync;
@@ -204,8 +217,13 @@ module quux15_arty #(
   end
   assign axi_rst = !port_rst_sync[2];
 
-  logic face_rst, mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+  logic face_req, hard_rst, mach_req, mach_rst;
+  logic core_rst_pend, core_rst_on, core_rst_cut;
+  always_ff @(posedge clk) begin
+    hard_rst <= lock_rst || axi_rst;
+    mach_req <= btn_req || face_req;
+    mach_rst <= core_rst_on;
+  end
 
   // ---------------------------------------------------------- the machine
   logic [15:0] obs_cs, obs_rd, obs_ex, obs_wb, obs_commit;
@@ -275,7 +293,8 @@ module quux15_arty #(
       .MAIN_BASE(MAIN_BASE),
       .DISPLAY_BASE(DISPLAY_BASE)
   ) u_core (
-      .clk(clk), .rst(mach_rst),
+      .clk(clk), .rst(hard_rst), .rst_req(mach_req),
+      .rst_pend(core_rst_pend), .rst_on(core_rst_on), .rst_cut(core_rst_cut),
       .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
       .obs_pdlptr(obs_pdlptr), .obs_pdlidx(obs_pdlidx), .obs_spcptr(obs_spcptr),
       .obs_q(obs_q), .obs_vma(obs_vma), .obs_md(obs_md), .obs_lc(obs_lc), .obs_ic(obs_ic),
@@ -717,7 +736,8 @@ module quux15_arty #(
       .s_rdata(gp1c_rdata), .s_rresp(gp1c_rresp), .s_rid(gp1c_rid),
       .s_rlast(gp1c_rlast), .s_rvalid(gp1c_rvalid), .s_rready(gp1c_rready),
       .build(build),
-      .mach_rst(face_rst), .rtc_start(rtc_start),
+      .mach_req(face_req), .mach_pend(core_rst_pend), .mach_on(core_rst_on), .mach_cut(core_rst_cut),
+      .rtc_start(rtc_start),
       .committed(obs_committed), .clocks(obs_clocks),
       .vma(obs_vma), .q(obs_q), .md(obs_md),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),

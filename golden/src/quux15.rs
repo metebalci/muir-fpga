@@ -1014,6 +1014,9 @@ struct Case {
     /// built with one (`BOARD_NAME`, the Kria's at its 1920 by 1080); none,
     /// the words reading 0, as the core is built by default.
     board_name: Option<&'static str>,
+    /// Where a testbench restarts the program after a reset it gives it, the
+    /// trace's `# resume` line (`quux15_memside.rs`'s `reset_back`).
+    resume: Option<u64>,
     /// Block-disk's pack, its pack side's latency, and what the run is
     /// judged by at its end (`quux15_blockdisk.rs`).
     disk: Option<quux15_blockdisk::DiskRun>,
@@ -1068,6 +1071,7 @@ impl Case {
             main_words: None,
             video: None,
             board_name: None,
+            resume: None,
             disk: None,
             input: Vec::new(),
             net: None,
@@ -1123,6 +1127,9 @@ impl Case {
         }
         if self.skip_sweep {
             out.push("# sweep skipped".to_string());
+        }
+        if let Some(a) = self.resume {
+            out.push(format!("# resume {a:x}"));
         }
         if let Some(n) = self.main_words {
             out.push(format!("# main-units {:x}", n >> 16));
@@ -1659,6 +1666,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
             .collect(),
         "matrixmem" => quux15_preset::matrix_memory().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "ports" => quux15_memside::ports().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "resetback" => quux15_memside::reset_back().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "redirect" => quux15_memside::redirect().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "mainsize" => quux15_memside::mainsize().into_iter().map(|(n, p)| p.case(&n)).collect(),

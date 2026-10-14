@@ -9,10 +9,15 @@
 // Q and MD moving every clock, so that a latch taken at the wrong read shows.
 //
 //   - IDENT, and UNMAPPED at a word the face does not name;
-//   - the machine out of reset from power-on, as revisions 13 and 14 come up
-//     on the boards; a write of RESET's key with all four strobes resets it
-//     for RESET_T clocks; another value, or the key with a strobe off, does
-//     nothing; the count of resets;
+//   - no reset asked for from power-on, as revisions 13 and 14 come up on the
+//     boards; a write of RESET's key with all four strobes asks for one, a
+//     request RESET_T clocks long; another value, or the key with a strobe
+//     off, does nothing; the count of resets.  **ITS ANSWER**: with a core
+//     here that drains for a while and is then in its reset, the write's B
+//     comes once the core is out of it again, not before; with a core that
+//     never takes the request, at `ANSWER_T` clocks and not before, word 6's
+//     <2> then set; word 6's <1> the core's drain and <3> its cut, as the
+//     core gives them;
 //   - CYCLES then CYCLESH, TICKS then TICKSH, and VMA then Q and MD, the high
 //     words and the two beside VMA of the instant the low word was read;
 //   - the readout: the echo names the old address until the word is there,
@@ -57,6 +62,16 @@ constexpr uint32_t kUnmapped = ~kIdent;
 constexpr uint32_t kResetKey = 0x52534554u;
 constexpr int kResetT = 64;
 constexpr uint32_t kBuild = 0x0E4E7450u;
+constexpr long kAnswerT = 131072;  // `ANSWER_T`'s default
+
+// The core's side of the reset (`quux15_core.sv`'s `rst_*`): a core that
+// takes the request, draining `kDrain` clocks and then in its reset
+// `kInReset` clocks and while the request stands; or one that never takes
+// it.  `core_cut` is its sticky bit, `core_pend_force` a drain held up.
+constexpr long kDrain = 40, kInReset = 64;
+bool core_takes = true, core_cut = false, core_pend_force = false;
+int core_state = 0;  // 0 running, 1 draining, 2 in its reset
+long core_count = 0, core_left_at = -1;
 
 void Want(const std::string &what, uint64_t got, uint64_t want) {
   ++checks;
@@ -85,6 +100,10 @@ uint16_t spy_model(unsigned k) { return static_cast<uint16_t>(0x1000u + 0x111u *
 
 // One clock: the core's inputs set, the edge, the core's state moved.
 void Step() {
+  const bool req = d->mach_req;
+  d->mach_pend = core_state == 1 || core_pend_force;
+  d->mach_on = core_state == 2;
+  d->mach_cut = core_cut;
   d->committed = committed;
   d->clocks = clocks;
   d->vma = vma;
@@ -100,6 +119,20 @@ void Step() {
   d->clk = 1;
   d->eval();
   ++ticks;
+  if (core_state == 0) {
+    if (req && core_takes) {
+      core_state = 1;
+      core_count = 0;
+    }
+  } else if (core_state == 1) {
+    if (++core_count >= kDrain) {
+      core_state = 2;
+      core_count = 0;
+    }
+  } else if (++core_count >= kInReset && !req) {
+    core_state = 0;
+    core_left_at = ticks;
+  }
   // What the face gave the core this edge.
   rm_pipe.emplace_back(d->rm_sel, d->rm_addr);
   if (rm_pipe.size() > 8) rm_pipe.pop_front();
@@ -123,7 +156,7 @@ void Step() {
   md += 5;
 }
 
-int Write(unsigned word, uint32_t data, unsigned strb = 0xF) {
+int Write(unsigned word, uint32_t data, unsigned strb = 0xF, long limit = 64) {
   d->s_awaddr = (word * 4u) & 0xFFFu;
   d->s_awlen = 0;
   d->s_awid = 5;
@@ -134,7 +167,7 @@ int Write(unsigned word, uint32_t data, unsigned strb = 0xF) {
   d->s_wvalid = 1;
   d->s_bready = 1;
   bool aw = false, w = false;
-  for (int k = 0; k < 64; ++k) {
+  for (long k = 0; k < limit; ++k) {
     d->eval();
     const bool aw_now = d->s_awvalid && d->s_awready;
     const bool w_now = d->s_wvalid && d->s_wready;
@@ -202,32 +235,57 @@ int main(int argc, char **argv) {
   for (unsigned w : {13u, 14u, 15u, 43u, 47u, 63u, 100u, 1023u})
     Want("word " + std::to_string(w) + ", which the face does not name", Read(w), kUnmapped);
 
-  // ---- the reset: none from power-on, a pulse at the key alone
-  Want("the machine running from power-on", d->mach_rst, 0);
+  // ---- the reset: none from power-on, a request at the key alone
+  Want("no reset asked for from power-on", d->mach_req, 0);
   Want("STAT answered, no switch", Read(1), 0x04u);
   Write(6, kResetKey ^ 1u);
   for (int k = 0; k < 4; ++k) Step();
-  Want("a value not the key resets nothing", d->mach_rst, 0);
+  Want("a value not the key asks for nothing", d->mach_req, 0);
   Write(6, kResetKey, 0x7u);
   for (int k = 0; k < 4; ++k) Step();
-  Want("the key with a strobe off resets nothing", d->mach_rst, 0);
+  Want("the key with a strobe off asks for nothing", d->mach_req, 0);
   Want("RESET reads the key's half and no reset", Read(6), (kResetKey & 0xFFFF0000u));
-  Write(6, kResetKey);
-  // The pulse runs RESET_T clocks from the key's edge, which is a clock or
-  // two before the write's response.
-  Want("the reset after the key", d->mach_rst, 1);
-  int left = 0;
-  while (d->mach_rst && left < 4 * kResetT) {
-    Step();
-    ++left;
-  }
-  ++checks;
-  if (left > kResetT || left < kResetT - 8) {
-    ++bad;
-    std::fprintf(stderr, "FAIL: the reset ran %d clocks past the write's response, of %d\n", left, kResetT);
+  {
+    // The answer once the core is through its reset: after the drain and
+    // the reset, a few clocks after the core leaves it.
+    const long w0 = ticks;
+    core_left_at = -1;
+    Write(6, kResetKey, 0xF, 4000);
+    const long b_at = ticks;
+    ++checks;
+    if (core_left_at < 0 || b_at < core_left_at || b_at > core_left_at + 4) {
+      ++bad;
+      std::fprintf(stderr, "FAIL: the RESET write answered %ld clocks after it, the core out of its reset at %ld\n",
+                   b_at - w0, core_left_at < 0 ? -1 : core_left_at - w0);
+    }
+    Want("the request over by the answer", d->mach_req, 0);
   }
   Want("STAT after the reset", Read(1), 0x04u);
   Want("RESET's count", Read(6), (kResetKey & 0xFFFF0000u) | (1u << 8));
+  // The core's drain and its cut, in word 6.
+  core_pend_force = true;
+  Step();
+  Want("RESET with the core draining", Read(6), (kResetKey & 0xFFFF0000u) | (1u << 8) | 0x3u);
+  core_pend_force = false;
+  core_cut = true;
+  Step();
+  Want("RESET with the port cut", Read(6), (kResetKey & 0xFFFF0000u) | (1u << 8) | 0x8u);
+  core_cut = false;
+  {
+    // A core that never takes the request: the answer at the bound.
+    core_takes = false;
+    const long w0 = ticks;
+    Write(6, kResetKey, 0xF, kAnswerT + 100);
+    const long lat = ticks - w0;
+    ++checks;
+    if (lat < kAnswerT || lat > kAnswerT + 8) {
+      ++bad;
+      std::fprintf(stderr, "FAIL: with the core not taking it the RESET write answered %ld clocks after it, "
+                   "wanting %ld\n", lat, kAnswerT);
+    }
+    Want("RESET after an answer at the bound", Read(6), (kResetKey & 0xFFFF0000u) | (2u << 8) | 0x4u);
+    core_takes = true;
+  }
 
   // ---- the counters: the high word of the low word's instant
   {

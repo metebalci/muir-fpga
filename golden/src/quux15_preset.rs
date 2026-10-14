@@ -124,6 +124,9 @@ pub struct Preset {
     /// Frames put on muir's Chaosnet cable as the run goes
     /// (`quux15_network.rs`).
     pub net: Option<super::quux15_network::NetRun>,
+    /// Where a testbench restarts the program after a reset it gives it
+    /// (`quux15_memside.rs`'s `reset_back`): the trace's `# resume` line.
+    pub resume: Option<u64>,
 }
 
 impl Preset {
@@ -211,6 +214,7 @@ impl Preset {
             main_words: self.main_words,
             video: self.video,
             board_name: self.board_name,
+            resume: self.resume,
             disk: self.disk.clone(),
             input: self.input.clone(),
             net: self.net.clone(),

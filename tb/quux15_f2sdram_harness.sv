@@ -8,9 +8,11 @@
 // the FPGA-to-SDRAM bridge, with the processor's own side brought out for
 // `tb/quux15_f2sdram_tb.cpp` to be.
 //
-// **THE MASTER'S RESET IS THE PORT'S `mach_rst`**, as the core's is on the
-// board: the testbench asks for a reset on `mach_req` and the master is
-// reset when the port gives it.  The other two masters are the testbench's,
+// **THE MASTER'S RESET IS THE TESTBENCH'S `mach_rst`**, given as the core
+// gives its own (`quux15_core.sv`'s `rq_*`): a request drains the master
+// through the port, then resets it.  The testbench plays the core's port
+// side, so it plays that rule too; the port's reset of its own is the
+// fabric's `rst`, as the clock's lock on the board.  The other two masters are the testbench's,
 // in the AXI3 shape `cadr_disk_pack.sv` and `cadr_display_out.sv` have.
 //
 // In `tb/` for the reason `tb/cadr_f2sdram_harness.sv` gives.
@@ -20,8 +22,7 @@
 module quux15_f2sdram_harness (
     input  var logic         clk,
     input  var logic         rst,
-    input  var logic         mach_req,
-    output var logic         mach_rst,
+    input  var logic         mach_rst,
     // --- the master's port side (`quux15_port.sv`'s seam) ------------------
     input  var logic         ar_req,
     input  var logic [25:0]  ar_line,
@@ -160,7 +161,7 @@ module quux15_f2sdram_harness (
   );
 
   quux15_f2sdram_port u_memory (
-      .clk(clk), .rst(rst), .mach_req(mach_req), .mach_rst(mach_rst),
+      .clk(clk), .rst(rst), .lock_rst(rst),
       .s_awaddr(awaddr), .s_awlen(awlen), .s_awsize(awsize), .s_awburst(awburst),
       .s_awvalid(awvalid), .s_awready(awready),
       .s_wdata(wdata), .s_wstrb(wstrb), .s_wlast(wlast), .s_wvalid(wvalid), .s_wready(wready),

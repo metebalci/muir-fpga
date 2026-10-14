@@ -37,14 +37,15 @@
 //     order.
 //   - **THE MACHINE WAITS FOR ITS MEMORY**, as `cadr_de25.sv`'s does: the
 //     core is held in reset from the fabric's reset until the port has been
-//     live once (`cadr_f2sdram_gate.sv`'s `may_start`).  And a reset the
-//     board asks for --- KEY1, the PLL's lock, the console's RESET key, the
-//     processor's own reset --- reaches the core only once the share has
-//     drained, so it never cuts a transaction of the core's master in half
-//     (`quux15_f2sdram_port.sv`'s header).  **THE PROCESSOR'S RESET RESETS
-//     THE MACHINE**, as the Zynq boards' revision 15 is held while its port
-//     is: the bridge forgets what it had of the machine's transactions, and
-//     the core's port would wait for their answers for ever.
+//     live once (`cadr_f2sdram_gate.sv`'s `may_start`), a request.  And a
+//     reset the board asks for --- KEY1, the console's RESET key --- is a
+//     request too, which the core takes once its memory port has drained, so
+//     it never cuts a transaction of the core's master in half
+//     (`quux15_core.sv`'s `rq_*`).  **THE PROCESSOR'S RESET AND THE PLL'S
+//     LOCK RESET THE MACHINE AT ONCE**, as the Zynq boards' revision 15 is
+//     reset with its port: the bridge forgets what it had of the machine's
+//     transactions, and the core's port would wait for their answers for
+//     ever.
 //   - **THE DISK PACKS ON THE HPS-TO-FPGA BRIDGE AND THE SHARE'S PORT 1**, as
 //     `cadr_de25.sv` has them: block-disk's block store (the core's
 //     `quux15_block_walk.sv`) served by `cadr_disk_pack.sv`, its registers at
@@ -77,7 +78,8 @@
 //     JP1's eight pads undriven, held low by the project's pull-downs.
 //   - **THE KEYS, THE SWITCH AND THE LAMPS KEEP `cadr_de25.sv`'s MEANINGS
 //     WHERE REVISION 15 HAS THE SIGNAL**:
-//       KEY1   the fabric's reset, which holds the machine with the rest.
+//       KEY1   the fabric's reset, and the machine's once its memory port
+//              has drained (the resets, below).
 //       KEY0   unused: revision 15 has no `-BOOT2`; the console's mode
 //              register and the keyboard's boot word boot it.
 //       SW0    unused: revision 15 has no no-auto-boot; it comes out of reset
@@ -255,14 +257,18 @@ module quux15_de25 #(
   // The fabric's: the PLL's lock and KEY1 (low while pressed), synchronized,
   // as `cadr_de25.sv`'s `rst`.  The bridges': `h2f_reset`, synchronized,
   // for the faces and the splitters, which take it alone (`cadr_de25.sv`
-  // has why).  The machine's: what the board asks for --- the fabric's, the
-  // console face's RESET key and the processor's --- given to the core by
-  // the memory port once its share is idle, and the port's hold until it
-  // has been live (`quux15_f2sdram_port.sv`).
-  logic [3:0] rst_sync;
-  logic       rst;
-  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !pll_locked || !btn[1]};
-  assign rst = rst_sync[3];
+  // has why).  The PLL's lock alone, and KEY1 alone, for the machine's two
+  // resets (below).
+  logic [3:0] rst_sync, lock_sync, key_sync;
+  logic       rst, lock_rst, key_req;
+  always_ff @(posedge clk) begin
+    rst_sync  <= {rst_sync[2:0], !pll_locked || !btn[1]};
+    lock_sync <= {lock_sync[2:0], !pll_locked};
+    key_sync  <= {key_sync[2:0], !btn[1]};
+  end
+  assign rst      = rst_sync[3];
+  assign lock_rst = lock_sync[3];
+  assign key_req  = key_sync[3];
 
 
   // ------------------------------------------- the processor, its memory
@@ -417,8 +423,12 @@ module quux15_de25 #(
       .hps_f2sdram_rvalid(f2s_rvalid), .hps_f2sdram_rready(f2s_rready)
   );
 
-  // The bridges' reset, synchronized in, and the machine's reset as the
-  // board asks for it (the reset section above).
+  // The bridges' reset, synchronized in, and the machine's two resets (the
+  // reset section above): the HARD reset, the processor's and the PLL's
+  // lock, taken by the core at once; the REQUEST, KEY1, the console's RESET
+  // key and the port not yet live, taken once its memory port has drained.
+  // `mach_rst` is the core's reset as it is, for the lamps and the input
+  // page.
   logic [2:0] h2f_rst_s;
   logic       h2f_rst;
   always_ff @(posedge clk) begin
@@ -426,8 +436,13 @@ module quux15_de25 #(
     h2f_rst   <= h2f_rst_s[2];
   end
 
-  logic face_rst, mach_req, mach_rst;
-  always_ff @(posedge clk) mach_req <= rst || face_rst || h2f_rst;
+  logic face_req, hard_rst, mach_req, mach_rst, may_start;
+  logic core_rst_pend, core_rst_on, core_rst_cut;
+  always_ff @(posedge clk) begin
+    hard_rst <= lock_rst || h2f_rst;
+    mach_req <= key_req || face_req || !may_start;
+    mach_rst <= core_rst_on;
+  end
 
   // ---------------------------------------------------------- the machine
   logic [15:0] obs_cs, obs_rd, obs_ex, obs_wb, obs_commit;
@@ -497,7 +512,8 @@ module quux15_de25 #(
       .MAIN_BASE(MAIN_BASE),
       .DISPLAY_BASE(DISPLAY_BASE)
   ) u_core (
-      .clk(clk), .rst(mach_rst),
+      .clk(clk), .rst(hard_rst), .rst_req(mach_req),
+      .rst_pend(core_rst_pend), .rst_on(core_rst_on), .rst_cut(core_rst_cut),
       .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
       .obs_pdlptr(obs_pdlptr), .obs_pdlidx(obs_pdlidx), .obs_spcptr(obs_spcptr),
       .obs_q(obs_q), .obs_vma(obs_vma), .obs_md(obs_md), .obs_lc(obs_lc), .obs_ic(obs_ic),
@@ -564,10 +580,10 @@ module quux15_de25 #(
   logic [7:0]  pm_wstrb;
   logic [1:0]  pm_bresp, pm_rresp;
 
-  logic port_live, may_start;
+  logic port_live;
 
   quux15_f2sdram_port u_memory (
-      .clk(clk), .rst(rst), .mach_req(mach_req), .mach_rst(mach_rst),
+      .clk(clk), .rst(rst), .lock_rst(lock_rst),
       .s_awaddr(qm_awaddr), .s_awlen(qm_awlen), .s_awsize(qm_awsize), .s_awburst(qm_awburst),
       .s_awvalid(qm_awvalid), .s_awready(qm_awready),
       .s_wdata(qm_wdata), .s_wstrb(qm_wstrb), .s_wlast(qm_wlast),
@@ -957,7 +973,8 @@ module quux15_de25 #(
       .s_rdata(lwc_rdata), .s_rresp(lwc_rresp), .s_rid(lwc_rid),
       .s_rlast(lwc_rlast), .s_rvalid(lwc_rvalid), .s_rready(lwc_rready),
       .build(NO_BUILD_STAMP),
-      .mach_rst(face_rst), .rtc_start(rtc_start),
+      .mach_req(face_req), .mach_pend(core_rst_pend), .mach_on(core_rst_on), .mach_cut(core_rst_cut),
+      .rtc_start(rtc_start),
       .committed(obs_committed), .clocks(obs_clocks),
       .vma(obs_vma), .q(obs_q), .md(obs_md),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),
@@ -1164,7 +1181,7 @@ module quux15_de25 #(
                     drive_read_only[7:0], drive_present[7:1], drive_timed, obs_transfer,
                     lwc_awaddr[31:12], lwc_araddr[31:12],
                     lwd_awaddr, lwd_araddr, lwd_awlen, lwd_wdata, lwd_wstrb,
-                    disp_sleep_due, disp_map_a, may_start, pack_irq,
+                    disp_sleep_due, disp_map_a, pack_irq,
                     hdmi_configured, hdmi_failed, hdmi_writes,
                     btn[0], sw,
                     f2s_buser, f2s_ruser, gp_out[31:2],

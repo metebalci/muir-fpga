@@ -30085,9 +30085,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_port.sv
 @note A ninth write start is granted into a queue of eight.
 @old
-        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN) && !hold;
 @new
-        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN + 1);
+        && (q_after_accept + {3'd0, post_push} + {3'd0, d_reserve}) < 4'(QN + 1) && !hold;
 @end
 
 @mutation quux15-register-hold-removed
@@ -32667,10 +32667,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note part written, where muir moved it whole at START (`reset`).
 @old
   quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(core_rst),
 @new
   quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
-      .clk(clk), .rst(rst || (rw_take && rgw_bus[7:0] == 8'o104 && rgw_word[0])),
+      .clk(clk), .rst(core_rst || (rw_take && rgw_bus[7:0] == 8'o104 && rgw_word[0])),
 @end
 
 @mutation quux15-bd-blocks-off-by-one
@@ -33183,38 +33183,15 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @end
 
 @mutation quux15-de25-machine-let-go-before-the-port-is-live
-@check quux15_f2sdram_quux
-@file rtl/plumbing/quux15_f2sdram_port.sv
-@note The gate's hold dropped from the machine's reset: the core runs from
-@note the fabric's reset, before software has opened its memory port.
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The port not yet live dropped from the machine's request: the core
+@note runs from the fabric's reset, before software has opened its memory
+@note port.
 @old
-  assign want = mach_req || !may_start;
+    mach_req <= key_req || face_req || !may_start;
 @new
-  assign want = mach_req;
-@end
-
-@mutation quux15-de25-machine-reset-without-the-drain
-@check quux15_f2sdram_quux
-@file rtl/plumbing/quux15_f2sdram_port.sv
-@note The core put into reset the clock after it is asked, whatever the
-@note share has of its master's: a write granted is left half sent, and a
-@note fill's beats reach the restarted master.
-@old
-    run <= !((!pend_n && idle) || (!run && want));
-@new
-    run <= !((!pend_n) || (!run && want));
-@end
-
-@mutation quux15-de25-machine-reset-without-holding-the-share
-@check quux15_f2sdram_quux
-@file rtl/plumbing/quux15_f2sdram_port.sv
-@note A reset asked for does not hold the share's grants: the share is idle
-@note for a clock, the core goes into reset, and at the same edge the share
-@note grants the master a write it will never finish.
-@old
-      .clk(clk), .rst(port_rst), .hold(gate_hold || !pend_n), .idle(idle),
-@new
-      .clk(clk), .rst(port_rst), .hold(gate_hold), .idle(idle),
+    mach_req <= key_req || face_req || (!may_start && 1'b0);
 @end
 
 @mutation quux15-de25-tally-counts-the-pack-sides-answers
@@ -33230,15 +33207,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-de25-core-reset-before-the-port-is-live
 @check quux15_de25
 @file boards/de25-nano/quux15_de25.sv
-@note The core given the board's request for a reset and not the memory
-@note port's: it runs before software has opened its port, and is cut by a
-@note reset under a transaction.
+@note The board's request for a reset given to the core as its hard reset:
+@note KEY1, the console's key and the port not yet live cut the core's
+@note master under a transaction.
 @old
-      .clk(clk), .rst(mach_rst),
-      .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
+      .clk(clk), .rst(hard_rst), .rst_req(mach_req),
 @new
-      .clk(clk), .rst(mach_req),
-      .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
+      .clk(clk), .rst(hard_rst || mach_req), .rst_req(1'b0),
 @end
 
 @mutation quux15-de25-processor-reset-leaves-the-machine
@@ -33247,9 +33222,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The processor's reset not among the machine's: the bridge forgets the
 @note core's transactions and the core waits for their answers for ever.
 @old
-  always_ff @(posedge clk) mach_req <= rst || face_rst || h2f_rst;
+    hard_rst <= lock_rst || h2f_rst;
 @new
-  always_ff @(posedge clk) mach_req <= rst || face_rst || (h2f_rst && 1'b0);
+    hard_rst <= lock_rst || (h2f_rst && 1'b0);
 @end
 
 @mutation quux15-de25-console-reset-reaches-nothing
@@ -33257,9 +33232,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file boards/de25-nano/quux15_de25.sv
 @note The console face's RESET key not among the machine's resets.
 @old
-  always_ff @(posedge clk) mach_req <= rst || face_rst || h2f_rst;
+    mach_req <= key_req || face_req || !may_start;
 @new
-  always_ff @(posedge clk) mach_req <= rst || (face_rst && 1'b0) || h2f_rst;
+    mach_req <= key_req || (face_req && 1'b0) || !may_start;
 @end
 
 @mutation quux15-de25-port-lamp-on-ledr5
@@ -33362,9 +33337,9 @@ if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
 @note The machine's reset without `S_AXI_HP0`'s: the core runs while its
 @note memory port is dead.
 @old
-  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+    hard_rst <= lock_rst || axi_rst;
 @new
-  always_ff @(posedge clk) mach_rst <= rst || (axi_rst && 1'b0) || face_rst;
+    hard_rst <= lock_rst || (axi_rst && 1'b0);
 @end
 
 @mutation quux15-kr260-machine-not-held-for-its-port
@@ -33373,7 +33348,226 @@ if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
 @note The machine's reset without the ports' `pl_resetn0`: the core runs
 @note while its memory port is dead.
 @old
-  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+    hard_rst <= rst || axi_rst;
 @new
-  always_ff @(posedge clk) mach_rst <= rst || (axi_rst && 1'b0) || face_rst;
+    hard_rst <= rst || (axi_rst && 1'b0);
+@end
+
+# **A RESET ASKED FOR WHILE THE MEMORY PORT IS BUSY** (`quux15_reset_axi`,
+# `tools/quux15_reset_check.py`; A15b.5's Drains and its board-reset
+# clarification): the request latched, the port's grants held, the reset
+# given once the port is quiet, bounded by a cut that holds the core, and
+# the face's answer bounded; the request and the hard reset kept apart on
+# each top.
+
+@mutation quux15-reset-request-straight-to-the-core
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The request given to the core as its reset at once, the drain
+@note skipped: the master is reset with transactions open, as revision 15
+@note was before the request.
+@old
+  assign core_rst  = rst || rq_state == RQ_RESET || rq_state == RQ_CUT;
+@new
+  assign core_rst  = rst || rst_req || rq_state == RQ_RESET || rq_state == RQ_CUT;
+@end
+
+@mutation quux15-reset-quiet-without-the-in-flight-list
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_port.sv
+@note Quiet with writes in flight: a B owed to the master comes after its
+@note reset.
+@old
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@new
+    quiet      = q_count == 4'd0 && (f_count == 5'd0 || 1'b1) && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@end
+
+@mutation quux15-reset-quiet-without-the-fill
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_port.sv
+@note Quiet with a fill's beats still to come: they reach the restarted
+@note master, stray or as its next line.
+@old
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@new
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && (fs == F_NONE || fs == F_DATA) && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@end
+
+@mutation quux15-reset-quiet-before-the-second-beat
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_port.sv
+@note Quiet with one write in flight whose second beat or second burst the
+@note master still has to send: the port pairs a later beat with it.
+@old
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@new
+    quiet      = q_count == 4'd0 && (f_count == 5'd0 || (f_count == 5'd1 && !mw_free)) && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@end
+
+@mutation quux15-reset-quiet-ignores-the-queue
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_port.sv
+@note Quiet with writes queued: the reset drops granted writes whose words
+@note the cache already holds.
+@old
+    quiet      = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@new
+    quiet      = (q_count == 4'd0 || 1'b1) && f_count == 5'd0 && fs == F_NONE && db_v == '0 && !lp_v && !lt_v && !lw_v;
+@end
+
+@mutation quux15-reset-grants-not-held
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The port grants on through the drain: a write granted in the clock
+@note the reset is decided is cut, and a busy machine keeps the port from
+@note going quiet.
+@old
+  assign port_hold = rq_state == RQ_DRAIN;
+@new
+  assign port_hold = rq_state == RQ_DRAIN && 1'b0;
+@end
+
+@mutation quux15-reset-request-not-latched
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The drain given up when the request falls: a request of one clock, or
+@note a bounce, resets nothing.
+@old
+          rq_count <= rq_count + 17'd1;
+          if (port_quiet) begin
+@new
+          rq_count <= rq_count + 17'd1;
+          if (!rst_req) rq_state <= RQ_RUN;
+          else if (port_quiet) begin
+@end
+
+@mutation quux15-reset-drain-unbounded
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note No bound on the drain: a port that stops answering leaves the request
+@note pending for ever, the machine never reset.
+@old
+          end else if (32'(rq_count) + 1 >= RESET_BOUND) begin
+@new
+          end else if (32'(rq_count) + 1 >= RESET_BOUND && 1'b0) begin
+@end
+
+@mutation quux15-reset-cut-then-run
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note A cut drain followed by running on: the machine restarts against a
+@note port that still owes the transactions the cut left.
+@old
+        default: ;   // RQ_CUT: until the hard reset
+@new
+        default: rq_state <= RQ_RUN;
+@end
+
+@mutation quux15-reset-cut-forgotten-at-the-hard-reset
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The sticky bit cleared by the port's own reset, which is what ends the
+@note cut: nothing is left to say the memory port was cut.
+@old
+  always_ff @(posedge clk) if (!rst && rq_state == RQ_DRAIN && !port_quiet && 32'(rq_count) + 1 >= RESET_BOUND)
+    rq_cut <= 1'b1;
+@new
+  always_ff @(posedge clk) if (rst) rq_cut <= 1'b0;
+    else if (rq_state == RQ_DRAIN && !port_quiet && 32'(rq_count) + 1 >= RESET_BOUND) rq_cut <= 1'b1;
+@end
+
+@mutation quux15-reset-face-answer-unbounded
+@check quux15_reset_axi_quux
+@file rtl/plumbing/quux15_face.sv
+@note The RESET write held until the machine has been through its reset,
+@note with no bound: a port that stops answering hangs the write, and both
+@note Arm cores with it.
+@old
+        end else if (32'(ans_count) + 1 >= ANSWER_T) begin
+@new
+        end else if (32'(ans_count) + 1 >= ANSWER_T && 1'b0) begin
+@end
+
+@mutation quux15-de25-port-not-live-a-hard-reset
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The port not yet live given to the core as its hard reset rather than
+@note as a request.
+@old
+    hard_rst <= lock_rst || h2f_rst;
+    mach_req <= key_req || face_req || !may_start;
+@new
+    hard_rst <= lock_rst || h2f_rst || !may_start;
+    mach_req <= key_req || face_req || (!may_start && 1'b0);
+@end
+
+@mutation quux15-arty-btn1-a-hard-reset
+@check quux15_reset_arty
+@file boards/arty-z7-20/quux15_arty.sv
+@note BTN1 given to the core as its hard reset: a press cuts the master
+@note under a transaction.
+@old
+    hard_rst <= lock_rst || axi_rst;
+    mach_req <= btn_req || face_req;
+@new
+    hard_rst <= lock_rst || axi_rst || btn_req;
+    mach_req <= (btn_req && 1'b0) || face_req;
+@end
+
+@mutation quux15-kr260-face-reset-a-hard-reset
+@check quux15_reset_kr260
+@file boards/kria-kr260/quux15_kr260.sv
+@note The console face's RESET key given to the core as its hard reset.
+@old
+    hard_rst <= rst || axi_rst;
+    mach_req <= face_req;
+@new
+    hard_rst <= rst || axi_rst || face_req;
+    mach_req <= face_req && 1'b0;
+@end
+
+# **A HARD RESET CLEARS THE CACHE** (`quux15_reset_axi_quux`'s hard-reset
+# sweeps and its clear check at each board's cache size): the port's own
+# reset and the clock's lock drop the queue and the in-flight list, so the
+# cache's valid bits are cleared inside the same reset.
+
+@mutation quux15-hard-reset-leaves-the-cache
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The hard reset never reaches the cache: lines whose words the port
+@note dropped stay valid, unlike memory.
+@old
+      .clk(clk), .rst(core_rst), .hard(rst),
+@new
+      .clk(clk), .rst(core_rst), .hard(1'b0 && rst),
+@end
+
+@mutation quux15-hard-reset-leaves-way-one
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_port.sv
+@note The hard reset clears way 0's valid bits and not way 1's.
+@old
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+@new
+      .clk(clk), .rst(1'b0 && hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+@end
+
+@mutation quux15-hard-reset-clears-after-the-release
+@check quux15_reset_axi_quux
+@file rtl/machine/quux15_core.sv
+@note The cache cleared a hundred clocks after the hard reset ends, the core
+@note running: lookups are granted before the clear lands.
+@old
+  logic        fd_complete;
+  quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
+                .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
+      .clk(clk), .rst(core_rst), .hard(rst),
+@new
+  logic        fd_complete;
+  logic [6:0]  hard_late;
+  always_ff @(posedge clk) hard_late <= rst ? 7'd1 : (hard_late != 7'd0 ? hard_late + 7'd1 : 7'd0);
+  quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
+                .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
+      .clk(clk), .rst(core_rst), .hard(hard_late == 7'd100),
 @end

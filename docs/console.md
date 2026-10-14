@@ -366,7 +366,8 @@ at the 10 ns grid, as it had to be more than 44 at the 5.
 write channel through the countdown, so `BVALID` is offered after the machine
 has left reset. A program's store therefore returns with the machine running
 again and the next read of `FLAG-1` means something. It costs one Arm store
-640 ns.
+640 ns. That is the CADR's console. Revision 15's answers when its core has
+been through a reset, or at a bound (Revision 15's console face, below).
 
 **`RESET_KEY` is `"RSET"`, `0x5253_4554`, and an arbitrary value must not
 reset the machine.** Chosen the way `cadr_arty.sv` chooses `PROVE_WORD`: four
@@ -1726,6 +1727,7 @@ it unchanged. Its page 2:
 
 | Word | What it is on revision 15 |
 |---|---|
+| 6 RESET | a write of `RESET_KEY` asks for the machine's reset (below). Read: the key's top half in `<31:16>`, the resets in `<15:8>`, and `<3:0>` as below |
 | 32 BUILD | the build stamp, as here |
 | 33 DISPLAY | the display boards' two settings, kept and read back. QUUX has neither board, so they reach nothing |
 | 34 HDMI | what the display output shows and which way up, out to the display output. The video controller fills the raster, so the picture stays upright whatever the turn says |
@@ -1740,6 +1742,26 @@ it unchanged. Its page 2:
 Word 42's `underrun` is the pixel clock's, brought into the machine's clock
 through two flops, and the clear reaches it as a toggle through three more.
 So a read in the few clocks after a clear may still show the bit.
+
+**Word 6 is a request on revision 15.** The key's write raises the core's
+request for 64 clocks. The core latches it, drains its memory port and then
+resets (`docs/board.md`, The buttons). The write's response is held until the
+core has been through its reset, or until 131,072 clocks have passed,
+whichever comes first, because a write on this port that nothing answers hangs
+both Arm cores. The bound is past the core's own bound on the drain, 65,536
+clocks, and its reset. So a store returns with the machine running again
+unless `<2>` is set. The low bits read:
+
+| Bit | Meaning |
+|---|---|
+| 0 | a reset now: the request, the drain or the machine in its reset |
+| 1 | the drain: the memory port not yet quiet |
+| 2 | the last RESET write was answered at the bound, the machine not through its reset by then; cleared by the next RESET write |
+| 3 | the reset cut the memory port: a drain met the core's bound, and the machine is held in reset until the port's own reset. Cleared only by loading the fabric again |
+
+In simulation, with the memory port idle, the answer comes 70 to 82 clocks
+after the write. `tb/quux15_reset_axi_tb.cpp` holds the bound with a port
+that stops answering.
 
 `build/quux15_face.pass` drives each of these words over AXI: every key, a key
 with a strobe off, another value, and the word's own read-back written, which

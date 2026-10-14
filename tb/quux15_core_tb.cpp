@@ -1595,6 +1595,8 @@ int run_trace(const char *path, const Run &run, int seed) {
   dut->rst = 1;
   dut->clk = 0;
 #ifdef QUUX15_CORE
+  // No reset asked for: `tb/quux15_reset_axi_tb.cpp` holds the request.
+  dut->rst_req = 0;
   // The board's period and the host's real-time clock, as its top gives
   // them.
   dut->period = static_cast<uint8_t>(run.period);

@@ -333,6 +333,11 @@ QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield p
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
 QUUX15_GROUPS += input network
 QUUX15_GROUPS += regread
+# And the read-back program (`golden/src/quux15_memside.rs`, `resetback`):
+# words written, then read back from the cache and from memory, which
+# `tb/quux15_reset_axi_tb.cpp` restarts at its `# resume` line after a reset
+# asked for mid-write; here held whole to muir's pipeline.
+QUUX15_GROUPS += resetback
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -373,8 +378,9 @@ QUUX15_PERIODS_redirect := 36 20
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
 # that differ in the set's top bit alone, the way each set used last under
 # reads and walks that overfill two sets, and the completion's sweep under
-# a loop of reads.
-QUUX15_MEMSIDE := memory ports walk window filedev bdisk bdmix matrixmem randmem storeret checkpoints mainsize boardcache
+# a loop of reads.  `resetback` is the read-back program of the reset check
+# (`tb/quux15_reset_axi_tb.cpp`), held whole on each board's core.
+QUUX15_MEMSIDE := memory ports walk window filedev bdisk bdmix matrixmem randmem storeret checkpoints mainsize boardcache resetback
 QUUX15_BOARDS := kria de25 arty
 QUUX15_CACHE_kria := 65536
 QUUX15_CACHE_de25 := 16384
@@ -432,6 +438,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
        $(BUILD)/quux15_de25.pass $(BUILD)/quux15_de25_param.pass $(BUILD)/quux15_de25_faces.pass \
        $(BUILD)/quux15_f2sdram.quux.pass $(BUILD)/quux15_reset_arty.pass $(BUILD)/quux15_reset_kr260.pass \
+       $(BUILD)/quux15_reset_axi.quux.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
@@ -3568,6 +3575,43 @@ $(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness: rtl/plumbing/quux15_axi_mas
 
 $(BUILD)/quux15_f2sdram.quux.pass: $(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness
 	$(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness
+	@touch $@
+
+# **A RESET ASKED FOR WHILE THE MEMORY PORT IS BUSY** (`tb/quux15_reset_axi_tb.cpp`,
+# `tools/quux15_reset_check.py`): the core in `tb/quux15_reset_harness.sv`
+# with the console face, behind its own port (board 0), the Arty Z7-20's
+# AXI3 shim (1) and the Kria KR260's narrow bursts on 128 bits (2), against
+# a port the machine's reset does not reach.  A request at every clock of a
+# cut of the transactions, the read-back program's included: quiet at the
+# reset, every granted write landed, the cache equal to memory at the
+# release, nothing stray, late, misdirected or withdrawn, no hang; a bouncing
+# button, a hard reset in a drain, an error halt, the console's halt, a dead
+# port cut at the core's bound and the face's answer at its own; a hard
+# reset at every clock of the read-back program's writes, and every valid
+# bit set before one, the cache cleared by it at each board's size (board 0
+# at the DE25-Nano's 16K words, 1 at the Arty Z7-20's 4K, 2 at the Kria
+# KR260's 64K); and the port planted wrong, each counted.  About a minute
+# at four jobs.
+QUUX15_RESET_SRC := $(QUUX15_CORE_SRC) rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_gp_regs.sv \
+                    rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/quux15_axi3.sv tb/quux15_reset_harness.sv
+define QUUX15_RESET_RULE
+$$(BUILD)/obj_quux15_reset_b$(1)/Vquux15_reset_harness: $$(QUUX15_RESET_SRC) tb/quux15_reset_axi_tb.cpp | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
+	    -GBOARD=$(1) -GCACHE_WORDS=$(2) -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_RESET_BOARD=$(1) \
+	    -CFLAGS -DQUUX15_RESET_SETS=$$$$(($(2) / 16)) -Mdir $$(BUILD)/obj_quux15_reset_b$(1) \
+	    --top-module quux15_reset_harness $$(QUUX15_RESET_SRC) $$(abspath tb/quux15_reset_axi_tb.cpp)
+endef
+$(eval $(call QUUX15_RESET_RULE,0,16384))
+$(eval $(call QUUX15_RESET_RULE,1,4096))
+$(eval $(call QUUX15_RESET_RULE,2,65536))
+QUUX15_RESET_JOBS ?= 4
+$(BUILD)/quux15_reset_axi.quux.pass: $(foreach b,0 1 2,$(BUILD)/obj_quux15_reset_b$(b)/Vquux15_reset_harness) \
+        tools/quux15_reset_check.py $(BUILD)/quux15_ports.quux.p20.golden $(BUILD)/quux15_resetback.quux.p20.golden
+	python3 tools/quux15_reset_check.py --tb0 $(BUILD)/obj_quux15_reset_b0/Vquux15_reset_harness \
+	    --tb1 $(BUILD)/obj_quux15_reset_b1/Vquux15_reset_harness --tb2 $(BUILD)/obj_quux15_reset_b2/Vquux15_reset_harness \
+	    --ports $(BUILD)/quux15_ports.quux.p20.golden --back $(BUILD)/quux15_resetback.quux.p20.golden \
+	    --jobs $(QUUX15_RESET_JOBS) --out $(BUILD)/quux15_reset_axi > $(BUILD)/quux15_reset_axi.log
+	@tail -1 $(BUILD)/quux15_reset_axi.log
 	@touch $@
 
 # **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**

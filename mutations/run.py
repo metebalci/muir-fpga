@@ -2771,6 +2771,7 @@ QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlf
                "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "storeret", "checkpoints", "bdisk",
                "bdmix")
 QUUX15_CORE += ("input", "network", "regread")
+QUUX15_CORE += ("resetback",)
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
 # reader and `cadr-checkpoint`'s writer, which the testbench holds a
@@ -3063,6 +3064,24 @@ for _board, _top, _ps, _define, _map in (
         "golden": None,
         "machine": "quux",
     }
+
+# **A RESET ASKED FOR WHILE THE MEMORY PORT IS BUSY** (the Makefile's
+# `quux15_reset_axi.quux.pass`): the core and the console face in
+# `tb/quux15_reset_harness.sv`, built behind each board's adapter (boards 0,
+# 1 and 2), run by `tools/quux15_reset_check.py` over a cut of the grid, the
+# legs and the controls (`quux15_reset_axi_check`).
+CHECKS["quux15_reset_axi_quux"] = {
+    "sources": CHECKS["quux15_alu_quux"]["sources"] + ["rtl/plumbing/quux15_face.sv",
+                                                       "rtl/plumbing/quux_axi_narrow128.sv",
+                                                       "rtl/plumbing/quux15_axi3.sv"],
+    "extra": ["rtl/machine/quux_muldiv.sv", "rtl/plumbing/cadr_gp_regs.sv", "tb/quux15_reset_harness.sv"],
+    "top": "quux15_reset_harness",
+    "tb": "tb/quux15_reset_axi_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2", "--x-assign", "unique", "--x-initial", "unique",
+              "+define+QUUX15_RDW_POISON", "-Irtl/machine"],
+    "golden": ["quux15_ports.quux.p20.golden", "quux15_resetback.quux.p20.golden"],
+    "machine": "quux",
+}
 
 # And at the Kria's 1920 by 1080 (the Makefile's `quux15_videosize.quux.pass`):
 # the core built with `VIDEO_W` and `VIDEO_H` at that size and the Kria's
@@ -3546,6 +3565,8 @@ def build_and_run(args, work, check, build_fails=False):
         return quux15_kr260_check(args, work, build_fails)
     if check == "quux15_arty":
         return quux15_arty_check(args, work, build_fails)
+    if check == "quux15_reset_axi_quux":
+        return quux15_reset_axi_check(args, work)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -3808,6 +3829,41 @@ def script_check(args, work, spec):
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, "the script read the tree and agreed with it"
+
+
+def quux15_reset_axi_check(args, work):
+    """Revision 15's reset asked for while the memory port is busy, as the
+    Makefile's `quux15_reset_axi.quux.pass` runs it: the harness built behind
+    each of the three boards' adapters from the mutant's copy, then
+    `tools/quux15_reset_check.py` from the copy over the two traces, one job
+    at a time, stopping at its first failure (`--first`).  The script failing
+    is the mutation being caught; a harness that does not build is BROKEN.
+    """
+    spec = CHECKS["quux15_reset_axi_quux"]
+    for f in spec["sources"] + spec["extra"] + [spec["tb"], "tools/quux15_reset_check.py"]:
+        if not os.path.exists(os.path.join(work, f)):
+            return BROKEN, "%s is not in this copy" % f
+    bins = []
+    # Each board at its cache's size, as the Makefile builds them.
+    for board, cache in ((0, 16384), (1, 4096), (2, 65536)):
+        obj = os.path.join(work, "obj_quux15_reset_b%d" % board)
+        cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"] + spec["flags"]
+        cmd += ["-GBOARD=%d" % board, "-GCACHE_WORDS=%d" % cache, "-CFLAGS", "-DQUUX15_RESET_BOARD=%d" % board,
+                "-CFLAGS", "-DQUUX15_RESET_SETS=%d" % (cache // 16),
+                "-Mdir", obj, "--top-module", spec["top"]]
+        cmd += spec["sources"] + spec["extra"] + [os.path.join(work, spec["tb"])]
+        rc, out = run(cmd, work, build_env(args))
+        if rc != 0:
+            return BROKEN, first_problem(out)
+        bins.append(os.path.join(obj, "V" + spec["top"]))
+    traces = [os.path.join(args.goldens, g) for g in goldens_of("quux15_reset_axi_quux")]
+    rc, out = run([sys.executable, os.path.join(work, "tools/quux15_reset_check.py"),
+                   "--tb0", bins[0], "--tb1", bins[1], "--tb2", bins[2],
+                   "--ports", traces[0], "--back", traces[1], "--jobs", "1", "--first",
+                   "--out", os.path.join(work, "reset_axi")], work)
+    if rc != 0:
+        return CAUGHT, first_problem(out)
+    return SURVIVED, out.strip().split("\n")[-1]
 
 
 def quux15_kr260_check(args, work, build_fails=False):

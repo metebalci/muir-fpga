@@ -139,12 +139,28 @@ module quux15_core #(
     // The bubbles a wrong prediction costs (A15b.14): 1, EX's decision
     // driving the next fetch's address in its own clock; or 2, the fallback,
     // the target fetched a clock later (muir's `Pipeline::bubbles`).
-    parameter int unsigned BUBBLES = 1
+    parameter int unsigned BUBBLES = 1,
+    // A requested reset's bound: the clocks the port is given to drain
+    // before the reset cuts it (`rq_*`), 2^16, a millisecond or more at
+    // every board's period; and the clocks the reset lasts at least.
+    parameter int unsigned RESET_BOUND = 65536,
+    parameter int unsigned RESET_MIN   = 64
 ) (
     input  var logic        clk,
     // Power-on: the machine as muir's `Pipeline::boot` leaves it, the boot's
-    // trap in CS.
+    // trap in CS.  **A HARD RESET, TAKEN AT ONCE**: the clock's lock and the
+    // memory port's own reset, which no drain can wait for.
     input  var logic        rst,
+    // **A RESET THE BOARD ASKS FOR** (BTN1, KEY1, the console face's RESET
+    // key), latched, and taken once the port has drained (`rq_*` below).
+    input  var logic        rst_req,
+    // The request's state: draining (`rst_pend`), the core in its reset by
+    // either way (`rst_on`), and the sticky "the reset cut the memory port"
+    // (`rst_cut`), set when the drain met its bound and cleared by nothing
+    // but the fabric's configuration.
+    output var logic        rst_pend,
+    output var logic        rst_on,
+    output var logic        rst_cut,
     // What `tb/quux15_core_tb.cpp` compares, `golden/src/trace15.rs`'s
     // columns, as each clock ends.
     output var logic [15:0] obs_cs,
@@ -316,6 +332,77 @@ module quux15_core #(
 );
 
   localparam logic [13:0] RESET_PC = 14'o36000;
+
+  // ================================================================ the reset
+  //
+  // **A RESET THE BOARD ASKS FOR DRAINS THE MEMORY PORT FIRST** (A15b.5's
+  // Drains, and its board-reset clarification).  The request is latched
+  // (`RQ_DRAIN`), so a pulse of one clock or a bouncing button cannot be
+  // lost; from the next clock the port grants nothing new (`port_hold`), and
+  // every write it has queued or in flight lands, D's included, and a fill
+  // already asked for comes in.  Once the port is `quiet` the core is in
+  // reset (`RQ_RESET`) for at least `RESET_MIN` clocks and while the request
+  // stands, so the master's reset finds no VALID up and nothing owed, and
+  // the cache, which no reset clears, holds what memory holds.  It waits
+  // neither on the halt nor on an error halt, so an error-halted machine is
+  // reset the same way.
+  //
+  // **IT IS BOUNDED.**  A port not quiet after `RESET_BOUND` clocks has a
+  // slave that stopped answering; the core is then reset and HELD
+  // (`RQ_CUT`) until the hard reset, the port's own, comes, and `rst_cut`
+  // records it.  The machine never runs on after a cut drain: what the
+  // master had open is lost, and only a reset of the port itself makes its
+  // other side forget it too.
+  //
+  // **THE HARD RESET (`rst`) IS TAKEN AT ONCE**, the clock's lock and the
+  // port's own reset, which reset the port's other side with it; a request
+  // standing through it leaves the core in reset after it, the port empty.
+  // It drops what the port had queued and in flight, so it clears the
+  // cache too (`quux15_port.sv`'s `hard`), within the reset: no line can be
+  // read before it is cleared.
+  // **THE CORE POWERS UP IN ITS RESET** (`RQ_RESET`, the all-zero state), so
+  // that it sees no clock out of reset before a top level's resets have
+  // reached it: `RESET_MIN` clocks, and then as long as either stands.
+  typedef enum logic [1:0] {RQ_RESET = 2'd0, RQ_RUN = 2'd1, RQ_DRAIN = 2'd2, RQ_CUT = 2'd3} rq_e;
+  rq_e         rq_state = RQ_RESET;
+  logic [16:0] rq_count = '0;
+  logic        core_rst, port_hold, port_quiet;
+  logic        rq_cut = 1'b0;
+  assign core_rst  = rst || rq_state == RQ_RESET || rq_state == RQ_CUT;
+  assign port_hold = rq_state == RQ_DRAIN;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      rq_state <= rst_req ? RQ_RESET : RQ_RUN;
+      rq_count <= '0;
+    end else begin
+      unique case (rq_state)
+        RQ_RUN: begin
+          rq_count <= '0;
+          if (rst_req) rq_state <= RQ_DRAIN;
+        end
+        RQ_DRAIN: begin
+          rq_count <= rq_count + 17'd1;
+          if (port_quiet) begin
+            rq_state <= RQ_RESET;
+            rq_count <= '0;
+          end else if (32'(rq_count) + 1 >= RESET_BOUND) begin
+            rq_state <= RQ_CUT;
+          end
+        end
+        RQ_RESET: begin
+          if (32'(rq_count) + 1 < RESET_MIN) rq_count <= rq_count + 17'd1;
+          else if (!rst_req) rq_state <= RQ_RUN;
+        end
+        default: ;   // RQ_CUT: until the hard reset
+      endcase
+    end
+  end
+  // Sticky: set by a cut, cleared only by the fabric's configuration.
+  always_ff @(posedge clk) if (!rst && rq_state == RQ_DRAIN && !port_quiet && 32'(rq_count) + 1 >= RESET_BOUND)
+    rq_cut <= 1'b1;
+  assign rst_pend = rq_state == RQ_DRAIN;
+  assign rst_on   = core_rst;
+  assign rst_cut  = rq_cut;
 
   // The video controller's size as muir's `check_video_size` takes it: a
   // line a whole number of words, at most 1920 by 1080 (`VIDEO_MAX_SIZE`);
@@ -552,7 +639,7 @@ module quux15_core #(
   logic kbd_boot, kbd_boot_pend, kbd_boot_go;
   assign kbd_boot_go = kbd_boot_pend && halted;
   always_ff @(posedge clk) begin
-    if (rst || kbd_boot_go) kbd_boot_pend <= 1'b0;
+    if (core_rst || kbd_boot_go) kbd_boot_pend <= 1'b0;
     else if (kbd_boot) kbd_boot_pend <= 1'b1;
   end
   always_comb begin
@@ -561,8 +648,8 @@ module quux15_core #(
   end
   // The clock the reset and the boot are for.
   always_ff @(posedge clk) begin
-    reset_q <= !rst && reset_go;
-    boot_q  <= !rst && boot_go;
+    reset_q <= !core_rst && reset_go;
+    boot_q  <= !core_rst && boot_go;
   end
 
   // **THE CONSOLE'S CLOCK** (`console_edge`), from the registers as the
@@ -850,7 +937,7 @@ module quux15_core #(
   // The machine runs: out of reset, and no error halt now or before.  The
   // RAMs take no write in reset, when WB's registers are whatever they came
   // up as.
-  assign running = !rst && errhalt == 2'd0 && !errhalt_now;
+  assign running = !core_rst && errhalt == 2'd0 && !errhalt_now;
 
   // RD's operands: the RAM's word, or a forward that replaced it.
   logic [39:0] rd_a, rd_pdl;
@@ -1442,7 +1529,7 @@ module quux15_core #(
   logic        fd_complete;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(core_rst), .hard(rst),
       .p_busy(p_busy), .p_req(p_req), .p_bus(p_bus), .p_land(p_land), .p_word(p_word),
       .p_land_next(p_land_next), .p_word_next(p_word_next),
       .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(md),
@@ -1452,6 +1539,7 @@ module quux15_core #(
       .d_done(bd_done), .d_rdata(bd_rdata), .d_start(bd_start), .d_busy(bd_busy),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
       .empty(port_empty), .sweep_go(fd_complete),
+      .hold(port_hold), .quiet(port_quiet),
       .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
       .m_awid(m_awid), .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awsize(m_awsize),
@@ -1472,7 +1560,7 @@ module quux15_core #(
   logic        ephemeral;
   logic [63:0] pointer_types;
   quux15_mmu #(.MAIN_WORDS(MAIN_WORDS)) mmu (
-      .clk(clk), .rst(rst), .con_reset(reset_q),
+      .clk(clk), .rst(core_rst), .con_reset(reset_q),
       .a_next_va(a_next_va), .b_next_va(b_next_va),
       .a_req(a_req), .a_va(a_va), .a_hold(a_hold), .a_entry(a_entry),
       .k_req(k_req), .k_va(k_va), .k_entry(k_entry), .k_write(k_write), .k_md(k_md),
@@ -1549,7 +1637,7 @@ module quux15_core #(
   logic [31:0] dev_rd_word, microseconds;
   logic        dev_rd_built, dev_wr_built, int_now;
   quux15_block_walk #(.MAIN_WORDS(MAIN_WORDS)) walk (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(core_rst),
       .start(bd_start), .st_cmd(bd_st_cmd), .st_clp(bd_st_clp), .st_da(bd_st_da),
       .walking(bd_walking), .charge(bd_charge), .fin(bd_fin), .fin_lma(bd_fin_lma),
       .fin_da(bd_fin_da), .fin_past_end(bd_fin_past_end), .fin_nxm(bd_fin_nxm),
@@ -1564,7 +1652,7 @@ module quux15_core #(
   assign obs_transfer = bd_walking || bd_busy;
 
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
-      .clk(clk), .rst(rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
+      .clk(clk), .rst(core_rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
       .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
@@ -1861,7 +1949,7 @@ module quux15_core #(
   // clock and has the words 16 edges later; the multiplier is the product.
   quux_muldiv muldiv (
       .clk   (clk),
-      .rst   (rst),
+      .rst   (core_rst),
       .load  (ex_reach_mul && ex_rd_div && ex_clocks == 5'd0 && errhalt == 2'd0),
       .m     (ex_mdata[31:0]),
       .dm    (ex_mdata[31:0]),
@@ -2537,11 +2625,11 @@ module quux15_core #(
   assign md_rx_a = fused_index_on(mmem[5'o31], c_res.bm, c_res.lc);
   assign md_ex_a = fused_index_on(mmem[5'o31], intctl[3], md_ex_lc);
   assign md_d_a  = fused_index(land_word, intctl[3], lc);
-  assign md_we   = !rst && errhalt == 2'd0 && !errhalt_now && commit && mdmem_we;
+  assign md_we   = !core_rst && errhalt == 2'd0 && !errhalt_now && commit && mdmem_we;
   // **DISPATCH MEMORY** (`quux15_dmem.sv`): EX's port at the word's
   // dispatch address, the readout's at its address; a dispatch-memory write
   // lands with EX's registers.
-  assign dm_we = !rst && errhalt == 2'd0 && !errhalt_now && dmem_we;
+  assign dm_we = !core_rst && errhalt == 2'd0 && !errhalt_now && dmem_we;
   quux15_dmem u_dmem (
       .clk, .we(dm_we), .waddr(x_daddr), .wdata(dmem_wdata),
       .ex_a(x_daddr), .ex_e(dm_ex_e), .ro_a(rm_addr_q[11:0]), .ro_e(dm_ro_e)
@@ -2835,7 +2923,7 @@ module quux15_core #(
   // and keeps a word only while the store reads nothing; a word CS gives RD
   // reads the PDL buffer where it would after a redirect too.
   always_ff @(posedge clk) begin
-    if (BUBBLES == 2 && !rst && errhalt == 2'd0) begin
+    if (BUBBLES == 2 && !core_rst && errhalt == 2'd0) begin
       if (cs_moves && cs_rp[1] && (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) != cs_pdl_addr) begin
         $display("quux15_core: two bubbles: CS's word at %o reads the PDL buffer at %o, not %o", cs_pc,
                  cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx, cs_pdl_addr);
@@ -2862,7 +2950,7 @@ module quux15_core #(
   logic [39:0] md_at_commit;
   always_ff @(posedge clk) begin
     if (commit) md_at_commit <= md_final;
-    if (!rst && errhalt == 2'd0 && wb_v && st_v[0] && st_write[0]
+    if (!core_rst && errhalt == 2'd0 && wb_v && st_v[0] && st_write[0]
         && (md != md_at_commit || md_now != md_at_commit)) begin
       $display("quux15_core: MD moved between the commit of the write at %o and its grant: %o, not %o",
                wb_pc, md_now, md_at_commit);
@@ -2880,7 +2968,7 @@ module quux15_core #(
   //   write's `seq` under no pending flag and the stack's top kept as the
   //   stack's word at the pointer (`spc_below`), the same word.
   always_ff @(posedge clk) begin
-    if (!rst && errhalt == 2'd0) begin
+    if (!core_rst && errhalt == 2'd0) begin
       // A write is a word's first start, LC's fetch its second: WB keeps
       // one write's word.
       if (commit && xs1.v && xs1.write) begin
@@ -2935,7 +3023,7 @@ module quux15_core #(
   end
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (core_rst) begin
       // `Pipeline::boot`: the trap in CS at the PROM's first word, which the
       // first fetch reads again; RD's copies from the registers.
       cs_v_q <= 1'b1; cs_nop_q <= 1'b1; cs_pre_nop_q <= 1'b0; cs_trap_q <= 1'b1; cs_dbg_q <= 1'b0;
@@ -3184,7 +3272,7 @@ module quux15_core #(
         cs_nop_q <= cs_n_nop; cs_pre_nop_q <= cs_n_pre;
       end
     end
-    if (!rst) begin
+    if (!core_rst) begin
       // **THE CONSOLE'S -RESET AND -BOOT** (`console_edge`): OA-REG-LOW
       // and OA-REG-HIGH and word 225 cleared; the boot empties the four
       // stages and what is on its way (`reset_pipeline`), the trap in CS at
@@ -3241,7 +3329,7 @@ module quux15_core #(
   // **THE SPY'S WRITE** (`Machine::spy_write`), at the edge before the
   // clock it is for; `-RESET` and `-BOOT` with it (`reset_go`, `boot_go`).
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (core_rst) begin
       // `Pipeline::boot`: RUN preset by -BOOT.
       cc_run <= 1'b1; cc_step <= 1'b0; cc_nop11 <= 1'b0; cc_idebug <= 1'b0; cc_ldstat <= 1'b0;
       mode <= '0; opc_ctl <= '0; debug_ir <= '0;
@@ -3282,7 +3370,7 @@ module quux15_core #(
 
   // The PDL buffer's held write, and the halt's drain end and the boot.
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (core_rst) begin
       pdlh_v <= 1'b0; pdl_pend <= 1'b0; pdlh_ins <= 1'b0;
     end else begin
       if (land_pdl_we && running) begin
@@ -3441,7 +3529,7 @@ module quux15_core #(
     endcase
   endfunction
   always_ff @(posedge clk) begin
-    if (rst) clocks <= 48'd0;
+    if (core_rst) clocks <= 48'd0;
     else clocks <= clocks + 48'd1;
     rm_en_q   <= rm_en;
     rm_sel_q  <= rm_sel;
@@ -3473,7 +3561,7 @@ module quux15_core #(
 `ifndef SYNTHESIS
   // The readout takes the memories' write ports only while nothing writes.
   always_ff @(posedge clk) begin
-    if (!rst && ro_on && ((wb_v && wb_fresh && wb_imem_we) || land_a_we || pdl_we)) begin
+    if (!core_rst && ro_on && ((wb_v && wb_fresh && wb_imem_we) || land_a_we || pdl_we)) begin
       $display("quux15_core: the readout took a memory's write port while it was written");
       $finish;
     end
@@ -3485,9 +3573,9 @@ module quux15_core #(
   // The clock's events, as the trace has them: a grant at WB, a word landed
   // in MD, a register taken; the depths as the clock ends.
   always_ff @(posedge clk) begin
-    if (rst || errhalt != 2'd0) begin
+    if (core_rst || errhalt != 2'd0) begin
       obs_grant <= 2'd0; obs_mdl <= 1'b0; obs_reg <= 1'b0;
-      obs_queue <= rst ? 4'd0 : queue_n; obs_inflight <= rst ? 5'd0 : inflight_n;
+      obs_queue <= core_rst ? 4'd0 : queue_n; obs_inflight <= core_rst ? 5'd0 : inflight_n;
     end else begin
       obs_grant    <= at_grant ? {st_write[0], 1'b1} : 2'd0;
       obs_gaddr    <= {3'd0, s_bus};
@@ -3529,9 +3617,9 @@ module quux15_core #(
   // reference for this core.
   logic s1_prev_started;
   always_ff @(posedge clk) begin
-    if (rst) s1_prev_started <= 1'b0;
+    if (core_rst) s1_prev_started <= 1'b0;
     else if (commit) s1_prev_started <= xs0.v;
-    if (!rst && errhalt == 2'd0 && commit && ex_portb && s1_prev_started) begin
+    if (!core_rst && errhalt == 2'd0 && commit && ex_portb && s1_prev_started) begin
       $display("quux15_core: the word at %o reads the map right after a start (A15b.2's rule)", ex_pc);
       $finish;
     end
@@ -3540,13 +3628,13 @@ module quux15_core #(
   // muir grants a word's second start in the clock its first faults; WB
   // here takes one start a clock, which no program yet tells apart.
   always_ff @(posedge clk) begin
-    if (!rst && errhalt == 2'd0 && s_faulted && st_v[1])
+    if (!core_rst && errhalt == 2'd0 && s_faulted && st_v[1])
       $error("quux15_core: a start after a start that faulted, in one clock, at PC %o", wb_pc);
   end
 
   // A word that needs what is not built stops the simulation, named.
   always_ff @(posedge clk) begin
-    if (!rst && errhalt == 2'd0 && unbuilt != '0) begin
+    if (!core_rst && errhalt == 2'd0 && unbuilt != '0) begin
       $display("quux15_core: not built: %b (bit 0 a device, the window or a fetch inside the PDL buffer with its own write of it, 1 a device word unanswered) at PC %o",
                unbuilt, ex_v ? ex_pc : rd_pc);
       $finish;

@@ -35,10 +35,16 @@ module quux15_core #(
     parameter bit ONE_WRITE_ID = 1'b1,
     parameter logic [31:0] MAIN_BASE    = 32'h0000_0000,
     parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
-    parameter int unsigned BUBBLES = 1
+    parameter int unsigned BUBBLES = 1,
+    parameter int unsigned RESET_BOUND = 65536,
+    parameter int unsigned RESET_MIN   = 64
 ) (
     input var logic clk,
     input var logic rst,
+    input var logic rst_req,
+    output var logic rst_pend,
+    output var logic rst_on,
+    output var logic rst_cut,
     output var logic [15:0] obs_cs,
     output var logic [15:0] obs_rd,
     output var logic [15:0] obs_ex,
@@ -170,6 +176,14 @@ module quux15_core #(
   assign tbi_clk = clk;
   logic tbi_rst /*verilator public_flat_rw*/;
   assign tbi_rst = rst;
+  logic tbi_rst_req /*verilator public_flat_rw*/;
+  assign tbi_rst_req = rst_req;
+  logic tbo_rst_pend /*verilator public_flat_rw*/;
+  assign rst_pend = tbo_rst_pend;
+  logic tbo_rst_on /*verilator public_flat_rw*/;
+  assign rst_on = tbo_rst_on;
+  logic tbo_rst_cut /*verilator public_flat_rw*/;
+  assign rst_cut = tbo_rst_cut;
   logic [15:0] tbo_obs_cs /*verilator public_flat_rw*/;
   assign obs_cs = tbo_obs_cs;
   logic [15:0] tbo_obs_rd /*verilator public_flat_rw*/;
