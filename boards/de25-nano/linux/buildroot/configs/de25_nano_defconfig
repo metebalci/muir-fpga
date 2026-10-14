@@ -95,6 +95,10 @@ BR2_PACKAGE_DROPBEAR=y
 # BusyBox's ntpd, for the clock by NTP at boot (S80cadr-disk-packs).  The
 # fragment is shared by the four boards and says why each applet is there.
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/busybox.fragment"
+# dosfstools' fsck.fat, which S80cadr-disk-packs runs on the card before it
+# mounts it: BusyBox has no FAT check of its own.
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
 BR2_PACKAGE_EVTEST=y
 BR2_PACKAGE_CADR_CONSOLE=y
 BR2_PACKAGE_CADR_READOUT=y

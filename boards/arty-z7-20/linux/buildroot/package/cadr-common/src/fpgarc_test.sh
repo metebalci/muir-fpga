@@ -6292,6 +6292,180 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
+# **THE CARD IS CHECKED BY `fsck.fat -a` BEFORE IT IS MOUNTED.**  Linux's FAT
+# driver never clears the not-cleanly-unmounted bit it found set at a mount, so
+# after one power cut the kernel's warning came back at every boot; the check
+# clears it.  What is held: the check runs on the partition that is about to be
+# mounted and on no other, before its mount and never after it, with `-a` and
+# its standard input closed; exit 0 and 1 are said and the card mounts; any
+# other status, and an image with no fsck.fat at all, print a line with FAIL
+# and the status, and the card STILL mounts and the pack program still starts.
+#
+# The stand-in records its arguments, its standard input, and how many mounts
+# of its device had been asked by the time it ran.  `$WORK/fsck.rc` is the
+# status it exits with, and `$WORK/dev/pN` is made a file for each partition
+# the card has, since the script checks only a device that is there.
+fsck_prepare() {
+	sandbox
+	prepare cadr-disk-packs S80cadr-disk-packs || return 1
+	: > "$WORK/fsck.calls"
+	echo 0 > "$WORK/fsck.rc"
+	cat > "$WORK/bin/fsck.fat" <<EOF
+#!/bin/sh
+_dev=""
+for _a; do _dev=\$_a; done
+echo "\$* stdin=\$(readlink /proc/self/fd/0) mounts-before=\$(grep -c -- "\$_dev" "$WORK/mount.calls")" >> "$WORK/fsck.calls"
+echo "fsck.fat 4.2 (2021-01-31)"
+_rc=\$(cat "$WORK/fsck.rc")
+case "\$_rc" in
+0) echo "\$_dev: 12 files, 34/56 clusters" ;;
+1) echo "Cannot initialize conversion from codepage 850 to ANSI_X3.4-1968: Invalid argument" >&2
+   echo "Cannot initialize conversion from ANSI_X3.4-1968 to codepage 850: Invalid argument" >&2
+   echo "Using internal CP850 conversion table" >&2
+   echo "Dirty bit is set. Fs was not properly unmounted and some data may be corrupt."
+   echo " Automatically removing dirty bit."
+   echo "Performing changes."
+   echo "\$_dev: 12 files, 34/56 clusters" ;;
+*) echo "fsck.fat: the stand-in failed with \$_rc" >&2 ;;
+esac
+exit "\$_rc"
+EOF
+	chmod +x "$WORK/bin/fsck.fat"
+	# Anchored like every other constant, but a missing anchor does not end
+	# the case: its assertions then say what the script did instead.
+	anchor "$WORK/S80cadr-disk-packs" "^FSCK=/sbin/fsck.fat\$" "FSCK=$WORK/bin/fsck.fat"
+	anchor "$WORK/S80cadr-disk-packs" "^FSCK_OUT=/var/run/cadr-fsck.out\$" \
+	       "FSCK_OUT=$WORK/run/fsck.out"
+	printf -- '--chaos-address 177101\r\n' > "$WORK/card/fpgarc"
+	return 0
+}
+
+# The card mounted and the pack program started with its bay, whatever the
+# check said.  $1 the device, $2 the bay.
+fsck_still_mounts() {
+	if grep -q -- "-t vfat .* $1 " "$WORK/mount.calls"; then
+		ok "$1 is mounted"
+	else
+		fail "$1 was not mounted after the check: $(cat "$WORK/mount.calls")"
+	fi
+	passes_once "--packs" "cadr-disk-packs" "$2"
+}
+
+case_head "the card is checked by fsck.fat -a before it is mounted, and only the partition that mounts"
+for shape in new old; do
+	if fsck_prepare; then
+		if [ "$shape" = new ]; then
+			dev=p1
+			: > "$WORK/dev/p1"
+		else
+			# The old shape has both partitions; the boot partition is
+			# never mounted, so it is never checked.
+			dev=p2
+			: > "$WORK/dev/p1"
+			: > "$WORK/dev/p2"
+		fi
+		echo "$WORK/dev/$dev" > "$WORK/mountable"
+		# The script's own standard input is a file, so that a check that
+		# inherited it, rather than having it closed, is seen whatever
+		# this check itself was started with.
+		run_script S80cadr-disk-packs < "$WORK/card/fpgarc"
+		if [ "$(cat "$WORK/fsck.calls")" = "-a $WORK/dev/$dev stdin=/dev/null mounts-before=0" ]; then
+			ok "a card of the $shape shape: fsck.fat -a $dev, once, stdin closed, before any mount of $dev"
+		else
+			fail "a card of the $shape shape: fsck.fat was asked [$(cat "$WORK/fsck.calls")]," \
+			     "and once, -a $WORK/dev/$dev, stdin=/dev/null, before its mount is right"
+		fi
+		if grep -q "fsck.fat -a $WORK/dev/$dev: nothing to correct: $WORK/dev/$dev: 12 files" \
+		   "$WORK/out.S80cadr-disk-packs"; then
+			ok "and the console says the check found nothing, in fsck.fat's own words"
+		else
+			fail "the console does not say what the check did: $(cat "$WORK/out.S80cadr-disk-packs")"
+		fi
+		if [ "$shape" = new ]; then
+			fsck_still_mounts "$WORK/dev/p1" "$WORK/card/packs"
+		else
+			fsck_still_mounts "$WORK/dev/p2" "$WORK/card "
+		fi
+	fi
+done
+
+case_head "fsck.fat exit 1 (corrected) is said in one line, and the card mounts"
+if fsck_prepare; then
+	: > "$WORK/dev/p1"
+	echo 1 > "$WORK/fsck.rc"
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if [ "$(grep -c "fsck.fat" "$WORK/out.S80cadr-disk-packs")" = 1 ] &&
+	   grep -q "fsck.fat -a $WORK/dev/p1: corrected (exit 1): Dirty bit is set.* Automatically removing dirty bit\. Performing changes\. $WORK/dev/p1: 12 files" \
+	   "$WORK/out.S80cadr-disk-packs"; then
+		ok "one line: corrected (exit 1), with what fsck.fat did"
+	else
+		fail "exit 1 is not said in one line with fsck.fat's words: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	if grep -q "conversion" "$WORK/out.S80cadr-disk-packs"; then
+		fail "the codepage lines reached the console line: $(cat "$WORK/out.S80cadr-disk-packs")"
+	else
+		ok "and the codepage lines a glibc image without gconv adds are left out of it"
+	fi
+	if grep -q "FAIL" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a corrected card printed FAIL: $(cat "$WORK/out.S80cadr-disk-packs")"
+	else
+		ok "and no FAIL"
+	fi
+	fsck_still_mounts "$WORK/dev/p1" "$WORK/card/packs"
+fi
+
+case_head "fsck.fat exit 4 prints FAIL with the status, and the card still mounts"
+if fsck_prepare; then
+	: > "$WORK/dev/p1"
+	echo 4 > "$WORK/fsck.rc"
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if grep -q "FAIL: fsck.fat -a $WORK/dev/p1 exited 4.*the stand-in failed with 4" "$WORK/out.S80cadr-disk-packs"; then
+		ok "FAIL, exited 4, with what fsck.fat said"
+	else
+		fail "exit 4 is not a FAIL line with its status: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	fsck_still_mounts "$WORK/dev/p1" "$WORK/card/packs"
+fi
+
+case_head "an image with no fsck.fat prints FAIL with the status, and the card still mounts"
+if fsck_prepare; then
+	: > "$WORK/dev/p1"
+	rm -f "$WORK/bin/fsck.fat"
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if grep -q "FAIL: fsck.fat -a $WORK/dev/p1 exited 127.*not found" "$WORK/out.S80cadr-disk-packs"; then
+		ok "FAIL, exited 127, and the shell's words that it is not there"
+	else
+		fail "a missing fsck.fat is not a FAIL line with its status: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	fsck_still_mounts "$WORK/dev/p1" "$WORK/card/packs"
+fi
+
+case_head "a card already mounted is not checked, and a board with no card checks nothing"
+if fsck_prepare; then
+	: > "$WORK/dev/p1"
+	: > "$WORK/mounted"
+	mkdir -p "$WORK/card/packs"
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if [ -s "$WORK/fsck.calls" ]; then
+		fail "a mounted card was checked: $(cat "$WORK/fsck.calls")"
+	else
+		ok "a mounted card is not checked"
+	fi
+fi
+if fsck_prepare; then
+	: > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if [ -s "$WORK/fsck.calls" ] || grep -q "fsck" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a board with no card checked something or talked about it: $(cat "$WORK/fsck.calls" "$WORK/out.S80cadr-disk-packs")"
+	else
+		ok "and a board with no card checks nothing and says nothing about a check"
+	fi
+fi
+
 # **THE BAND'S TWO TREES ARE TWO LINES AND TWO DECISIONS.**  A line naming a
 # tree that is not there stops the host in its own words, so each is live
 # exactly when its own tree was staged --- and they are separate, because a

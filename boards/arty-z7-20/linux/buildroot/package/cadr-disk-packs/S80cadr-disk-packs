@@ -249,6 +249,47 @@ NTP_NETWORK_SECONDS=20
 NTP_ANSWER_SECONDS=30
 NTP_OUT=/var/run/cadr-ntpd.out
 
+# **THE CARD IS CHECKED BEFORE IT IS MOUNTED: `fsck.fat -a`, AT EVERY BOOT.**
+# FAT keeps one bit in its boot sector that says the filesystem was not
+# unmounted cleanly.  Linux sets it when it mounts a card for writing and
+# clears it at a clean unmount, but never clears a bit it FOUND set at the
+# mount (fs/fat/inode.c, `fat_set_state`), so after one power cut the kernel's
+# "Volume was not properly unmounted" came back at every boot, however cleanly
+# the board was shut down.  `fsck.fat -a` repairs what a power cut left and
+# clears the bit, and on a card with nothing wrong it changes nothing.
+#
+# Only the partition about to be mounted is checked, only when its device is
+# there, and only here, before its mount: never a mounted filesystem, and never
+# with a question that needs an answer (`-a`, and standard input closed).
+# What the check did is said in one line on the console, and everything it
+# said is kept in FSCK_OUT.  Exit 0 is nothing found and 1 is corrected
+# (fsck.fat(8); its `die` exits 1 too, which is why the line carries
+# fsck.fat's own words).  **ANY OTHER STATUS, OR NO fsck.fat ON THE IMAGE, IS A
+# LINE WITH FAIL IN IT, AND THE CARD IS MOUNTED ALL THE SAME**: the packs must
+# come up, and a card the check could not vouch for is better served than
+# refused.
+FSCK=/sbin/fsck.fat
+FSCK_OUT=/var/run/cadr-fsck.out
+
+check_the_card() {
+	[ -e "$1" ] || return 0
+	"$FSCK" -a "$1" > "$FSCK_OUT" 2>&1 < /dev/null
+	_fsck_rc=$?
+	# Its words on one line, at most 400 characters of them, without the
+	# version banner and without the three lines a glibc image with no
+	# gconv modules adds about the codepage (fsck.fat then uses its own
+	# CP850 table, as it says).
+	_fsck_said=$(grep -v -e '^fsck\.fat [0-9]' -e '^Cannot initialize conversion ' \
+		-e '^Using internal CP[0-9]* conversion table' "$FSCK_OUT" 2>/dev/null |
+		tr -s '\n' ' ' | cut -c1-400)
+	case "$_fsck_rc" in
+	0) echo "cadr-disk-packs: fsck.fat -a $1: nothing to correct: $_fsck_said" ;;
+	1) echo "cadr-disk-packs: fsck.fat -a $1: corrected (exit 1): $_fsck_said" ;;
+	*) echo "cadr-disk-packs: FAIL: fsck.fat -a $1 exited $_fsck_rc, and the card is mounted unchecked: ${_fsck_said:-it said nothing}" ;;
+	esac
+	return 0
+}
+
 # **THE MOUNT, AND THE ONE PLACE THAT KNOWS THERE WERE EVER TWO CARD SHAPES.**
 # A card made by `mksd-*.sh` is one FAT32 partition holding everything, and
 # that is the shape to build for.  A card of the OLD shape has two, with
@@ -284,7 +325,11 @@ mount_the_card() {
 		[ -d "$CARD/packs" ] || PACKS="$CARD"
 		_card_mounted=already
 		echo "cadr-disk-packs: the card is already mounted at $CARD, and the drive bay is $PACKS"
-	elif mount -t vfat -o "$CARD_OPTS" "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
+	# Each partition is checked just before its own mount is tried.
+	# `check_the_card` always succeeds, so the mount's status alone decides
+	# each branch, as it did before there was a check.
+	elif check_the_card "$OLD_CARD_DEV"
+	     mount -t vfat -o "$CARD_OPTS" "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
 		# A card of the old two-partition shape.  Its bay is the root of
 		# this partition and not a folder in it.
 		PACKS="$CARD"
@@ -292,7 +337,8 @@ mount_the_card() {
 		echo "cadr-disk-packs:   and its drive bay is that partition's own root.  It works, and it is"
 		echo "cadr-disk-packs:   the last shape that will: format the card as ONE FAT32 partition and"
 		echo "cadr-disk-packs:   unpack this board's zip onto it when you next have it in a reader."
-	elif mount -t vfat -o "$CARD_OPTS" "$CARD_DEV" "$CARD" 2>/dev/null; then
+	elif check_the_card "$CARD_DEV"
+	     mount -t vfat -o "$CARD_OPTS" "$CARD_DEV" "$CARD" 2>/dev/null; then
 		echo "cadr-disk-packs: the card is at $CARD, read-write, and the drive bay is $PACKS"
 	else
 		echo "cadr-disk-packs: no card at $CARD_DEV; the bay will be empty"

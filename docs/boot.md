@@ -274,6 +274,19 @@ A pack is a working copy whose master is in the archive, and the boot files
 are in a zip that is still on the machine that wrote the card. Nothing on the
 card is the only copy of itself.
 
+**The card is checked at every boot, before it is mounted.**
+`S80cadr-disk-packs` runs `fsck.fat -a` from dosfstools on the partition it is
+about to mount, and says on the console in one line what the check did. After
+a power cut the check repairs what it can and clears the boot sector's bit
+that marks the filesystem as not cleanly unmounted. Linux's FAT driver never
+clears that bit itself when it found it set at the mount, so without the check
+the kernel's "Volume was not properly unmounted" warning came back at every
+boot after one power cut, however cleanly the board was shut down later. On a
+card with nothing wrong the check changes nothing. A check that fails, or an
+image without `fsck.fat`, prints a line with `FAIL` and the exit status, and
+the card is mounted all the same, so the packs still come up. Everything the
+check printed is kept in `/var/run/cadr-fsck.out` until the next boot.
+
 **Three files were two.** Mainline U-Boot's SPL is the first stage, and it
 loads U-Boot proper as a second file, `u-boot.img`, from the FAT partition.
 Digilent's `BOOT.BIN` carried both, because Xilinx's FSBL reads partitions out
