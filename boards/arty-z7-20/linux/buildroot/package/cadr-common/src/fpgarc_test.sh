@@ -1376,6 +1376,81 @@ if prepare cadr-serial S86cadr-serial; then
 	passes_once "--serial" "cadr-serial" "0.0.0.0:7641"
 fi
 
+# **QUUX HAS NO CHAOSNET**, neither the cable nor the protocol: a card that
+# says `--machine quux` starts no Chaosnet program, whatever its Chaosnet
+# lines say, waits for no network, and says why.  The card's Chaosnet lines
+# are still claimed, so the end of the boot does not call them nobody's: every
+# line of this card, the peer and the trace included, must be claimed.
+case_head "a QUUX card starts no Chaosnet, even with the cable on it, and its lines are still claimed"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--machine quux' '--chaos-address 177101' \
+	       '--chaos-udp 0.0.0.0:42042' '--chaos-udp-peer 177200@a-host.invalid:42043' \
+	       '--chaos-trace' > "$RC"
+	: > "$WORK/run/claimed"
+	run_script S87cadr-chaosnet
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "cadr-chaosnet was started on a QUUX card: it was given: $(given)"
+	else
+		ok "cadr-chaosnet was not started"
+	fi
+	if grep -q 'QUUX has no Chaosnet, neither the cable nor the protocol; not started' \
+	   "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the console says why"
+	else
+		fail "the console does not say why; it says:"
+		sed 's/^/        /' "$WORK/out.S87cadr-chaosnet"
+	fi
+	if grep -q 'FAIL' "$WORK/out.S87cadr-chaosnet" ||
+	   [ "$(cat "$WORK/status.S87cadr-chaosnet")" != 0 ]; then
+		fail "the start returned $(cat "$WORK/status.S87cadr-chaosnet") and said: $(tr '\n' '|' < "$WORK/out.S87cadr-chaosnet")"
+	else
+		ok "and the start succeeds with no FAIL"
+	fi
+	if [ -s "$WORK/ip.calls" ] || [ -s "$WORK/nslookup.calls" ]; then
+		fail "the start waited for a network on a QUUX card: $(cat "$WORK/ip.calls" "$WORK/nslookup.calls" | tr '\n' ' ')"
+	else
+		ok "and it waited for no network"
+	fi
+	unclaimed=$(FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned"; \
+	            . "$READER"; fpgarc_unclaimed "$RC" | sort -u | tr '\n' ' ')
+	if [ -z "$unclaimed" ]; then
+		ok "and every line of the card was claimed"
+	else
+		fail "lines of a QUUX card were left unclaimed by the Chaosnet's start: $unclaimed"
+	fi
+fi
+
+# And the CADR as before: a card that says `--machine cadr`, or that said quux
+# and then cadr, starts the program with its lines.  Quux after cadr is QUUX.
+case_head "a CADR card still starts the Chaosnet, and the last --machine line decides"
+for _m in "cadr" "quux,cadr" "cadr,quux"; do
+	sandbox
+	prepare cadr-chaosnet S87cadr-chaosnet || continue
+	: > "$RC"
+	for _l in $(echo "$_m" | tr ',' ' '); do
+		printf -- '--machine %s\r\n' "$_l" >> "$RC"
+	done
+	printf '%s\r\n' '--chaos-address 177101' '--chaos-udp 0.0.0.0:42042' >> "$RC"
+	run_script S87cadr-chaosnet
+	case "$_m" in
+	*quux)
+		if [ -s "$WORK/daemon.calls" ]; then
+			fail "--machine $_m: cadr-chaosnet was started: $(given)"
+		else
+			ok "--machine $_m: cadr-chaosnet was not started"
+		fi
+		;;
+	*)
+		passes_once "--chaos-address" "cadr-chaosnet, --machine $_m," "177101"
+		passes_once "--chaos-udp" "cadr-chaosnet, --machine $_m," "0.0.0.0:42042"
+		if grep -q 'QUUX' "$WORK/out.S87cadr-chaosnet"; then
+			fail "--machine $_m: the console speaks of QUUX: $(tr '\n' '|' < "$WORK/out.S87cadr-chaosnet")"
+		fi
+		;;
+	esac
+done
+
 # **THE CHAOSNET FOLLOWS THE SAME RULE, AND ITS TWO DEFAULTS PART COMPANY
 # UNDER IT.**  The script had one branch for a card and one for no card, so a
 # card that said nothing about the address got no address at all, where the
@@ -5257,6 +5332,37 @@ if init_stop quux-file-device S81quux-file-device "file device, --machine quux, 
 fi
 if init_stop quux-file-device S81quux-file-device "file device, --machine cadr, pid dead" dead '--machine cadr'; then
 	init_stop_said "file device, --machine cadr, pid dead" "Stopping quux-file-device: FAIL"
+fi
+
+case_head "cadr-chaosnet: the stop on a QUUX card says it was not running, and no FAIL"
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, --machine quux" none '--machine quux' '--chaos-udp 0.0.0.0:42042'; then
+	init_stop_said "chaosnet, --machine quux" "Stopping cadr-chaosnet: not running (QUUX)" ok
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, cadr then quux" none '--machine cadr' '--machine quux'; then
+	init_stop_said "chaosnet, cadr then quux" "Stopping cadr-chaosnet: not running (QUUX)" ok
+fi
+case_head "cadr-chaosnet: a running Chaosnet is stopped with OK, whatever the card says now"
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, --machine cadr, running" live '--machine cadr'; then
+	init_stop_said "chaosnet, --machine cadr, running" "Stopping cadr-chaosnet: OK" ok
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, no card, running" live NOCARD; then
+	init_stop_said "chaosnet, no card, running" "Stopping cadr-chaosnet: OK" ok
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, --machine quux, running" live '--machine quux'; then
+	init_stop_said "chaosnet, --machine quux, running" "Stopping cadr-chaosnet: OK" ok
+fi
+case_head "cadr-chaosnet: a stop with a program that is not there still says FAIL on the CADR"
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, --machine cadr, no pid" none '--machine cadr' '--chaos-udp 0.0.0.0:42042'; then
+	init_stop_said "chaosnet, --machine cadr, no pid" "Stopping cadr-chaosnet: FAIL"
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, quux then cadr, no pid" none '--machine quux' '--machine cadr'; then
+	init_stop_said "chaosnet, quux then cadr, no pid" "Stopping cadr-chaosnet: FAIL"
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, no card, no pid" none NOCARD; then
+	init_stop_said "chaosnet, no card, no pid" "Stopping cadr-chaosnet: FAIL"
+fi
+if init_stop cadr-chaosnet S87cadr-chaosnet "chaosnet, --machine quux, pid dead" dead '--machine quux'; then
+	init_stop_said "chaosnet, --machine quux, pid dead" "Stopping cadr-chaosnet: FAIL"
 fi
 # **AND ITS LINES ARE CLAIMED**, or S88 would report them at boot as lines no
 # program takes, which is false: they reached this program, on a machine that

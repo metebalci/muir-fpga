@@ -423,6 +423,16 @@ start() {
 		# nothing, and the paragraph at DEFAULT_ADDRESS is what that
 		# means for each of the two defaults.
 		eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
+		# **QUUX HAS NO CHAOSNET**, neither the cable nor the protocol.
+		# A card that says `--machine quux` carries a QUUX bitstream,
+		# and the program is not started, whatever the lines above say.
+		# The decision comes after the card's flags are read, so that
+		# their claim is recorded and the end of the boot does not call
+		# them nobody's.
+		if fpgarc_is_quux; then
+			echo "cadr-chaosnet: --machine quux: QUUX has no Chaosnet, neither the cable nor the protocol; not started."
+			return 0
+		fi
 	else
 		echo "cadr-chaosnet: no $RC; the defaults"
 		set -- --chaos-address "$DEFAULT_ADDRESS" --chaos-udp "0.0.0.0:$DEFAULT_PORT"
@@ -502,7 +512,19 @@ start() {
 	cadr_daemon "$PROG" "$PIDFILE" "$@"
 }
 
+# **A PROGRAM THE START DID NOT START IS NOT A STOP THAT FAILED.**  On a QUUX
+# card the start runs nothing and writes no pid file, and `cadr_stop` would
+# then say `Stopping cadr-chaosnet: FAIL` at every shutdown.  So with no pid
+# file the card is asked the start's question and the reason is said in one
+# line.  With no card, or a CADR card, a missing pid file is a stop as before;
+# and a pid file means the program was started, whatever the card says now.
+# The card is still mounted here: S80cadr-disk-packs, which unmounts it, stops
+# after this.
 stop() {
+	if [ ! -s "$PIDFILE" ] && fpgarc_is_quux; then
+		echo "Stopping cadr-chaosnet: not running (QUUX)"
+		return 0
+	fi
 	cadr_stop cadr-chaosnet "$PIDFILE"
 }
 
