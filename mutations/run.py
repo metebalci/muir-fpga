@@ -2969,6 +2969,101 @@ CHECKS["quux15_arty_param"] = {
     "machine": "quux",
 }
 
+# **REVISION 15 ON THE DE25-NANO** (MP8 step 2): the Makefile's
+# `quux15_f2sdram.quux.pass`, `quux15_de25.pass`, `quux15_de25_param.pass` and
+# `quux15_de25_faces.pass`.
+QUUX15_DE25_F2SDRAM = ["rtl/plumbing/quux15_axi3.sv", "rtl/plumbing/cadr_mem_count.sv",
+                       "rtl/plumbing/cadr_f2sdram_gate.sv", "rtl/plumbing/cadr_f2sdram_share.sv"]
+QUUX15_DE25_FACES = ["rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_gp0_default.sv",
+                     "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                     "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                     "rtl/plumbing/quux15_face.sv", "rtl/plumbing/quux_fd_face.sv",
+                     "rtl/plumbing/cadr_display_out.sv", "rtl/plumbing/cadr_adv7513.sv",
+                     "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv"]
+# Revision 15's master behind the board's memory port, against a model of
+# the bridge with the share's other two masters (`tb/quux15_f2sdram_tb.cpp`).
+CHECKS["quux15_f2sdram_quux"] = {
+    "sources": ["rtl/plumbing/quux15_f2sdram_port.sv"],
+    "extra": ["rtl/plumbing/quux15_axi_master.sv"] + QUUX15_DE25_F2SDRAM + ["tb/quux15_f2sdram_harness.sv"],
+    "top": "quux15_f2sdram_harness",
+    "tb": "tb/quux15_f2sdram_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2"],
+    "golden": None,
+    "machine": "quux",
+}
+# The top level simulated around the shells (`tb/quux15_de25_top_tb.cpp`),
+# as the Makefile's `quux15_de25.pass` runs it after its lint.  The lint's
+# own refusals are the param check's to reach (its lint at every period).
+CHECKS["quux15_de25"] = {
+    "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/de25-nano/quux15_de25.sv",
+                "rtl/plumbing/quux15_f2sdram_port.sv"],
+    "extra": ["tb/cadr_de25_sim_stubs.sv", "tb/quux15_core_shell.sv"] + QUUX15_DE25_F2SDRAM
+             + QUUX15_DE25_FACES,
+    "top": "quux15_de25",
+    "tb": "tb/quux15_de25_top_tb.cpp",
+    "flags": ["--pins-inout-enables", "-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+              "-DCADR_DDR_MAP_DE25_NANO"],
+    "golden": None,
+    "machine": "quux",
+}
+# Its figures read at the instances, at five periods.  Refusing is being
+# caught.
+CHECKS["quux15_de25_param"] = {
+    "kind": "script",
+    "sources": ["boards/de25-nano/quux15_de25.sv"],
+    "cmd": ["tools/quux15_de25_param_check.py", "tb/cadr_de25_stubs.sv", "tb/quux15_altdpram_model.sv",
+            "rtl/machine/cadr_tick_pkg.sv", "rtl/plumbing/cadr_ddr_map.sv"]
+           + [f.replace("rtl/machine/quux15_tdp.sv", "rtl/plumbing/agilex5/quux15_tdp.sv")
+               .replace("rtl/machine/quux15_mdmem.sv", "rtl/plumbing/agilex5/quux15_mdmem.sv")
+               .replace("rtl/machine/quux15_dmem.sv", "rtl/plumbing/agilex5/quux15_dmem.sv")
+               .replace("rtl/machine/quux15_validmap.sv", "rtl/plumbing/agilex5/quux15_validmap.sv")
+              for f in CHECKS["quux15_kr260"]["extra"] if f.startswith("rtl/machine/quux")]
+           + ["rtl/plumbing/quux15_axi_master.sv"] + QUUX15_DE25_F2SDRAM + ["rtl/plumbing/quux15_f2sdram_port.sv"]
+           + QUUX15_DE25_FACES + ["boards/de25-nano/quux15_de25.sv"],
+    "top": None,
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+# Its faces' places, shapes and resets, and JP1's pads.  Refusing is being
+# caught.
+CHECKS["quux15_de25_faces"] = {
+    "kind": "script",
+    "sources": ["boards/de25-nano/quux15_de25.sv"],
+    "cmd": ["tools/de25_faces_check.py", ".", "--quux15"],
+    "top": None,
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
+# **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**
+# (the Makefile's `quux15_reset_arty.pass` and `quux15_reset_kr260.pass`,
+# `tb/quux15_zynq_reset_tb.cpp`).
+for _board, _top, _ps, _define, _map in (
+        ("arty", "boards/arty-z7-20/quux15_arty.sv", "tb/cadr_ps7_sim.sv", "QUUX15_ARTY", []),
+        ("kr260", "boards/kria-kr260/quux15_kr260.sv", "tb/cadr_ps8_sim.sv", "QUUX15_KRIA",
+         ["-DCADR_DDR_MAP_KR260"])):
+    _lint = CHECKS["quux15_%s" % _board]
+    CHECKS["quux15_reset_%s" % _board] = {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", _top],
+        "extra": [f for f in _lint["stubs"] if not f.endswith("_ps7_stub.sv") and not f.endswith("_ps8_stub.sv")]
+                 + ["tb/cadr_sim_axi.sv", _ps, "tb/quux15_core_shell.sv"]
+                 + [f for f in _lint["extra"] if not f.startswith("rtl/machine/quux") and f != "rtl/plumbing/cadr_ddr_map.sv"
+                    and f != "rtl/plumbing/quux15_axi_master.sv" and not f.endswith("/cadr_ps7.sv")
+                    and not f.endswith("/cadr_ps8.sv") and not f.endswith("_ps7_stub.sv")
+                    and not f.endswith("_ps8_stub.sv")]
+                 + [f for f in _lint["sources"] if f != _top],
+        "top": _top.split("/")[-1][:-3],
+        "tb": "tb/quux15_zynq_reset_tb.cpp",
+        "flags": ["-Wno-PINCONNECTEMPTY", "-O2", "-CFLAGS", "-O2", "-CFLAGS", "-D" + _define, "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/" + _top.split("/")[1]] + _map,
+        "golden": None,
+        "machine": "quux",
+    }
+
 # And at the Kria's 1920 by 1080 (the Makefile's `quux15_videosize.quux.pass`):
 # the core built with `VIDEO_W` and `VIDEO_H` at that size and the Kria's
 # board name, and the testbench's frame buffer as large, held to the

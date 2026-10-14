@@ -429,6 +429,8 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_videosize.quux.pass $(BUILD)/quux15_halt_probe.quux.pass \
        $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
+       $(BUILD)/quux15_de25.pass $(BUILD)/quux15_de25_param.pass $(BUILD)/quux15_de25_faces.pass \
+       $(BUILD)/quux15_f2sdram.quux.pass $(BUILD)/quux15_reset_arty.pass $(BUILD)/quux15_reset_kr260.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
@@ -3462,6 +3464,141 @@ $(BUILD)/quux15_arty_param.pass: tools/quux15_arty_param_check.py tools/machine_
 	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)
 	@touch $@
 
+# =========================================== revision 15 on the DE25-Nano
+#
+# **REVISION 15 ON THE DE25-NANO** (`boards/de25-nano/quux15_de25.sv`, MP8
+# step 2): the same core and faces as the Kria KR260's and the Arty Z7-20's on
+# this board's processor system, its master on the FPGA-to-SDRAM bridge's
+# share through `rtl/plumbing/quux15_f2sdram_port.sv`, built by
+# `boards/de25-nano/quartus/build.sh` with `REVISION=15`.
+#
+# **ITS SOURCES ARE THE FLOW'S**: the core's, with `rtl/plumbing/agilex5/`'s
+# true dual-port RAM, macro dispatch memory, dispatch memory and valid bits
+# in place of `rtl/machine/`'s
+# (CLAUDE.md's rule for vendor RTL: a module `rtl/machine/` names, its
+# Altera version shown equivalent by a check of its own), the memory port,
+# the faces, the display and the lamps.  Linted with the DE25-Nano's lint
+# stubs and the simulation model of Altera's `altdpram`
+# (`tb/quux15_altdpram_model.sv`), which the agilex5 versions instantiate.
+QUUX15_DE25_CORE_SRC := $(patsubst rtl/machine/quux15_tdp.sv,rtl/plumbing/agilex5/quux15_tdp.sv,\
+                        $(patsubst rtl/machine/quux15_mdmem.sv,rtl/plumbing/agilex5/quux15_mdmem.sv,\
+                        $(patsubst rtl/machine/quux15_dmem.sv,rtl/plumbing/agilex5/quux15_dmem.sv,\
+                        $(patsubst rtl/machine/quux15_validmap.sv,rtl/plumbing/agilex5/quux15_validmap.sv,$(QUUX15_CORE_SRC)))))
+QUUX15_F2SDRAM := rtl/plumbing/quux15_axi3.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_f2sdram_gate.sv \
+                  rtl/plumbing/cadr_f2sdram_share.sv rtl/plumbing/quux15_f2sdram_port.sv
+QUUX15_DE25_FACES := rtl/plumbing/cadr_input_cables.sv rtl/plumbing/cadr_gp0_default.sv \
+                     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/cadr_gp1_split.sv \
+                     rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/quux15_face.sv rtl/plumbing/quux_fd_face.sv \
+                     rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv \
+                     rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv
+QUUX15_DE25_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_DE25_CORE_SRC) $(QUUX15_F2SDRAM) \
+                   $(QUUX15_DE25_FACES) boards/de25-nano/quux15_de25.sv
+QUUX15_DE25_STUBS := tb/cadr_de25_stubs.sv tb/quux15_altdpram_model.sv
+# The period the flow is asked for, in nanoseconds, whole or a half; 27 by
+# default, the board's in the goldens (`QUUX15_PERIOD_de25`, in units of 0.5
+# ns), until its binding fit sets it.
+PERIOD_NS ?= $(shell echo $(QUUX15_PERIOD_de25) | awk '{ p = $$1 / 2; print (p == int(p)) ? int(p) : p }')
+
+# **LINTED AS THE FLOW BUILDS IT, EVERY LINTED FILE IN THE FLOW'S LIST, AND
+# SIMULATED.**  The flow's list is what `make de25 REVISION=15` hands
+# `build.sh`, read back from make itself.  The simulation is the top level
+# around the shells of `tb/cadr_de25_sim_stubs.sv` and
+# `tb/quux15_core_shell.sv` (the core), `tb/quux15_de25_top_tb.cpp`
+# being the processor, its memory, the keys and a person reading the lamps:
+# the machine held until its memory port is live, the port's wiring and IDs,
+# the tally, the lamps, the console's RESET key, the processor's reset, KEY1
+# and the clock's lock, and the video bus.
+QUUX15_DE25_SIM := tb/cadr_de25_sim_stubs.sv tb/quux15_core_shell.sv $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv \
+                   $(QUUX15_F2SDRAM) $(QUUX15_DE25_FACES) boards/de25-nano/quux15_de25.sv
+
+$(BUILD)/obj_quux15_de25_top/Vquux15_de25: $(QUUX15_DE25_SIM) tb/quux15_de25_top_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) --pins-inout-enables -O2 -CFLAGS -O2 \
+	    -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    -Mdir $(BUILD)/obj_quux15_de25_top --top-module quux15_de25 $(QUUX15_DE25_SIM) \
+	    $(abspath tb/quux15_de25_top_tb.cpp)
+
+$(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
+                           $(BUILD)/obj_quux15_de25_top/Vquux15_de25 | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    --top-module quux15_de25 $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
+	@$(MAKE) -s -n de25 MACHINE=quux WORD_BITS=40 REVISION=15 DDR=1 HDMI=1 > $(BUILD)/quux15_de25.flow 2>&1 \
+	   || { echo "quux15_de25: make -n de25 REVISION=15 failed; see $(BUILD)/quux15_de25.flow"; exit 1; }
+	@for f in $(filter-out tb/%,$(QUUX15_DE25_SRC)); do \
+	   tr -d '\\\n' < $(BUILD)/quux15_de25.flow | grep -q "build.sh .*$$f" \
+	     || { echo "quux15_de25: $$f is linted and not in the list make de25 REVISION=15 hands build.sh"; exit 1; }; \
+	 done
+	@echo "quux15_de25: every linted file is in the flow's list"
+	$(BUILD)/obj_quux15_de25_top/Vquux15_de25
+	@touch $@
+
+# **AND ITS FIGURES, READ AT THE INSTANCES** (`tools/quux15_de25_param_check.py`):
+# the cache's 16K words, main memory's 32M and the two bases, one write ID,
+# the video controller's 1280 by 1024 at the core, the face and the display
+# output, VESA's raster, the board name, the period at the core and the
+# face, and every time in clocks, at 10, 22, 23.5, 24 and 27 ns.
+$(BUILD)/quux15_de25_param.pass: tools/quux15_de25_param_check.py tools/machine_param_check.py \
+                                 $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_de25_param_check.py $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
+	@touch $@
+
+# **AND ITS FACES** (`tools/de25_faces_check.py --quux15`): each at the offset
+# its program's address is into its bridge's window, at the bridges' AXI4
+# shape, reset by the bridges' reset alone and by nothing derived from the
+# memory port's liveness; and JP1's pads undriven.
+$(BUILD)/quux15_de25_faces.pass: tools/de25_faces_check.py tools/de25_pins_check.py \
+                                 boards/de25-nano/quux15_de25.sv boards/de25-nano/de25_nano_pins.tcl \
+                                 boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h | $(BUILD)
+	python3 tools/de25_faces_check.py . --quux15 --stamp $@
+
+# **AND REVISION 15'S MASTER ON THE BOARD'S MEMORY PORT** (`tb/quux15_f2sdram_tb.cpp`):
+# `quux15_axi_master.sv` through `rtl/plumbing/quux15_f2sdram_port.sv`
+# against a model of the bridge, with the pack side and the display on the
+# share's other two ports: the bridge's rules on every transaction, the IDs
+# the share's port numbers, one write ID answered in order, bursts split at
+# 4 KiB, the machine held until the port is live, writes queued at a shut
+# port and landing once it opens, the machine's reset given only once the
+# share has drained, the warm-reset handshake, the processor's reset, and the
+# tally.
+$(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness: rtl/plumbing/quux15_axi_master.sv $(QUUX15_F2SDRAM) \
+        tb/quux15_f2sdram_harness.sv tb/quux15_f2sdram_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_f2sdram \
+	    --top-module quux15_f2sdram_harness rtl/plumbing/quux15_axi_master.sv $(QUUX15_F2SDRAM) \
+	    tb/quux15_f2sdram_harness.sv $(abspath tb/quux15_f2sdram_tb.cpp)
+
+$(BUILD)/quux15_f2sdram.quux.pass: $(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness
+	$(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness
+	@touch $@
+
+# **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**
+# (`tb/quux15_zynq_reset_tb.cpp`): revision 15's Arty Z7-20 and Kria KR260
+# top levels simulated around the processing system's simulation and the
+# core as a shell, the port's reset driven by the testbench: the core in
+# reset with the port, let go after it, reset again with it.
+QUUX15_ZYNQ_SIM := tb/cadr_sim_axi.sv tb/quux15_core_shell.sv tb/quux15_zynq_reset_tb.cpp
+$(BUILD)/obj_quux15_reset_arty/Vquux15_arty: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv \
+        boards/arty-z7-20/cadr_ps7.sv,$(QUUX15_ARTY_SRC)) $(BOARD_STUBS) tb/cadr_ps7_sim.sv $(QUUX15_ZYNQ_SIM) | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_ARTY \
+	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    -Mdir $(BUILD)/obj_quux15_reset_arty --top-module quux15_arty \
+	    $(BOARD_STUBS) tb/cadr_sim_axi.sv tb/cadr_ps7_sim.sv tb/quux15_core_shell.sv \
+	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv,$(QUUX15_ARTY_SRC)) \
+	    $(abspath tb/quux15_zynq_reset_tb.cpp)
+$(BUILD)/quux15_reset_arty.pass: $(BUILD)/obj_quux15_reset_arty/Vquux15_arty
+	$(BUILD)/obj_quux15_reset_arty/Vquux15_arty
+	@touch $@
+$(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv \
+        boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+        tb/cadr_ps8_sim.sv $(QUUX15_ZYNQ_SIM) | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_KRIA -DCADR_DDR_MAP_KR260 \
+	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 \
+	    -Mdir $(BUILD)/obj_quux15_reset_kr260 --top-module quux15_kr260 \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv \
+	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) \
+	    $(abspath tb/quux15_zynq_reset_tb.cpp)
+$(BUILD)/quux15_reset_kr260.pass: $(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
+	$(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
+	@touch $@
+
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
                      $(KR260_LAMP_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv | $(BUILD)
 	$(KR260_LINT) $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_LAMP_SRC)
@@ -3648,15 +3785,20 @@ DE25_SPL_HEX ?=
 # kept net (`rtl/plumbing/agilex5/quux_keep_net.sv`) in place of the
 # behavioral one.
 DE25_MACHINE_SRC = $(filter-out rtl/plumbing/quux_keep_net.sv,$(MACHINE_SRC)) rtl/plumbing/agilex5/quux_keep_net.sv
-de25: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
-      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex)
+# **AND `REVISION=15`, ITS OWN TOP LEVEL AND LIST** (`QUUX15_DE25_SRC`, above),
+# at `PERIOD_NS`, its PROM its core's (`build/quux15_transfer_prom.hex`).
+DE25_SRC = $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC),$(DE25_MACHINE_SRC) $(DE25_TOP) \
+             $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
+             $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
+             $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI)))
+de25: $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC) $(BUILD)/quux15_transfer_prom.hex $(BUILD)/sync_prom.hex,\
+      $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
+      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex))
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
 	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) $(if $(REVISION),REVISION=$(REVISION)) \
+	    $(if $(filter 15,$(REVISION)),PERIOD_NS=$(PERIOD_NS)) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
-	    boards/de25-nano/quartus/build.sh $(DE25_MACHINE_SRC) $(DE25_TOP) \
-	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
-	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
-	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))
+	    boards/de25-nano/quartus/build.sh $(DE25_SRC)
 
 # **AND EVERY MACHINE AND REVISION STILL SYNTHESIZES ON QUARTUS**: the
 # CADR, QUUX revision 13 and QUUX revision 14, each through `build.sh` with
@@ -3672,14 +3814,15 @@ DE25_SYN_FLOW := boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/proj
                  $(wildcard boards/de25-nano/quartus/*.sdc) boards/de25-nano/quartus/rams_check.tcl
 $(BUILD)/de25_syn.pass: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) $(DE25_SYN_FLOW) \
                         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/boot_prom.quux13.hex \
-                        $(BUILD)/boot_prom.quux14.hex | $(BUILD)
+                        $(BUILD)/boot_prom.quux14.hex \
+                        $(QUUX15_DE25_SRC) $(BUILD)/quux15_transfer_prom.hex | $(BUILD)
 	@if [ -z "$$QUARTUS_ROOTDIR" ] && ! grep -qs '^[[:space:]]*QUARTUS_ROOTDIR' boards/de25-nano/local.conf; then \
 	   echo "de25_syn: skipped --- no Quartus here (QUARTUS_ROOTDIR, or boards/de25-nano/local.conf)"; exit 0; fi; \
-	 for b in cadr:32: quux:40:13 quux:40:14; do \
+	 for b in cadr:32: quux:40:13 quux:40:14 quux:40:15; do \
 	   m=$${b%%:*}; r=$${b##*:}; w=$${b#*:}; w=$${w%%:*}; \
 	   log=$(BUILD)/de25_syn.$$m$$r.log; \
 	   $(MAKE) --no-print-directory -o $(BUILD)/boot_prom.hex -o $(BUILD)/sync_prom.hex \
-	       -o $(BUILD)/boot_prom.quux13.hex -o $(BUILD)/boot_prom.quux14.hex \
+	       -o $(BUILD)/boot_prom.quux13.hex -o $(BUILD)/boot_prom.quux14.hex -o $(BUILD)/quux15_transfer_prom.hex \
 	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} DDR=1 HDMI=1 DE25_SYN_ONLY=1 > $$log 2>&1 \
 	     || { echo "de25_syn: $$m $${r:+revision $$r} does NOT synthesize on Quartus; see $$log"; \
 	          grep -h '^de25: REFUSED' $$log; exit 1; }; \

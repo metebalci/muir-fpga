@@ -67,6 +67,23 @@ if {$fault && $machine ne "cadr"} {
     puts "project: FAULT takes no MACHINE=$machine: the fault bitstream carries no machine"
     exit 1
 }
+# Revision 15 is its own top level, `quux15_de25.sv` (`build.sh` says
+# what it takes), and the sections below say what it changes of each.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+if {$revision ni {13 14 15}} {
+    puts "project: REVISION is '$revision', which is not 13, 14 or 15"
+    exit 1
+}
+set rev15 [expr {$revision eq "15"}]
+if {$rev15 && (!$ddr || !$hdmi || $probe_depth > 0 || $fault || $machine ne "quux")} {
+    puts "project: REVISION 15 is QUUX's whole board: DDR and HDMI, no probe, no fault bitstream"
+    exit 1
+}
+set period [expr {[info exists ::env(PERIOD)] ? $::env(PERIOD) : 0}]
+if {$rev15 && (![string is integer -strict $period] || $period < 20 || $period > 127)} {
+    puts "project: PERIOD is '$period', which is not revision 15's period in 0.5 ns"
+    exit 1
+}
 set userid  [lindex $argv 1]
 set sources [lrange $argv 2 end]
 set root    [pwd]
@@ -87,6 +104,8 @@ set_global_assignment -name FAMILY "Agilex 5"
 set_global_assignment -name DEVICE A5EB013BB23BE4SCS
 if {$fault} {
     set_global_assignment -name TOP_LEVEL_ENTITY cadr_de25_fault
+} elseif {$rev15} {
+    set_global_assignment -name TOP_LEVEL_ENTITY quux15_de25
 } else {
     set_global_assignment -name TOP_LEVEL_ENTITY cadr_de25
 }
@@ -131,6 +150,12 @@ set_global_assignment -name IP_FILE [file join $build ip cadr_de25_reset_release
 # processor's asynchronous signals.
 if {$fault} {
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25_fault.sdc]
+} elseif {$rev15} {
+    # Revision 15 is timed at one clock with no exception into the machine:
+    # its file has the board's pins and the processor's crossings, and the
+    # display's and the processor system's own are read below as for the
+    # CADR.
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus quux15_de25.sdc]
 } else {
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25.sdc]
     # QUUX's own two clauses, which would reach every path on the CADR.
@@ -148,7 +173,7 @@ if {$fault} {
 # probe's file below is.  The processor system itself is added to the
 # project by `build.sh`, which builds it after this.
 set_global_assignment -name VERILOG_MACRO "CADR_DDR_MAP_DE25_NANO=1"
-if {$ddr && !$fault} {
+if {$ddr && !$fault && !$rev15} {
     set_global_assignment -name VERILOG_MACRO "CADR_DE25_DDR=1"
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_ddr.sdc]
 }
@@ -189,7 +214,7 @@ if {$ddr} {
 # `boards/de25-nano/quartus/build.sh` asks the PLL generator for the video
 # mode's own frequency.
 if {$hdmi} {
-    set_global_assignment -name VERILOG_MACRO "CADR_DE25_HDMI=1"
+    if {!$rev15} { set_global_assignment -name VERILOG_MACRO "CADR_DE25_HDMI=1" }
     set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pixel_pll.ip]
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_hdmi.sdc]
 }
@@ -228,12 +253,7 @@ if {$probe_depth > 0} {
 # `cadr_microcycle.sv` says why.  `build.sh` refuses a synthesis in which the
 # three are anything but MLABs.
 # Revision 14 has no map (contract G3 revision 14): its TLB is below.
-set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
-if {$revision ne "13" && $revision ne "14"} {
-    puts "project: REVISION is '$revision', which is neither 13 nor 14"
-    exit 1
-}
-foreach memory [expr {$fault ? {} : ($revision eq "14" ? {dmem} : {dmem l1_map l2_map})}] {
+foreach memory [expr {($fault || $rev15) ? {} : ($revision eq "14" ? {dmem} : {dmem l1_map l2_map})}] {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to "u_machine|processor|$memory"
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|$memory"
 }
@@ -242,7 +262,7 @@ foreach memory [expr {$fault ? {} : ($revision eq "14" ? {dmem} : {dmem l1_map l
 # NPC, and the same way for the same reason.  Written at the edge and read
 # at the next, K ticks on; the readout's copy is read every tick and is the
 # readout's torn sample while the machine runs.
-if {!$fault && $machine eq "quux"} {
+if {!$fault && !$rev15 && $machine eq "quux"} {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to "u_machine|processor|g_quux_fused.macro_mem"
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|g_quux_fused.macro_mem"
 }
@@ -286,7 +306,34 @@ if {!$fault && $revision eq "14"} {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|g_rev14_mmu.mmu|tlb|tlb_mem"
 }
 
-if {!$fault} {
+# **REVISION 15'S RAMS**, as MP8's trials and step 1c's fit placed them:
+# block-disk's store in block RAM with read-during-write checking off, for
+# the reason the CADR's store above has it; the small RAMs read at several
+# addresses in one clock --- the map's and the cache's valid bits, the
+# recency, the dispatch memory's two halves, the walk's three small stores
+# and the input page's queue --- in MLABs with checking off, as the Kria
+# KR260 builds them in LUT RAM, the valid bits and the dispatch memory by
+# their Agilex 5 versions, which forward the entry an MLAB is still writing
+# (`rtl/plumbing/agilex5/quux15_validmap.sv`, `quux15_dmem.sv`); and the
+# micro stack and the input cables' queue in flip-flops, because each is
+# read in the clock after a write lands, which an MLAB's write window leaves
+# undefined (step 1c's poison runs).  The macro dispatch memory is not here:
+# its Agilex 5 version is `altdpram` MLABs by instance.  `build.sh` asks the
+# synthesis report for what this placed.
+if {$rev15} {
+    set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_core|walk|blk_ram"
+    foreach memory {"u_core|mmu|valid|*" "u_core|port|valid0|*" "u_core|port|valid1|*"
+                    "u_core|port|recency|*" "u_core|u_dmem|even" "u_core|u_dmem|odd"
+                    "u_core|walk|s_dck" "u_core|walk|s_hck" "u_core|walk|s_header"
+                    "u_core|devices|input_regs|fifo"} {
+        set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to $memory
+        set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to $memory
+    }
+    foreach memory {"u_core|spc" "u_input|queue"} {
+        set_instance_assignment -name RAMSTYLE_ATTRIBUTE logic -to $memory
+    }
+}
+if {!$fault && !$rev15} {
     # The store is `disk`'s in either machine's generate block: the CADR's
     # controller in `g_cadr_disk`, QUUX's block-disk in `g_quux_disk`.
     foreach disk {g_cadr_disk.disk g_quux_disk.disk} {
@@ -300,7 +347,12 @@ if {!$fault} {
 # which is this directory and not the repository.  `build.sh` refuses to
 # start without them, and the synthesis report's parameter table is where the
 # two paths can be read back.
-if {!$fault} {
+if {$rev15} {
+    # Revision 15's core reads its own PROM and no sync PROM, and the period
+    # is its top level's parameter.
+    set_parameter -name PROM_HEX [file join $root build quux15_transfer_prom.hex]
+    set_parameter -name PERIOD $period
+} elseif {!$fault} {
     # QUUX boots from its own PROM, version 2001, revision 13's (`WORD_BITS`
     # 40), as `build.sh` requires and reads back.
     if {$machine ne "quux"} {
@@ -315,7 +367,7 @@ if {!$fault} {
 # **WHICH MACHINE**, set only for QUUX, so that the CADR's project is the one
 # it has always been and takes the top level's default.  `build.sh` reads the
 # value back out of the synthesis report under `u_machine` for both.
-if {!$fault && $machine eq "quux"} {
+if {!$fault && !$rev15 && $machine eq "quux"} {
     set_parameter -name MACHINE quux
 }
 # **AND QUUX REVISION 13, A 40-BIT WORD** (contract G2), set only at 40, so
@@ -326,7 +378,7 @@ if {$word_bits ne "32" && $word_bits ne "40"} {
     puts "project: WORD_BITS is '$word_bits', which is neither 32 nor 40"
     exit 1
 }
-if {!$fault && $word_bits eq "40"} {
+if {!$fault && !$rev15 && $word_bits eq "40"} {
     set_parameter -name WORD_BITS 40
 }
 # **AND REVISION 14**, set only at 14, so that revision 13's project is

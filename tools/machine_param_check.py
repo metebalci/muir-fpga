@@ -1024,9 +1024,20 @@ def main():
                  dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
                  ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])
         cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
-        flow("the DE25-Nano's build.sh refuses REVISION=15", cmd,
+        flow("the DE25-Nano's build.sh refuses REVISION=16", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="16"), 1,
+             ["de25: REFUSED: REVISION is '16'"], [])
+        # Revision 15 is its own top level (`quux15_de25.sv`), QUUX's alone,
+        # taken as far as the missing Quartus.
+        flow("the DE25-Nano's build.sh refuses REVISION=15 on the CADR", cmd,
+             dict(nowhere, MACHINE="cadr", REVISION="15"), 1,
+             ["de25: REFUSED: REVISION=15 is QUUX's, and MACHINE=cadr"], [])
+        flow("the DE25-Nano's build.sh takes REVISION=15 on QUUX", cmd,
              dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15"), 1,
-             ["de25: REFUSED: REVISION is '15'"], [])
+             ["de25: REFUSED:"], ["REFUSED: REVISION"])
+        flow("the DE25-Nano's build.sh refuses REVISION=15 at a period it cannot run", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15", PERIOD_NS="9.5"), 1,
+             ["de25: REFUSED: PERIOD_NS is 9.5; revision 15 runs at 10 to 63.5 ns"], [])
         flow("the DE25-Nano's build.sh refuses REVISION=14 on the CADR", cmd,
              dict(nowhere, MACHINE="cadr", REVISION="14"), 1,
              ["de25: REFUSED: REVISION=14 is QUUX's, and MACHINE=cadr"], [])

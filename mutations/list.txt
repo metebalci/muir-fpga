@@ -33011,3 +33011,219 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
       if (run_.write < d->axi_write_clocks + 2) {
 @end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15 ON THE DE25-NANO** (MP8 step 2): the machine's master on the
+# FPGA-to-SDRAM bridge's share through `rtl/plumbing/quux15_f2sdram_port.sv`,
+# held by `quux15_f2sdram_quux` against a model of the bridge; the top level
+# (`boards/de25-nano/quux15_de25.sv`), simulated around its shells by
+# `quux15_de25`; its figures read at the instances by `quux15_de25_param`;
+# and its faces read by `quux15_de25_faces`.
+
+@mutation quux15-de25-share-ports-crossed
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The machine and the pack side on each other's port of the share: the
+@note machine's transactions carry the pack side's ID, and the pack side's
+@note the ID the tally counts.
+@old
+  localparam int unsigned MACHINE = 0, PACK = 1, DISPLAY = 2;
+@new
+  localparam int unsigned MACHINE = 1, PACK = 0, DISPLAY = 2;
+@end
+
+@mutation quux15-de25-machine-let-go-before-the-port-is-live
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The gate's hold dropped from the machine's reset: the core runs from
+@note the fabric's reset, before software has opened its memory port.
+@old
+  assign want = mach_req || !may_start;
+@new
+  assign want = mach_req;
+@end
+
+@mutation quux15-de25-machine-reset-without-the-drain
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The core put into reset the clock after it is asked, whatever the
+@note share has of its master's: a write granted is left half sent, and a
+@note fill's beats reach the restarted master.
+@old
+    run <= !((!pend_n && idle) || (!run && want));
+@new
+    run <= !((!pend_n) || (!run && want));
+@end
+
+@mutation quux15-de25-machine-reset-without-holding-the-share
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note A reset asked for does not hold the share's grants: the share is idle
+@note for a clock, the core goes into reset, and at the same edge the share
+@note grants the master a write it will never finish.
+@old
+      .clk(clk), .rst(port_rst), .hold(gate_hold || !pend_n), .idle(idle),
+@new
+      .clk(clk), .rst(port_rst), .hold(gate_hold), .idle(idle),
+@end
+
+@mutation quux15-de25-tally-counts-the-pack-sides-answers
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The tally's answered writes counted at the pack side's ID.
+@old
+    count_bvalid <= f2s_bvalid && (f2s_bid == 5'(MACHINE));
+@new
+    count_bvalid <= f2s_bvalid && (f2s_bid == 5'(PACK));
+@end
+
+@mutation quux15-de25-core-reset-before-the-port-is-live
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The core given the board's request for a reset and not the memory
+@note port's: it runs before software has opened its port, and is cut by a
+@note reset under a transaction.
+@old
+      .clk(clk), .rst(mach_rst),
+      .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
+@new
+      .clk(clk), .rst(mach_req),
+      .obs_cs(obs_cs), .obs_rd(obs_rd), .obs_ex(obs_ex), .obs_wb(obs_wb), .obs_commit(obs_commit),
+@end
+
+@mutation quux15-de25-processor-reset-leaves-the-machine
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The processor's reset not among the machine's: the bridge forgets the
+@note core's transactions and the core waits for their answers for ever.
+@old
+  always_ff @(posedge clk) mach_req <= rst || face_rst || h2f_rst;
+@new
+  always_ff @(posedge clk) mach_req <= rst || face_rst || (h2f_rst && 1'b0);
+@end
+
+@mutation quux15-de25-console-reset-reaches-nothing
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The console face's RESET key not among the machine's resets.
+@old
+  always_ff @(posedge clk) mach_req <= rst || face_rst || h2f_rst;
+@new
+  always_ff @(posedge clk) mach_req <= rst || (face_rst && 1'b0) || h2f_rst;
+@end
+
+@mutation quux15-de25-port-lamp-on-ledr5
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The memory port's lamp on LEDR5 and LEDR6 dark.
+@old
+  assign led = ~{1'b0, port_live, 1'b0, errhalt_lamp, disk_lit, cycle_lamp, clock_lamp, run_lamp};
+@new
+  assign led = ~{1'b0, 1'b0, port_live, errhalt_lamp, disk_lit, cycle_lamp, clock_lamp, run_lamp};
+@end
+
+@mutation quux15-de25-face-period-at-the-tick
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The console face's word 40 left at the 10 ns tick: the programs on
+@note the processor read a period the machine does not run at.
+@old
+      .ID_W(4), .LEN_W(8), .PERIOD(32'(PERIOD)), .MAIN_UNITS(MAIN_WORDS >> 16),
+@new
+      .ID_W(4), .LEN_W(8), .PERIOD(32'(20)), .MAIN_UNITS(MAIN_WORDS >> 16),
+@end
+
+@mutation quux15-de25-core-period-at-the-tick
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The core told the 10 ns tick: word 25's time and the timers run fast
+@note at the board's period.
+@old
+      .period(7'(PERIOD)), .rtc_start(rtc_start),
+@new
+      .period(7'(20)), .rtc_start(rtc_start),
+@end
+
+@mutation quux15-de25-cache-of-64k
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The DE25-Nano's cache left at the core's 64K words (Q-MP6): the part
+@note has 358 M20K blocks.
+@old
+  localparam int unsigned CACHE_WORDS = 16384;
+@new
+  localparam int unsigned CACHE_WORDS = 65536;
+@end
+
+@mutation quux15-de25-bridges-reset-by-the-ports-liveness
+@check quux15_de25_faces
+@file boards/de25-nano/quux15_de25.sv
+@note Both bridges' faces held in reset while the memory port is shut,
+@note which is every boot until software opens it: a read of a face hangs
+@note both processor cores.
+@old
+    h2f_rst   <= h2f_rst_s[2];
+@new
+    h2f_rst   <= h2f_rst_s[2] || !port_live;
+@end
+
+@mutation de25-bridges-reset-by-the-ports-liveness
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note The CADR's bridges' faces held in reset while the memory port is
+@note shut.  `de25_faces_check.py` took the memory port's instance from the
+@note first mention of its module's name, a comment, so its liveness rule
+@note had no seed and this passed.
+@old
+    h2f_rst   <= h2f_rst_s[2];
+@new
+    h2f_rst   <= h2f_rst_s[2] || !port_live;
+@end
+
+@mutation machine-param-the-de25-takes-revision-15-on-the-cadr
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The DE25-Nano's build taking REVISION=15 beside the CADR.
+@old
+if [ "$revision" = 15 ] && [ "$machine" != quux ]; then
+@new
+if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
+@end
+
+@mutation machine-param-the-de25-takes-revision-15-under-ten-nanoseconds
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The DE25-Nano's revision 15 build taking a period under the core's
+@note 10 ns.
+@old
+    if [ "$period_half" -lt 20 ] || [ "$period_half" -gt 127 ]; then
+@new
+    if [ "$period_half" -lt 19 ] || [ "$period_half" -gt 127 ]; then
+@end
+
+# **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**
+# (`quux15_reset_arty`, `quux15_reset_kr260`): revision 15's top levels
+# simulated around the processing system's simulation, the port's reset the
+# testbench's.
+
+@mutation quux15-arty-machine-not-held-for-hp0
+@check quux15_reset_arty
+@file boards/arty-z7-20/quux15_arty.sv
+@note The machine's reset without `S_AXI_HP0`'s: the core runs while its
+@note memory port is dead.
+@old
+  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+@new
+  always_ff @(posedge clk) mach_rst <= rst || (axi_rst && 1'b0) || face_rst;
+@end
+
+@mutation quux15-kr260-machine-not-held-for-its-port
+@check quux15_reset_kr260
+@file boards/kria-kr260/quux15_kr260.sv
+@note The machine's reset without the ports' `pl_resetn0`: the core runs
+@note while its memory port is dead.
+@old
+  always_ff @(posedge clk) mach_rst <= rst || axi_rst || face_rst;
+@new
+  always_ff @(posedge clk) mach_rst <= rst || (axi_rst && 1'b0) || face_rst;
+@end

@@ -44,6 +44,18 @@
 # that leave the directory; the project and its `.sof` keep the top level's
 # name.  `cadr`, or no value, is MIT's machine and this flow as it was.
 #
+# **`REVISION=15` BUILDS QUUX REVISION 15**, `boards/de25-nano/quux15_de25.sv`
+# with `MACHINE=quux WORD_BITS=40`, always the whole board (`DDR=1 HDMI=1`),
+# into `build/de25-quux15-ddr-hdmi/`.  Its period is `PERIOD_NS`, in whole or
+# half nanoseconds, 27 unless asked: the I/O PLL is asked for 2,000 / (2 x
+# `PERIOD_NS`) MHz, the top level is given the period in units of 0.5 ns, and
+# `quux15_sta_check.tcl` refuses a build whose machine clock is not the
+# period asked.  Its sources swap in `rtl/plumbing/agilex5/`'s versions of the
+# core's true dual-port RAM, macro dispatch memory, dispatch memory and valid
+# bits (the Makefile's `QUUX15_DE25_SRC`), and `project.tcl` places its small
+# RAMs.  Its checks are its own: the RAM summary below, `rams_check.tcl`'s
+# rules for revision 15, `quux15_sta_check.tcl`, and a size floor.
+#
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
 # `boards/de25-nano/local.conf`.  It names the installation's `quartus`
@@ -118,11 +130,29 @@ fi
 # revision's build removes the other's.
 revision=${REVISION:-13}
 case $revision in
-    13|14) ;;
-    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, or 14" ;;
+    13|14|15) ;;
+    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, 14 or 15" ;;
 esac
 if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
     refuse "REVISION=14 is QUUX's, and MACHINE=$machine"
+fi
+if [ "$revision" = 15 ] && [ "$machine" != quux ]; then
+    refuse "REVISION=15 is QUUX's, and MACHINE=$machine"
+fi
+# **REVISION 15'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked
+# for it and the timing check reads it back.  Ten to 63.5, the core's
+# `period` being seven bits of 0.5 ns.  Revisions 13 and 14 run at the tick.
+period_ns=${PERIOD_NS:-27}
+period_half=0
+if [ "$revision" = 15 ]; then
+    case $period_ns in
+        [0-9]|[0-9][0-9]|[0-9].5|[0-9][0-9].5) ;;
+        *) refuse "PERIOD_NS is '$period_ns'; it is a period in nanoseconds, whole or a half" ;;
+    esac
+    period_half=$(awk -v p="$period_ns" 'BEGIN { printf "%d", p * 2 }')
+    if [ "$period_half" -lt 20 ] || [ "$period_half" -gt 127 ]; then
+        refuse "PERIOD_NS is $period_ns; revision 15 runs at 10 to 63.5 ns"
+    fi
 fi
 
 conf=boards/de25-nano/local.conf
@@ -147,6 +177,9 @@ done
 # Revision 14's is PROM 2002 (`make build/boot_prom.quux14.hex`).
 prom_image=build/boot_prom.hex
 [ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
+# Revision 15's is its own core's, a 64-bit word a line
+# (`golden/src/quux15.rs --prom`), and it reads no sync PROM.
+[ "$revision" = 15 ] && prom_image=build/quux15_transfer_prom.hex
 for image in "$prom_image" build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
@@ -265,6 +298,12 @@ if [ "$depth" -gt 0 ]; then
     out=$out-probe
     say "the probe is in this build: $depth samples, into $out"
 fi
+# **REVISION 15 IS ALWAYS THE WHOLE BOARD**: `quux15_de25.sv` has the
+# processor, its memory and the display in its port list, and no probe.
+if [ "$revision" = 15 ]; then
+    [ "$ddr" -eq 1 ] && [ "$hdmi" -eq 1 ] || refuse "REVISION=15 is the whole board: give DDR=1 HDMI=1"
+    [ "$depth" -eq 0 ] || refuse "REVISION=15 takes no probe"
+fi
 if [ "$syn_only" -eq 1 ]; then
     [ "$fault" -eq 0 ] || refuse "DE25_SYN_ONLY=1 is the machine's question; the fault bitstream has no machine"
     out=$out-syn
@@ -281,6 +320,9 @@ if [ "$hdmi" -eq 1 ]; then
 fi
 if [ "$fault" -eq 0 ]; then
     say "the machine is $machine, into $out"
+fi
+if [ "$revision" = 15 ]; then
+    say "revision 15 at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
 fi
 rm -rf "$out"
 mkdir -p "$out/ip" "$out/tmp"
@@ -345,16 +387,19 @@ say "build stamp $userid"
 # IP's own default, and the generator chooses the counters and the VCO.  The
 # parameter names are the IP's, as `ip-deploy` records them in the variation
 # file.  `sta_check.tcl` then reads the period back from the timing analyzer.
+# **REVISION 15'S IS AT ITS PERIOD**: 2,000 / the period in 0.5 ns, MHz.
+machine_mhz=100.0
+[ "$revision" = 15 ] && machine_mhz=$(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }')
 step 1-ip-deploy "$qsys/ip-deploy" --component-name=altera_iopll \
     --output-name=cadr_de25_pll --output-directory="$out/ip" \
     --family="Agilex 5" --part=A5EB013BB23BE4SCS \
     --component-parameter=gui_reference_clock_frequency=50.0 \
     --component-parameter=gui_number_of_clocks=1 \
-    --component-parameter=gui_output_clock_frequency0=100.0 \
+    --component-parameter=gui_output_clock_frequency0=$machine_mhz \
     --component-parameter=gui_use_locked=true \
     --component-parameter=gui_operation_mode=direct
 grep -q 'Able to implement PLL with user settings' "$out/1-ip-deploy.log" \
-    || refuse "the PLL generator did not say it can make 100 MHz from 50; see $out/1-ip-deploy.log"
+    || refuse "the PLL generator did not say it can make $machine_mhz MHz from 50; see $out/1-ip-deploy.log"
 
 # **AND THE PIXEL CLOCK'S PLL, WITH THE DISPLAY.**  The same generator, the
 # same reference and the same five decisions, at the mode's frequency instead
@@ -404,7 +449,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
-    WORD_BITS="$word_bits" REVISION="$revision" DE25_HPS_BOOT="$hps_boot" \
+    WORD_BITS="$word_bits" REVISION="$revision" PERIOD="$period_half" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
@@ -463,6 +508,70 @@ if [ "$fault" -eq 1 ]; then
             || refuse "synthesis has no default slave at $slave; see $dir/$rpt"
     done
     say "the processor system and both bridges' default slaves are in, and no machine"
+elif [ "$revision" = 15 ]; then
+    # **REVISION 15'S RAMS, AS THE TRIAL OF ITS MACRO DISPATCH MEMORY AND ITS
+    # TRUE DUAL-PORT RAM FOUND THEM** (MP8, the core's own RAMs on this part):
+    #
+    #   - the macro dispatch memory, `rtl/plumbing/agilex5/quux15_mdmem.sv`,
+    #     is four MLAB copies, each `altdpram`'s simple dual port: the fifth,
+    #     plan_x's, read only at two bubbles, is left out by synthesis;
+    #   - every true dual-port RAM, `rtl/plumbing/agilex5/quux15_tdp.sv`, is
+    #     block RAM, column by column: the cache's lines eight columns of a
+    #     word each way, the control store, the PDL buffer, A memory and the
+    #     tags one each;
+    #   - and synthesis says "uninferred" of none of them, nor of the dispatch
+    #     memory.  Its other "uninferred" lines are first passes over RAMs it
+    #     infers later (the valid bits, the recency) and the two memories
+    #     `project.tcl` puts in flip-flops, which are not asked about.
+    q15_ram() {
+        grep -c "^; $1[^;]*; $2 *; $3 " "$rpt" || true
+    }
+    n=$(q15_ram 'u_core|u_mdmem|g_copy\[[0-9]\]\.u_copy|auto_generated|ALTDPRAM_INSTANCE' MLAB 'Simple Dual Port')
+    [ "$n" -eq 4 ] || refuse "synthesis made the macro dispatch memory into $n MLAB copies, wanting 4; see $dir/$rpt"
+    say "the macro dispatch memory is 4 MLAB copies, each altdpram's simple dual port"
+    # The dispatch memory's two halves (`rtl/plumbing/agilex5/quux15_dmem.sv`),
+    # each MLABs, two copies a half for its two reads.
+    n=$(q15_ram 'u_core|u_dmem|\(even\|odd\)_rtl_[0-9]*|auto_generated|ALTDPRAM_INSTANCE' MLAB 'Simple Dual Port')
+    [ "$n" -eq 4 ] || refuse "synthesis made the dispatch memory into $n MLABs, wanting 4; see $dir/$rpt"
+    say "the dispatch memory is 4 MLABs, two a half"
+    # And the micro stack and the input cables' queue in flip-flops, not RAM
+    # (`project.tcl`).
+    if grep -q '^; u_core|spc_\|^; u_input|queue_' "$rpt"; then
+        refuse "synthesis made the micro stack or the input cables' queue a RAM; see $dir/$rpt"
+    fi
+    say "the micro stack and the input cables' queue are flip-flops"
+    for ram in 'port|lines0|g_cols\.g_col\[[0-7]\]\.c' 'port|lines1|g_cols\.g_col\[[0-7]\]\.c' \
+               'store|ram|g_one\.c' 'pdl|g_one\.c' 'amem|g_one\.c' 'port|tags0|g_one\.c' 'port|tags1|g_one\.c'; do
+        n=$(q15_ram "u_core|$ram|mem_rtl_0|auto_generated|altera_syncram_impl1|ALTERA_SYNCRAM" AUTO 'True Dual Port')
+        case $ram in port\|lines*) want=8 ;; *) want=1 ;; esac
+        [ "$n" -eq "$want" ] || refuse "synthesis made u_core|$ram into $n true dual-port block RAMs, wanting $want; see $dir/$rpt"
+    done
+    say "every true dual-port RAM is block RAM: the lines 8 word columns a way, the store, the PDL buffer, A memory, the tags"
+    if grep 'RAM logic "u_core|' 4-syn.log | grep -q 'u_core|u_mdmem\|u_core|u_dmem\|u_core|port|lines\|u_core|port|tags\|u_core|store|ram\|u_core|pdl|\|u_core|amem|'; then
+        grep 'RAM logic "u_core|' 4-syn.log | grep 'u_core|u_mdmem\|u_core|u_dmem\|u_core|port|lines\|u_core|port|tags\|u_core|store|ram\|u_core|pdl|\|u_core|amem|' | head -n 5 >&2
+        refuse "synthesis left the macro dispatch memory or a true dual-port RAM uninferred; see $dir/4-syn.log"
+    fi
+    say "nothing uninferred of the macro dispatch memory or the true dual-port RAMs"
+    # Block-disk's store: one block RAM, read-during-write checking off by
+    # `project.tcl`.
+    n=$(q15_ram 'u_core|walk|blk_ram_rtl_0|auto_generated|altera_syncram_impl1|ALTERA_SYNCRAM' AUTO 'True Dual Port')
+    [ "$n" -eq 1 ] || refuse "synthesis made block-disk's store into $n true dual-port block RAMs, wanting 1; see $dir/$rpt"
+    say "block-disk's store is one true dual-port block RAM"
+    for ip in intel_agilex_5_soc emif_io96b_hps; do
+        grep -q "; $ip *;[^;]*;[^;]*;[^;]*; u_hps|" "$rpt" \
+            || refuse "synthesis lists no $ip under u_hps; see $dir/$rpt"
+    done
+    grep -q 'u_memory|u_share' "$rpt" || refuse "synthesis has no memory port under u_memory; see $dir/$rpt"
+    say "the processor system and the machine's memory port are in"
+    grep -q 'User Entity cadr_display_out Instance: u_display' "$rpt" \
+        || refuse "synthesis has no display output at u_display; see $dir/$rpt"
+    grep -q 'User Entity cadr_adv7513 Instance: u_adv7513' "$rpt" \
+        || refuse "synthesis has no HDMI transmitter configuration at u_adv7513; see $dir/$rpt"
+    for buffer in mbuf cbuf; do
+        n=$(grep -c "^; u_display|${buffer}_[a-z0-9_]*|auto_generated" "$rpt" || true)
+        [ "$n" -eq 2 ] || refuse "synthesis made u_display|$buffer into $n memories, wanting 2; see $dir/$rpt"
+    done
+    say "the display output, its band buffers as memories, and the transmitter's configuration are in"
 else
 if [ "$ddr" -eq 1 ]; then copies=2; else copies=1; fi
 # Revision 14 has no map: its dispatch memory alone, and its TLB below.
@@ -589,7 +698,28 @@ fi
 # nothing in the fit's size would say so.  The fault bitstream has no
 # `u_machine` to read, and its own checks above have already refused one, so
 # there the read-back is skipped rather than failed.
-if [ "$fault" -eq 0 ]; then
+# **REVISION 15'S TOP LEVEL AND CORE AS SYNTHESIS RECORDS THEM**: the top's
+# period, the core's cache and its PROM, so that a value that stopped
+# reaching either is refused rather than fitted.
+q15_param() {
+    awk -v ent="$1" -v inst="$2" -v name="$3" '
+        index($0, "; Parameter Settings for User Entity " ent " Instance: " inst " ") == 1 { inside = 1; next }
+        inside && /^; Parameter Settings/ { exit }
+        inside && $0 ~ "^; " name " *;" { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
+    ' "$rpt" | awk '{ if ($0 ~ /^[01]+$/ && length($0) > 8) { n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n } else print }'
+}
+if [ "$fault" -eq 0 ] && [ "$revision" = 15 ]; then
+    got=$(q15_param quux15_de25 '|' PERIOD)
+    [ -n "$got" ] || got=$(sed -n 's/^; PERIOD *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1 \
+                           | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }')
+    [ "$got" = "$period_half" ] || refuse "synthesis gave the top level PERIOD '${got:-nothing}', wanting $period_half; see $dir/$rpt"
+    got=$(q15_param quux15_core u_core CACHE_WORDS)
+    [ "$got" = 16384 ] || refuse "synthesis gave u_core CACHE_WORDS '${got:-nothing}', wanting 16384; see $dir/$rpt"
+    got=$(q15_param quux15_core u_core PROM_HEX)
+    [ "${got##*/}" = "${prom_image##*/}" ] \
+        || refuse "synthesis gave u_core PROM_HEX '${got:-nothing}', wanting $prom_image; see $dir/$rpt"
+    say "synthesis gave the top level PERIOD $period_half, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
+elif [ "$fault" -eq 0 ]; then
     got_machine=$(awk '
         /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
         inside && /^; Parameter Settings/ { exit }
@@ -650,7 +780,7 @@ fi
 # The fault bitstream has no machine and so no such RAM.
 rams_check() {
     snapshot=$1; log=$2
-    if ! env MACHINE="$machine" "$bin/quartus_sta" -t "$here/rams_check.tcl" "$snapshot" \
+    if ! env MACHINE="$machine" REVISION="$revision" "$bin/quartus_sta" -t "$here/rams_check.tcl" "$snapshot" \
             > "$log" 2>&1; then
         grep '^RAMS:' "$log" >&2 || tail -n 20 "$log" >&2
         refuse "a block RAM writes where the RTL does not say; see $dir/$log"
@@ -675,10 +805,12 @@ step 6-sta "$bin/quartus_sta" cadr_de25
 say "6-sta-check"
 if [ "$fault" -eq 1 ]; then
     sta_script=$here/fault_sta.tcl
+elif [ "$revision" = 15 ]; then
+    sta_script=$here/quux15_sta_check.tcl
 else
     sta_script=$here/sta_check.tcl
 fi
-if ! env CADR_PIXEL_MHZ="$([ "$hdmi" -eq 1 ] && echo "$pixel_mhz" || echo 0)" \
+if ! env CADR_PIXEL_MHZ="$([ "$hdmi" -eq 1 ] && echo "$pixel_mhz" || echo 0)" QUUX15_PERIOD_NS="$period_ns" \
         "$bin/quartus_sta" -t "$sta_script" > 6-sta-check.log 2>&1; then
     grep '^sta:' 6-sta-check.log >&2 || tail -n 20 6-sta-check.log >&2
     refuse "the timing analyzer's checks failed; see $dir/6-sta-check.log"
@@ -714,6 +846,12 @@ grep '^; *\[d\] ALMs used for memory' output_files/cadr_de25.fit.rpt | head -n 1
 if [ "$fault" -eq 1 ]; then
     if [ "$alms" -gt 3000 ] || [ "$m20k" -gt 0 ]; then
         refuse "the fault bitstream fits in $alms ALMs and $m20k M20K blocks, which is not a design without a machine; see $dir/$summary"
+    fi
+elif [ "$revision" = 15 ]; then
+    # **REVISION 15'S FLOOR**, half its trial fit (MP8: 30,600 ALMs and 156
+    # M20K at the 16K cache), so that a datapath optimized away is refused.
+    if [ "$alms" -lt 15000 ] || [ "$m20k" -lt 78 ]; then
+        refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not revision 15's machine; see $dir/$summary"
     fi
 elif [ "$alms" -lt 1000 ] || [ "$m20k" -lt 40 ]; then
     refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not the machine; see $dir/$summary"

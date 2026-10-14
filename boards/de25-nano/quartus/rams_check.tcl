@@ -29,6 +29,17 @@
 # theirs.  A memory with no block, or a block with no such port, fails too:
 # a check that finds nothing is not a pass.
 #
+# **AND REVISION 15'S** (`REVISION=15`, `boards/de25-nano/quux15_de25.sv`): its
+# RAMs are `rtl/plumbing/agilex5/quux15_tdp.sv`'s word columns, each port
+# reading and writing at one address, and the rule is asked of the ports a
+# single write address reaches: the PDL buffer's held write (`pdlh_v`,
+# `pdlh_addr`), the control store's write at WB (`wb_imem_we`,
+# `wb_imem_addr`), A memory's landing (`wb_a_we`, `wb_a_addr`), and
+# block-disk's channel (`chb_we`, `chb_a`).  The cache's lines and tags are
+# written at a fill's set or a word's, under conditions of the port's state,
+# and have no one write-address register to ask about; the core's own
+# checks, under `QUUX15_RDW_POISON`, hold where their ports write.
+#
 # **QUARTUS NAMES THE CADR'S RAMS AND QUUX'S ALIKE.**  The PDL buffer and
 # the control store are `processor|pdl_rtl_N` and `processor|imem_rtl_N` on
 # both machines, where Vivado keeps the generate block's name, so the
@@ -41,6 +52,7 @@ if {[llength $argv] != 1 || [lindex $argv 0] ni {synthesized final}} {
 }
 set snapshot [lindex $argv 0]
 set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
 if {$machine ni {cadr quux}} {
     puts "RAMS: FAILED --- MACHINE is '$machine', not cadr or quux"
     exit 1
@@ -125,8 +137,19 @@ set cadr_rules {
     {the CADR's control store} {*|processor|imem_rtl_*}          {*|processor|n_tpwpiram_q*}       {*|processor|pc\[*}
 }
 set quux_only {*g_quux_disk.disk|blk_ram_rtl_*}
+set quux15_rules {
+    {revision 15's PDL buffer}    {*u_core|pdl|*mem_rtl_*}        {*u_core|pdlh_v*}      {*u_core|pdlh_addr\[*}
+    {revision 15's control store} {*u_core|store|ram|*mem_rtl_*}  {*u_core|wb_imem_we*}  {*u_core|wb_imem_addr\[*}
+    {revision 15's A memory}      {*u_core|amem|*mem_rtl_*}       {*u_core|wb_a_we*}     {*u_core|wb_a_addr\[*}
+    {block-disk's block store}    {*u_core|walk|blk_ram_rtl_*}    {*u_core|walk|chb_we*} {*u_core|walk|chb_a\[*}
+}
 
-if {$machine eq "quux"} {
+if {$machine eq "quux" && $revision eq "15"} {
+    set n 0
+    foreach {what mems we wa} $quux15_rules { rams_rule $what $mems $we $wa; incr n }
+    puts "RAMS: ok      revision 15: all $n RAMs written at one write address were found,"
+    puts "RAMS:         and write where the RTL says"
+} elseif {$machine eq "quux"} {
     set n 0
     foreach {what mems we wa} $quux_rules { rams_rule $what $mems $we $wa; incr n }
     puts "RAMS: ok      QUUX: all $n RAMs whose read and write share an address"

@@ -287,6 +287,33 @@ WIRED = [
 # takes, which is the fabric's, and never the machine's.
 CABLE_RESET = ["u_dbg_cable", "u_dbg_join"]
 
+# **AND REVISION 15'S TOP LEVEL**, `--quux15`: `boards/de25-nano/quux15_de25.sv`,
+# the same two bridges with QUUX's pages.  Its console is `quux15_face.sv`,
+# which takes a page's twelve bits and has no base of its own, so the
+# splitter's page is the console's place; the network's and the serial
+# line's pages and the debug cable's are answered by default slaves, which
+# are held to the bridges' shape and reset like every other face.  It has no
+# debug cable, so there is no seam to read; its eight pads on JP1 are the
+# CADR's connector's, named, undriven and read by nothing.
+QUUX15_TOP = "boards/de25-nano/quux15_de25.sv"
+QUUX15_FACES = [
+    ("u_h2f_split", "PACK_BASE", "h2f", "PACK"),
+    ("u_h2f_split", "CHAOS_BASE", "h2f", "CHAOS"),
+    ("u_h2f_split", "SER_BASE", "h2f", "SERIAL"),
+    ("u_h2f_split", "INPUT_BASE", "h2f", "INPUT"),
+    ("u_h2f_split", "FD_BASE", "h2f", "FD"),
+    ("u_pack", "REG_BASE", "h2f", "PACK"),
+    ("u_lw_split", "CON_BASE", "lw", "CONSOLE"),
+    ("u_lw_split", "DBG_BASE", "lw", "CONSOLE+0x1000"),
+]
+QUUX15_SHAPED = ["u_h2f_split", "u_pack", "u_h2f_chaos", "u_h2f_ser", "u_input",
+                 "u_fd_face", "u_h2f_rest", "u_lw_split", "u_face",
+                 "u_lw_dbg_rest", "u_lw_rest"]
+QUUX15_ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_h2f_chaos": "h2f",
+                    "u_h2f_ser": "h2f", "u_input": "h2f", "u_fd_face": "h2f",
+                    "u_h2f_rest": "h2f", "u_lw_split": "lw", "u_face": "lw",
+                    "u_lw_dbg_rest": "lw", "u_lw_rest": "lw"}
+
 # THE CONNECTOR'S PINS.  `rtl/plumbing/cadr_dbg_cable.sv` is where the eight
 # indices' roles are and `de25_nano_pins.tcl` is where a package pin is; the
 # three numbers below are this project's decision about WHERE the connector
@@ -370,7 +397,12 @@ def liveness_net(text):
     no bridge's reset could ever be made of.  A rule that reaches nothing
     looks exactly like a rule that holds.
     """
-    m = re.search(r"\bcadr_f2sdram_port\b[^;]*?\b(\w+)\s*\(", text)
+    # **AN INSTANCE, AT THE START OF A LINE, AND NOT THE MODULE'S NAME IN A
+    # COMMENT**: the search took the first mention of the name, which in both
+    # top levels is a comment, and its "instance" was a word of prose with no
+    # connections, so the rule below had no seed and reached nothing.
+    m = re.search(r"^\s*(?:cadr|quux15)_f2sdram_port\b\s*(?:#\s*\([^;]*?\)\s*)?(\w+)\s*\(",
+                  text, re.M)
     if not m:
         return None
     return instance_connections(text, m.group(1)).get("live")
@@ -581,6 +613,47 @@ def check_connector(root, top):
     return bad
 
 
+def check_quux15_pads(root, top):
+    """Revision 15's JP1: the connector's eight pads, each a port of the top
+    level with a line in the pin file, driven with nothing but high
+    impedance, read by nothing, and no other pin of either header named."""
+    bad = 0
+    pins_path = Path(root) / PINS
+    if not pins_path.is_file():
+        fail("%s is not there" % pins_path)
+    before = len(de25_pins_check.failures)
+    pins, _supply = de25_pins_check.read_pins(pins_path)
+    for message in de25_pins_check.failures[before:]:
+        print("de25_faces: %s does not parse: %s" % (PINS, message), file=sys.stderr)
+        bad += 1
+    by_port = {p["port"]: p for p in pins}
+    want = {"jp%d_pin%d" % (DBG_HEADER, DBG_FIRST_PIN + k) for k in range(8)}
+    named = {"jp%s_pin%s" % hp for hp in re.findall(r"\bjp([12])_pin(\d+)\b", top)}
+    if named != want:
+        print("de25_faces: the top level names %s, and the pads it has are %s"
+              % (sorted(named), sorted(want)), file=sys.stderr)
+        bad += 1
+    for port in sorted(want):
+        if port not in by_port:
+            print("de25_faces: %s has no package pin in %s" % (port, PINS), file=sys.stderr)
+            bad += 1
+        drivers = re.findall(r"assign\s+%s\s*=\s*([^;]*);" % port, top)
+        if drivers != ["1'bz"]:
+            print("de25_faces: %s is driven by %s, and QUUX drives none of the debug "
+                  "cable's pads" % (port, drivers or "nothing"), file=sys.stderr)
+            bad += 1
+        uses = len(re.findall(r"\b%s\b" % port, top))
+        if uses != 2:
+            print("de25_faces: %s appears %d times, wanting its port and its high "
+                  "impedance alone" % (port, uses), file=sys.stderr)
+            bad += 1
+    if bad == 0:
+        print("de25_faces: JP%d pins %d to %d are ports with package pins, undriven and "
+              "read by nothing, and no other header pin is named"
+              % (DBG_HEADER, DBG_FIRST_PIN, DBG_FIRST_PIN + 7))
+    return bad
+
+
 def board_addresses(text):
     """The DE25-Nano's addresses out of `cadr_board.h`.
 
@@ -635,7 +708,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", help="the repository's root")
     ap.add_argument("--stamp", help="write this file when the check passes")
+    ap.add_argument("--quux15", action="store_true",
+                    help="revision 15's top level, boards/de25-nano/quux15_de25.sv")
     args = ap.parse_args()
+    global TOP, FACES, SHAPED, ON_BRIDGE
+    if args.quux15:
+        TOP, FACES, SHAPED, ON_BRIDGE = QUUX15_TOP, QUUX15_FACES, QUUX15_SHAPED, QUUX15_ON_BRIDGE
 
     top_path = os.path.join(args.root, TOP)
     board_path = os.path.join(args.root, BOARD_H)
@@ -741,6 +819,18 @@ def main():
             print("de25_faces: %-3s %d slaves, all reset by `%s` alone%s" %
                   (bridge, len(on), resets[splitter],
                    ", which owes nothing to `%s`" % live if live else ""))
+
+    if args.quux15:
+        bad += check_quux15_pads(args.root, top)
+        if bad:
+            fail("%d of revision 15's DE25-Nano faces or pads are not where they "
+                 "belong" % bad)
+        print("de25_faces: %d faces of revision 15, each at the offset its program's "
+              "address is into its bridge's window" % len(FACES))
+        if args.stamp:
+            os.makedirs(os.path.dirname(args.stamp), exist_ok=True)
+            open(args.stamp, "w").close()
+        return
 
     # THE DEBUG CABLE'S SEAM.  Every pair one bare signal, the same at both
     # ends, and the connector's reset the fabric's.  See the header.
