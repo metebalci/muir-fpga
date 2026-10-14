@@ -6996,6 +6996,87 @@ if lift_readme "$WORK/rd"; then
 	[ "$readme_bad" = 0 ] && ok "16 READMEs written whole, each saying what its card is for"
 fi
 
+# ---------------------------------------------------------------------------
+# 13.  THE README NAMES THE COMMIT IN ITS SHORT FORM, WHATEVER FORM IT IS GIVEN.
+# ---------------------------------------------------------------------------
+#
+# `make release RELEASE_COMMIT=` takes 7 to 40 hexadecimal digits, and
+# `tools/release_check.py` reads the README for the first 7 only.  A README
+# that named all 40 failed the check of a release that was right.  So the
+# commit block of mksd-buildroot.sh is lifted by its own anchors and run with
+# a full commit, a short one and five that are not commits, the README block
+# after it, and what it writes is read by release_check.py's own README check
+# under the commit as release_check.py takes it from its command line.
+lift_commit() {
+	awk '/^RELEASE_COMMIT=\$\{RELEASE_COMMIT:-\}$/ {on=1}
+	     /^# \*\*AND THE SYSTEM A RELEASE CARD IS FOR\*\*/ {if (on) exit}
+	     on {print}' "$MKSD" > "$1/commit.sh"
+	if [ "$(grep -c '^RELEASE_COMMIT=\${RELEASE_COMMIT:-}$' "$1/commit.sh")" != "1" ] ||
+	   ! grep -q 'is not a commit' "$1/commit.sh"; then
+		fail "the commit block is not where this check looks in mksd-buildroot.sh"
+		return 1
+	fi
+	return 0
+}
+
+case_head "the README names a full, a short or no commit as the release check reads it"
+sandbox
+mkdir -p "$WORK/rc"
+if lift_readme "$WORK/rc" && lift_commit "$WORK/rc"; then
+	commit_bad=0
+	full=774f36001b2c3d4e5f60718293a4b5c6d7e8f901
+	for given in "$full" 774f360; do
+		for m in cadr quux; do
+			rm -rf "$WORK/rc/card"; mkdir -p "$WORK/rc/card"
+			sys=1003; rev=; [ "$m" = quux ] && { sys=2001; rev=13; }
+			( set -u
+			  RELEASE_COMMIT=$given
+			  . "$WORK/rc/commit.sh"
+			  OUT="$WORK/rc"; BOARD_NAME=arty-z7-20; BOARD_DTB=the-board.dtb; MACHINE=$m
+			  NO_FAULT=; RELEASE=1; SYSTEM=$sys; REVISION=$rev
+			  . "$WORK/rc/board.sh"
+			  ROOT_NAMES=
+			  for rf in $ROOT_FILES; do ROOT_NAMES="${ROOT_NAMES:+$ROOT_NAMES }${rf#*:}"; done
+			  . "$WORK/rc/readme.sh" ) > "$WORK/rc/out" 2>&1
+			if [ -s "$WORK/rc/out" ] || [ ! -s "$WORK/rc/card/README.TXT" ]; then
+				fail "README.TXT for commit $given, $m: $(head -2 "$WORK/rc/out" | tr '\n' ' ')"
+				commit_bad=$((commit_bad + 1))
+				continue
+			fi
+			said=$(tr -d '\r' < "$WORK/rc/card/README.TXT" | sed -n 's/^Built from muir-fpga commit \([^:]*\):.*/\1/p')
+			if [ "$said" != 774f360 ]; then
+				fail "the README for commit $given ($m) names [$said], not 774f360"
+				commit_bad=$((commit_bad + 1))
+			fi
+			if ! python3 - "$TREE/tools" "$WORK/rc/card/README.TXT" "$given" "$m" "$sys" \
+			    > "$WORK/rc/check.out" 2>&1 <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import release_check as rc
+text = open(sys.argv[2], encoding="ascii").read()
+given, machine, system = sys.argv[3], sys.argv[4], sys.argv[5]
+# The commit as release_check.main() takes it from --commit.
+rc.check_readme("README.TXT", machine, "arty-z7-20", given.lower()[:7], system, text)
+for p in rc.problems:
+    print(p)
+sys.exit(1 if rc.problems else 0)
+EOF
+			then
+				fail "release_check reads the README for commit $given ($m): $(head -2 "$WORK/rc/check.out" | tr '\n' ' ')"
+				commit_bad=$((commit_bad + 1))
+			fi
+		done
+	done
+	for given in 774F360 774f36 "${full}0" 774f360g "-774f360"; do
+		if ( RELEASE_COMMIT=$given; . "$WORK/rc/commit.sh" ) > "$WORK/rc/out" 2>&1 ||
+		   ! grep -q "RELEASE_COMMIT=$given is not a commit" "$WORK/rc/out"; then
+			fail "RELEASE_COMMIT=$given was not refused as not a commit: $(head -1 "$WORK/rc/out")"
+			commit_bad=$((commit_bad + 1))
+		fi
+	done
+	[ "$commit_bad" = 0 ] && ok "a full and a short commit both write 774f360, which release_check reads; five that are not commits are refused"
+fi
+
 echo
 if [ "$fails" = 0 ]; then
 	echo "fpgarc: $cases cases, one file of flags reaches six programs and each gets its own"

@@ -414,6 +414,9 @@ if [ -n "$RELEASE_COMMIT" ] && ! printf '%s\n' "$RELEASE_COMMIT" | grep -Eqx '[0
   echo "mksd-buildroot: RELEASE_COMMIT=$RELEASE_COMMIT is not a commit: 7 to 40 hexadecimal digits" >&2
   exit 1
 fi
+# A commit given in full is written in its short form, the 7 digits every
+# release has named and tools/release_check.py reads.
+RELEASE_COMMIT=$(printf '%s' "$RELEASE_COMMIT" | cut -c1-7)
 # **AND THE SYSTEM A RELEASE CARD IS FOR**, a muir-sys System number, which a
 # release card's README names (readme_system below).  mksd-release.sh
 # requires it; a number of digits, nothing else.
