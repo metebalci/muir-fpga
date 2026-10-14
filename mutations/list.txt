@@ -29564,14 +29564,91 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note D writes M 31 and A 31 in the clock before its word's arrival, from the
 @note word on its way; the M-AP copy then forms the operand address from the
-@note new word where M-AP is M 31.
+@note new word where M-AP is M 31.  D's port of the macro dispatch memory
+@note is addressed from that word too, so the entry is the one it indexes.
 @old
+    fx_d   = fused_at({4'd0, 1'b1, mdreg[13:0]}, d_word, intctl[3], lc, md_d_e, md_d_a);
+    d_eff  = d_dec;
+    d_keep = d_eff && fx_d.fuse && fx_d.keep;
+    d_op   = d_eff && fx_d.fuse && fx_d.op_v;
     d_m31      = d_eff && fx_d.fuse;
     d_m31_word = d_word;
+    d_end  = d_wait_q && wb_v && st_v[0] && st_fetch[0]
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
+    d_npc_v = d_dec || d_end;
+    d_npc   = (d_dec && fx_d.fuse) ? fx_d.handler : mdreg[13:0];
+  end
+  always_comb begin
+    c_d = c_res;
+    if (d_keep) begin
+      c_d.spc_ptr = spcptr + 5'd1;
+      c_d.spc_top = (spc_w_v && spc_w_ptr == spcptr + 5'd1) ? spc_w_word : spc[spcptr + 5'd1];
+    end
+    if (d_op) c_d.idx = op_addr(fx_d.op_arg, fx_d.op_delta);
+    c_hlt = d_dec ? c_d : c_res;
+  end
+
+  // **THE MACRO DISPATCH MEMORY'S PORTS**, each address formed from what
+  // its call is given: RD's from the copies (the guard admits no step of
+  // LC before its call), EX's from LC as the word in EX leaves it at its
+  // three calls (stepped only by a dispatch's own step; a write of LC bars
+  // the fuse), D's from the word arriving, the readout's from its address.
+  // Destination 7's write lands with EX's registers.
+  logic [33:0] md_ex_lc;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [35:0] md_ex_step;
+  /* verilator lint_on UNUSEDSIGNAL */
+  always_comb begin
+    md_ex_step = step_lc(lc, lc_needfetch, intctl[3]);
+    md_ex_lc = (ex_isel[44:43] == 2'd2 && ex_isel[11:10] != 2'd2 && ex_isel[24])
+             ? md_ex_step[33:0] : lc;
+  end
+  assign md_rd_a = fused_index_on(mmem[5'o31], c.bm, c.lc);
+  assign md_rx_a = fused_index_on(mmem[5'o31], c_res.bm, c_res.lc);
+  assign md_ex_a = fused_index_on(mmem[5'o31], intctl[3], md_ex_lc);
+  assign md_d_a  = fused_index(land_word, intctl[3], lc);
 @new
-    d_m31      = d_wait_q && d_fetch_q && n_land
-              && fused_at({4'd0, 1'b1, mdreg[13:0]}, p_land_next ? p_word_next : n_pend_word, intctl[3], lc).fuse;
-    d_m31_word = p_land_next ? p_word_next : n_pend_word;
+    fx_d   = fused_at({4'd0, 1'b1, mdreg[13:0]}, land_now ? d_word : (p_land_next ? p_word_next : n_pend_word),
+                      intctl[3], lc, md_d_e, md_d_a);
+    d_eff  = d_dec;
+    d_keep = d_eff && fx_d.fuse && fx_d.keep;
+    d_op   = d_eff && fx_d.fuse && fx_d.op_v;
+    d_m31      = d_wait_q && d_fetch_q && !land_now && n_land && fx_d.fuse;
+    d_m31_word = (p_land_next ? p_word_next : n_pend_word);
+    d_end  = d_wait_q && wb_v && st_v[0] && st_fetch[0]
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
+    d_npc_v = d_dec || d_end;
+    d_npc   = (d_dec && fx_d.fuse) ? fx_d.handler : mdreg[13:0];
+  end
+  always_comb begin
+    c_d = c_res;
+    if (d_keep) begin
+      c_d.spc_ptr = spcptr + 5'd1;
+      c_d.spc_top = (spc_w_v && spc_w_ptr == spcptr + 5'd1) ? spc_w_word : spc[spcptr + 5'd1];
+    end
+    if (d_op) c_d.idx = op_addr(fx_d.op_arg, fx_d.op_delta);
+    c_hlt = d_dec ? c_d : c_res;
+  end
+
+  // **THE MACRO DISPATCH MEMORY'S PORTS**, each address formed from what
+  // its call is given: RD's from the copies (the guard admits no step of
+  // LC before its call), EX's from LC as the word in EX leaves it at its
+  // three calls (stepped only by a dispatch's own step; a write of LC bars
+  // the fuse), D's from the word arriving, the readout's from its address.
+  // Destination 7's write lands with EX's registers.
+  logic [33:0] md_ex_lc;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [35:0] md_ex_step;
+  /* verilator lint_on UNUSEDSIGNAL */
+  always_comb begin
+    md_ex_step = step_lc(lc, lc_needfetch, intctl[3]);
+    md_ex_lc = (ex_isel[44:43] == 2'd2 && ex_isel[11:10] != 2'd2 && ex_isel[24])
+             ? md_ex_step[33:0] : lc;
+  end
+  assign md_rd_a = fused_index_on(mmem[5'o31], c.bm, c.lc);
+  assign md_rx_a = fused_index_on(mmem[5'o31], c_res.bm, c_res.lc);
+  assign md_ex_a = fused_index_on(mmem[5'o31], intctl[3], md_ex_lc);
+  assign md_d_a  = fused_index(land_now ? land_word : (p_land_next ? p_word_next : n_pend_word), intctl[3], lc);
 @end
 
 @mutation quux15-d-at-l-0
