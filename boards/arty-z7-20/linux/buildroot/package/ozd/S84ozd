@@ -416,7 +416,27 @@ start() {
 	return 1
 }
 
+# **A HOST THE START DID NOT START IS NOT A STOP THAT FAILED.**  Under
+# `--no-ozd`, or on a QUUX card, the start runs nothing and writes no pid file,
+# and `cadr_stop` would then say `Stopping ozd: FAIL` at every shutdown.  So
+# with no pid file the card is asked the start's two questions, in the start's
+# order, and the reason is said in one line.  A pid file means a host was
+# started, whatever the card says now --- it may have been edited since the
+# boot --- and that host is stopped as before.  The card is still mounted
+# here: S80cadr-disk-packs, which unmounts it, stops after this.
 stop() {
+	if [ ! -s "$PIDFILE" ]; then
+		if fpgarc_has "$RC" --no-ozd; then
+			echo "Stopping ozd: not running (--no-ozd)"
+			rm -f "$PEERFILE"
+			return 0
+		fi
+		if fpgarc_is_quux; then
+			echo "Stopping ozd: not running (QUUX)"
+			rm -f "$PEERFILE"
+			return 0
+		fi
+	fi
 	cadr_stop ozd "$PIDFILE"
 	rm -f "$PEERFILE"
 }

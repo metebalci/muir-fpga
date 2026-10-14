@@ -5031,6 +5031,233 @@ if prepare ozd S84ozd; then
 	fi
 fi
 
+# **AND THE STOP KNOWS IT TOO.**  A card that started no ozd, by --no-ozd or
+# because it is QUUX's, left no pid file, and the stop at shutdown asked
+# start-stop-daemon to stop a process that was never there and printed
+# `Stopping ozd: FAIL` on the console.  It says in one line why there is
+# nothing to stop, in the start's own words for the reason, and succeeds.  A
+# host that WAS started --- a pid file is there --- is stopped as before,
+# whatever the card says now, and a stop that fails still says FAIL.
+#
+# $1 the case; $2 the pid file: none, live (a program that stops on SIGTERM)
+# or dead (a pid that is gone); then the card's lines.  The output is in
+# out.stop and the status in status.stop.
+ozd_stop() {
+	_what=$1; _pid=$2; shift 2
+	sandbox
+	prepare ozd S84ozd || return 1
+	printf -- '%s\r\n' "$@" > "$WORK/card/fpgarc"
+	echo "177200@127.0.0.1:42142" > "$WORK/run/cadr-ozd.peer"
+	# The boot has read the card already, so a repeated line was warned
+	# about then, and the reader says it once a boot.
+	(FPGARC_WARNED="$WORK/run/warned"; . "$READER"
+	 fpgarc_args "$WORK/card/fpgarc" --machine; fpgarc_args "$WORK/card/fpgarc" --no-ozd) > /dev/null 2>&1
+	_live=
+	case "$_pid" in
+	live)
+		SLOW=0 "$WORK/bin/slow-to-stop" &
+		_live=$!
+		echo "$_live" > "$WORK/run/ozd.pid"
+		sleep 1
+		;;
+	dead)
+		sh -c 'exit 0' &
+		_dead=$!
+		wait "$_dead"
+		echo "$_dead" > "$WORK/run/ozd.pid"
+		;;
+	esac
+	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+	PATH="$WORK/bin:$PATH" "$WORK/S84ozd" stop > "$WORK/out.stop" 2>&1
+	echo "$?" > "$WORK/status.stop"
+	if [ -n "$_live" ] && kill -0 "$_live" 2>/dev/null; then
+		fail "$_what: ozd was still running when stop returned"
+		kill -9 "$_live" 2>/dev/null
+	fi
+	if [ -e "$WORK/run/cadr-ozd.peer" ]; then
+		fail "$_what: the peer file outlived the stop"
+	fi
+	return 0
+}
+
+# The stop said exactly the line $2 and succeeded.
+ozd_stop_says_only() {
+	if [ "$(cat "$WORK/out.stop")" = "$2" ] && [ "$(cat "$WORK/status.stop")" = 0 ]; then
+		ok "$1: the console says only: $2"
+	else
+		fail "$1: the stop returned $(cat "$WORK/status.stop") and said [$(tr '\n' '|' < "$WORK/out.stop")], not [$2]"
+	fi
+}
+
+case_head "--no-ozd: the stop says ozd was not running, and no FAIL"
+if ozd_stop "--no-ozd" none '--no-ozd'; then
+	ozd_stop_says_only "--no-ozd" "Stopping ozd: not running (--no-ozd)"
+fi
+
+case_head "a QUUX card: the stop says ozd was not running, and no FAIL"
+if ozd_stop "--machine quux" none '--machine quux'; then
+	ozd_stop_says_only "--machine quux" "Stopping ozd: not running (QUUX)"
+fi
+if ozd_stop "--machine cadr, then --machine quux" none '--machine cadr' '--machine quux'; then
+	ozd_stop_says_only "--machine cadr, then --machine quux" "Stopping ozd: not running (QUUX)"
+fi
+
+# --no-ozd is answered first at the stop, as at the start.
+case_head "--no-ozd on a QUUX card: the stop gives --no-ozd's words"
+if ozd_stop "--machine quux with --no-ozd" none '--machine quux' '--no-ozd'; then
+	ozd_stop_says_only "--machine quux with --no-ozd" "Stopping ozd: not running (--no-ozd)"
+fi
+
+# **THE CONTROLS.**  A host that was started is stopped with OK, on a CADR card
+# and on a card that says --no-ozd or QUUX now: the card was edited after the
+# boot, and a `restart` must not leave the old host running.
+case_head "a running ozd is stopped with OK, whatever the card says now"
+if ozd_stop "--machine cadr, running" live '--machine cadr'; then
+	ozd_stop_says_only "--machine cadr, running" "Stopping ozd: OK"
+fi
+if ozd_stop "--no-ozd, running" live '--no-ozd'; then
+	ozd_stop_says_only "--no-ozd, running" "Stopping ozd: OK"
+fi
+if ozd_stop "--machine quux, running" live '--machine quux'; then
+	ozd_stop_says_only "--machine quux, running" "Stopping ozd: OK"
+fi
+
+# And a stop that really fails still says FAIL: a CADR card whose host never
+# started or was started and is gone, and a --no-ozd card whose host was
+# started and is gone.
+case_head "a stop with a host that is not there still says FAIL, unless the card says why"
+for _pidmode in dead none; do
+	if ozd_stop "--machine cadr, pid $_pidmode" "$_pidmode" '--machine cadr'; then
+		if [ "$(cat "$WORK/out.stop")" = "Stopping ozd: FAIL" ]; then
+			ok "--machine cadr, pid $_pidmode: the console says Stopping ozd: FAIL"
+		else
+			fail "--machine cadr, pid $_pidmode: the stop said [$(tr '\n' '|' < "$WORK/out.stop")], not FAIL"
+		fi
+	fi
+done
+if ozd_stop "--no-ozd, pid dead" dead '--no-ozd'; then
+	if [ "$(cat "$WORK/out.stop")" = "Stopping ozd: FAIL" ]; then
+		ok "--no-ozd, pid dead: a host that was started and is gone still says FAIL"
+	else
+		fail "--no-ozd, pid dead: the stop said [$(tr '\n' '|' < "$WORK/out.stop")], not FAIL"
+	fi
+fi
+
+
+# **THE SAME FOR THE OTHER SCRIPTS WHOSE START SKIPS BY THE CARD.**  The serial
+# line is not started on a QUUX card or with no --serial line, and the file
+# device is not started on a card that is not QUUX's; neither leaves a pid file,
+# and each stop said `Stopping <program>: FAIL` at every shutdown.  As for ozd:
+# with no pid file the stop says the start's reason in one line and succeeds,
+# and with one it stops the program as before.
+#
+# $1 the package, $2 the script, $3 the case, $4 the pid file (none, live or
+# dead, as ozd_stop takes it), then the card's lines, or NOCARD for no file.
+# The output is in out.stop and the status in status.stop.
+init_stop() {
+	_pkg=$1; _script=$2; _what=$3; _pid=$4; shift 4
+	sandbox
+	prepare "$_pkg" "$_script" || return 1
+	if [ "${1:-}" != NOCARD ]; then
+		printf -- '%s\r\n' "$@" > "$WORK/card/fpgarc"
+		(FPGARC_WARNED="$WORK/run/warned"; . "$READER"
+		 fpgarc_args "$WORK/card/fpgarc" --machine) > /dev/null 2>&1
+	fi
+	_live=
+	case "$_pid" in
+	live)
+		SLOW=0 "$WORK/bin/slow-to-stop" &
+		_live=$!
+		echo "$_live" > "$WORK/run/$_pkg.pid"
+		sleep 1
+		;;
+	dead)
+		sh -c 'exit 0' &
+		_dead=$!
+		wait "$_dead"
+		echo "$_dead" > "$WORK/run/$_pkg.pid"
+		;;
+	esac
+	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+	CADR_FAULT_SAID="$WORK/run/fault.said" \
+	PATH="$WORK/bin:$PATH" "$WORK/$_script" stop > "$WORK/out.stop" 2>&1
+	echo "$?" > "$WORK/status.stop"
+	if [ -n "$_live" ] && kill -0 "$_live" 2>/dev/null; then
+		fail "$_what: $_pkg was still running when stop returned"
+		kill -9 "$_live" 2>/dev/null
+	fi
+	return 0
+}
+
+# The stop said exactly the line $2; with $3 = ok, it also succeeded.
+init_stop_said() {
+	if [ "$(cat "$WORK/out.stop")" = "$2" ] &&
+	   { [ "${3:-}" != ok ] || [ "$(cat "$WORK/status.stop")" = 0 ]; }; then
+		ok "$1: the console says only: $2"
+	else
+		fail "$1: the stop returned $(cat "$WORK/status.stop") and said [$(tr '\n' '|' < "$WORK/out.stop")], not [$2]"
+	fi
+}
+
+case_head "cadr-serial: the stop on a QUUX card says it was not running, and no FAIL"
+if init_stop cadr-serial S86cadr-serial "serial, --machine quux" none '--machine quux' '--serial 0.0.0.0:7641'; then
+	init_stop_said "serial, --machine quux" "Stopping cadr-serial: not running (QUUX)" ok
+fi
+case_head "cadr-serial: the stop with no --serial line says it was not running, and no FAIL"
+if init_stop cadr-serial S86cadr-serial "serial, no --serial" none '--machine cadr'; then
+	init_stop_said "serial, no --serial" "Stopping cadr-serial: not running (no --serial)" ok
+fi
+case_head "cadr-serial: a running line is stopped with OK, whatever the card says now"
+if init_stop cadr-serial S86cadr-serial "serial, --serial, running" live '--serial 0.0.0.0:7641'; then
+	init_stop_said "serial, --serial, running" "Stopping cadr-serial: OK" ok
+fi
+if init_stop cadr-serial S86cadr-serial "serial, no card, running" live NOCARD; then
+	init_stop_said "serial, no card, running" "Stopping cadr-serial: OK" ok
+fi
+if init_stop cadr-serial S86cadr-serial "serial, --machine quux, running" live '--machine quux'; then
+	init_stop_said "serial, --machine quux, running" "Stopping cadr-serial: OK" ok
+fi
+if init_stop cadr-serial S86cadr-serial "serial, no --serial, running" live '--machine cadr'; then
+	init_stop_said "serial, no --serial, running" "Stopping cadr-serial: OK" ok
+fi
+case_head "cadr-serial: a stop with a line that is not there still says FAIL, unless the card says why"
+if init_stop cadr-serial S86cadr-serial "serial, --serial, no pid" none '--serial 0.0.0.0:7641'; then
+	init_stop_said "serial, --serial, no pid" "Stopping cadr-serial: FAIL"
+fi
+if init_stop cadr-serial S86cadr-serial "serial, no card, no pid" none NOCARD; then
+	init_stop_said "serial, no card, no pid" "Stopping cadr-serial: FAIL"
+fi
+if init_stop cadr-serial S86cadr-serial "serial, --machine quux, pid dead" dead '--machine quux'; then
+	init_stop_said "serial, --machine quux, pid dead" "Stopping cadr-serial: FAIL"
+fi
+
+case_head "quux-file-device: the stop on a card that is not QUUX's says it was not running, and no FAIL"
+if init_stop quux-file-device S81quux-file-device "file device, --machine cadr" none '--machine cadr'; then
+	init_stop_said "file device, --machine cadr" "Stopping quux-file-device: not running (CADR)" ok
+fi
+if init_stop quux-file-device S81quux-file-device "file device, no --machine" none '--serial 0.0.0.0:7641'; then
+	init_stop_said "file device, no --machine" "Stopping quux-file-device: not running (CADR)" ok
+fi
+if init_stop quux-file-device S81quux-file-device "file device, no card" none NOCARD; then
+	init_stop_said "file device, no card" "Stopping quux-file-device: not running (CADR)" ok
+fi
+if init_stop quux-file-device S81quux-file-device "file device, quux then cadr" none '--machine quux' '--machine cadr'; then
+	init_stop_said "file device, quux then cadr" "Stopping quux-file-device: not running (CADR)" ok
+fi
+case_head "quux-file-device: a running device is stopped with OK, whatever the card says now"
+if init_stop quux-file-device S81quux-file-device "file device, --machine quux, running" live '--machine quux'; then
+	init_stop_said "file device, --machine quux, running" "Stopping quux-file-device: OK" ok
+fi
+if init_stop quux-file-device S81quux-file-device "file device, --machine cadr, running" live '--machine cadr'; then
+	init_stop_said "file device, --machine cadr, running" "Stopping quux-file-device: OK" ok
+fi
+case_head "quux-file-device: a stop with a device that is not there still says FAIL, unless the card says why"
+if init_stop quux-file-device S81quux-file-device "file device, --machine quux, no pid" none '--machine quux'; then
+	init_stop_said "file device, --machine quux, no pid" "Stopping quux-file-device: FAIL"
+fi
+if init_stop quux-file-device S81quux-file-device "file device, --machine cadr, pid dead" dead '--machine cadr'; then
+	init_stop_said "file device, --machine cadr, pid dead" "Stopping quux-file-device: FAIL"
+fi
 # **AND ITS LINES ARE CLAIMED**, or S88 would report them at boot as lines no
 # program takes, which is false: they reached this program, on a machine that
 # does not need it.  The control is a misspelling, which is still reported.

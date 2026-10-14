@@ -166,7 +166,25 @@ start() {
 	cadr_daemon "$PROG" "$PIDFILE" "$@"
 }
 
+# **A LINE THE START DID NOT START IS NOT A STOP THAT FAILED.**  On a QUUX
+# card, or with no --serial line, the start runs nothing and writes no pid
+# file, and `cadr_stop` would then say `Stopping cadr-serial: FAIL` at every
+# shutdown.  So with no pid file the card is asked the start's two questions,
+# in the start's order, and the reason is said in one line.  With no card the
+# start offered the line, so that is a stop as before; and a pid file means
+# the program was started, whatever the card says now.  The card is still
+# mounted here: S80cadr-disk-packs, which unmounts it, stops after this.
 stop() {
+	if [ ! -s "$PIDFILE" ] && [ -f "$RC" ]; then
+		if fpgarc_is_quux; then
+			echo "Stopping cadr-serial: not running (QUUX)"
+			return 0
+		fi
+		if ! fpgarc_has "$RC" --serial; then
+			echo "Stopping cadr-serial: not running (no --serial)"
+			return 0
+		fi
+	fi
 	cadr_stop cadr-serial "$PIDFILE"
 }
 

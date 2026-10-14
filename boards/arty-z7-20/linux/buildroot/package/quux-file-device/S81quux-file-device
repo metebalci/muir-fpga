@@ -88,7 +88,18 @@ start() {
 	cadr_daemon "$PROG" "$PIDFILE" "$@"
 }
 
+# **A DEVICE THE START DID NOT START IS NOT A STOP THAT FAILED.**  On a card
+# that is not QUUX's the start runs nothing and writes no pid file, and
+# `cadr_stop` would then say `Stopping quux-file-device: FAIL` at every
+# shutdown of every CADR board.  So with no pid file the card is asked the
+# start's question and the reason is said in one line.  A pid file means the
+# program was started, whatever the card says now.  The card is still mounted
+# here: S80cadr-disk-packs, which unmounts it, stops after this.
 stop() {
+	if [ ! -s "$PIDFILE" ] && ! fpgarc_is_quux; then
+		echo "Stopping quux-file-device: not running (CADR)"
+		return 0
+	fi
 	cadr_stop quux-file-device "$PIDFILE"
 }
 
