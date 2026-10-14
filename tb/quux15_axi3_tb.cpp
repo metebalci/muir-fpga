@@ -35,8 +35,8 @@
 // word write offered while `w_free` and held until `w_taken`, up to sixteen
 // unanswered, each answered once, in order (`b_done`, `b_id`), and none to a
 // line whose read is out; each line read held until `ar_taken`, one at a
-// time, after every write to its line is answered (the read rule), its 40
-// bytes at `rd_last` main memory's.  Main
+// time, after every write to its line, offered or taken, is answered (the
+// read rule), its 40 bytes at `rd_last` main memory's.  Main
 // memory is packed storage from the Arty's base: word w at byte 5w, line L at
 // 40L; the words are drawn so that one in two runs into a second beat and
 // some into the next 4 KiB page.  At the end every byte written must be
@@ -184,9 +184,10 @@ int run(uint64_t seed, Order order, unsigned aw_pct, unsigned w_pct, unsigned ar
     d->w_bus = cur.w;
     d->w_word = cur.word;
     d->w_id = next_id & 15;
+    // The read rule counts a write offered and not yet taken as one queued.
     if (!ar_on && !rd_wait && done_ops < ops && rng.chance(20)) {
       cur_line = rng.below(kWords / 8 - 1);
-      if (pending[cur_line] == 0) ar_on = true;
+      if (pending[cur_line] == 0 && !(w_on && cur.w / 8 == cur_line)) ar_on = true;
     }
     d->ar_req = ar_on;
     d->ar_line = cur_line;
@@ -354,8 +355,10 @@ int main(int argc, char **argv) {
   // own at random, the write channels apart, and slow.
   const unsigned cases[][5] = {{100, 100, 100, 100, 100}, {50, 50, 50, 70, 50}, {90, 20, 60, 50, 30},
                                {20, 90, 30, 90, 80}, {10, 10, 10, 20, 10}};
+  // Two hundred seeds: a read and a write of one line meeting is rare, and
+  // three seeds never met it.
   for (Order o : {kAwFirst, kWFirst, kFree})
-    for (uint64_t seed = 1; seed <= 3; ++seed)
+    for (uint64_t seed = 1; seed <= 200; ++seed)
       for (const auto &c : cases) bad += run(seed, o, c[0], c[1], c[2], c[3], c[4], 3000);
   return bad ? 1 : 0;
 }
