@@ -581,6 +581,10 @@ module quux15_de25 #(
   logic [1:0]  pm_bresp, pm_rresp;
 
   logic port_live;
+  // The latency probe in the port, read on the console face's page 3.
+  logic             probe_run, probe_stop;
+  logic [2:0]       probe_state;
+  logic [7:0][31:0] probe_words;
 
   quux15_f2sdram_port u_memory (
       .clk(clk), .rst(rst), .lock_rst(lock_rst),
@@ -596,6 +600,7 @@ module quux15_de25 #(
       .h2f_reset(h2f_reset), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
       .gp_in(gp_in), .live(port_live), .may_start(may_start),
+      .probe_run(probe_run), .probe_stop(probe_stop), .probe_state(probe_state), .probe_words(probe_words),
       .p_awaddr(pm_awaddr), .p_awlen(pm_awlen), .p_awsize(pm_awsize),
       .p_awburst(pm_awburst), .p_awvalid(pm_awvalid), .p_awready(pm_awready),
       .p_wdata(pm_wdata), .p_wstrb(pm_wstrb), .p_wlast(pm_wlast),
@@ -984,7 +989,9 @@ module quux15_de25 #(
       .sleep_set(con_sleep_set), .sleep_secs(con_sleep_secs), .wake(con_wake),
       .disp_fitted(1'b1), .sleep_q(disp_sleep_setting), .asleep(disp_asleep),
       .underrun(disp_underrun_s2), .rd_error(disp_rd_error), .err_clear(con_err_clear),
-      .steady_lamps(con_steady_lamps)
+      .steady_lamps(con_steady_lamps),
+      .probe_fitted(1'b1), .probe_state(probe_state), .probe_words(probe_words),
+      .probe_run(probe_run), .probe_stop(probe_stop)
   );
 
   // The debug cable's page, which QUUX has not got, and every other address.

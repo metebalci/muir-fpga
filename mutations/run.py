@@ -2974,7 +2974,8 @@ CHECKS["quux15_arty_param"] = {
 # `quux15_f2sdram.quux.pass`, `quux15_de25.pass`, `quux15_de25_param.pass` and
 # `quux15_de25_faces.pass`.
 QUUX15_DE25_F2SDRAM = ["rtl/plumbing/quux15_axi3.sv", "rtl/plumbing/cadr_mem_count.sv",
-                       "rtl/plumbing/cadr_f2sdram_gate.sv", "rtl/plumbing/cadr_f2sdram_share.sv"]
+                       "rtl/plumbing/cadr_f2sdram_gate.sv", "rtl/plumbing/quux15_mem_probe.sv",
+                       "rtl/plumbing/cadr_f2sdram_share.sv"]
 QUUX15_DE25_FACES = ["rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_gp0_default.sv",
                      "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
                      "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
@@ -2983,9 +2984,16 @@ QUUX15_DE25_FACES = ["rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_gp0
                      "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv"]
 # Revision 15's master behind the board's memory port, against a model of
 # the bridge with the share's other two masters (`tb/quux15_f2sdram_tb.cpp`).
+# The share and the latency probe are named here too: revision 15's
+# parameters of the share (`M_WRITES`, `HOLD_WRITES`, `HOLD_BOUND`) and the
+# probe are this check's to hold.
 CHECKS["quux15_f2sdram_quux"] = {
-    "sources": ["rtl/plumbing/quux15_f2sdram_port.sv"],
-    "extra": ["rtl/plumbing/quux15_axi_master.sv"] + QUUX15_DE25_F2SDRAM + ["tb/quux15_f2sdram_harness.sv"],
+    "sources": ["rtl/plumbing/quux15_f2sdram_port.sv", "rtl/plumbing/cadr_f2sdram_share.sv",
+                "rtl/plumbing/quux15_mem_probe.sv"],
+    "extra": ["rtl/plumbing/quux15_axi_master.sv"]
+             + [f for f in QUUX15_DE25_F2SDRAM
+                if f not in ("rtl/plumbing/cadr_f2sdram_share.sv", "rtl/plumbing/quux15_mem_probe.sv")]
+             + ["tb/quux15_f2sdram_harness.sv"],
     "top": "quux15_f2sdram_harness",
     "tb": "tb/quux15_f2sdram_tb.cpp",
     "flags": ["-O2", "-CFLAGS", "-O2"],

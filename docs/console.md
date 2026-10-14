@@ -1763,9 +1763,36 @@ In simulation, with the memory port idle, the answer comes 70 to 82 clocks
 after the write. `tb/quux15_reset_axi_tb.cpp` holds the bound with a port
 that stops answering.
 
+**Page 3 is the memory port's latency probe on the DE25-Nano.** Its port shares
+one FPGA-to-SDRAM bridge between three masters, and the probe
+(`rtl/plumbing/quux15_mem_probe.sv`, in `rtl/plumbing/quux15_f2sdram_port.sv`)
+times the machine's transactions at the bridge's own handshakes: a read from
+its address taken to its last beat, a write from its address taken to its
+response. Each latency is in clocks of the machine's clock. On the Kria KR260
+and the Arty Z7-20 every word of the page reads `UNMAPPED`.
+
+| Word | What it is |
+|---|---|
+| 48 PROBE | a write of `PRUN` (`0x5052554E`) clears every figure and starts the probe; one of `STOP` (`0x53544F50`) stops it. Read: `PB` (`0x5042`) in `<31:16>`, and `<2:0>` lost, saturated, running |
+| 49 RD_N | the reads timed: line fills, each burst of a line split at 4 KiB counted alone |
+| 50, 51 | their latencies' sum, `<31:0>` and then `<47:32>` in `<15:0>` |
+| 52 RD_MAX | the longest read, `<19:0>` |
+| 53 WR_N | the writes timed, each burst of a split word counted alone |
+| 54, 55 | their latencies' sum, as 50 and 51 |
+| 56 WR_MAX | the longest write, `<19:0>` |
+
+Read the figures with the probe stopped: while it runs they move, and a sum
+read beside its count may be a clock apart. Lost is set when an address
+arrives with the probe's queue full or an answer with it empty, which would
+put the timing out of step with the bridge; saturated when a count reaches all
+ones, which stops both directions. A latency over 2^20 - 1 clocks, about 24 ms
+at 23 ns, reads short.
+
 `build/quux15_face.pass` drives each of these words over AXI: every key, a key
 with a strobe off, another value, and the word's own read-back written, which
-sets nothing.
+sets nothing. `build/quux15_f2sdram.quux.pass` compares the probe's figures with
+the same handshakes timed by its testbench, and `build/quux15_de25.pass` starts
+and stops it through the top level's console face.
 
 ## What is not built
 

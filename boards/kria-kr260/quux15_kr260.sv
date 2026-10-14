@@ -744,6 +744,7 @@ module quux15_kr260 #(
   logic        con_sleep_set, con_wake, con_err_clear, con_steady_lamps;
   logic [14:0] con_sleep_secs, disp_sleep_setting;
   logic        disp_asleep, disp_underrun_s2, disp_rd_error;
+  logic        probe_run, probe_stop;
 
   quux15_face #(
       .ID_W(16), .LEN_W(8), .PERIOD(32'(2 * PERIOD_NS)), .MAIN_UNITS(MAIN_WORDS >> 16),
@@ -771,7 +772,10 @@ module quux15_kr260 #(
       .sleep_set(con_sleep_set), .sleep_secs(con_sleep_secs), .wake(con_wake),
       .disp_fitted(1'b1), .sleep_q(disp_sleep_setting), .asleep(disp_asleep),
       .underrun(disp_underrun_s2), .rd_error(disp_rd_error), .err_clear(con_err_clear),
-      .steady_lamps(con_steady_lamps)
+      .steady_lamps(con_steady_lamps),
+      // No latency probe on this board's port: page 3 reads `UNMAPPED`.
+      .probe_fitted(1'b0), .probe_state(3'd0), .probe_words('0),
+      .probe_run(probe_run), .probe_stop(probe_stop)
   );
 
   cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp1_dbg_rest (
@@ -993,7 +997,7 @@ module quux15_kr260 #(
   // What nothing on this board reads yet.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = ^{obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
+  assign unused = ^{probe_run, probe_stop, obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
                     obs_spcptr, obs_q, obs_vma, obs_md, obs_lc, obs_ic, obs_opnd, obs_ea, obs_em,
                     obs_ob, obs_oalow, obs_oahigh, obs_grant, obs_gaddr, obs_mdl, obs_mdword,
                     obs_reg, obs_raddr, obs_queue, obs_inflight, obs_halted, ro_word,

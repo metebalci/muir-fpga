@@ -33648,3 +33648,242 @@ if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(core_rst), .hard(hard_late == 7'd100),
 @end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15'S SHARE OF THE DE25-NANO'S PORT** (MP8 step 3): the
+# machine's writes posted through the share (`M_WRITES`), the hold raised by
+# its reads alone (`HOLD_WRITES` clear) and bounded (`HOLD_BOUND`), and the
+# latency probe (`rtl/plumbing/quux15_mem_probe.sv`) read on the console
+# face's page 3.  `quux15_f2sdram_quux` holds them: every master's writes
+# unanswered at the bridge counted, the bridge answering different IDs in any
+# order, the machine's writes at bitblt's and zeroing's rates and back to
+# back, the display's line and band budgets, the pack side's bound, and the
+# probe's figures against the same handshakes timed by the testbench.
+
+@mutation quux15-de25-share-a-second-write-on-the-pack-side
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The pack side and the display allowed two writes in flight: the pack
+@note side's second burst is granted before the first has its response.
+@old
+      wr_full[i] = (wr_n[i] == ((i == 0) ? WN'(M_WRITES) : WN'(1)));
+@new
+      wr_full[i] = (wr_n[i] == ((i == 0) ? WN'(M_WRITES) : WN'(2)));
+@end
+
+@mutation quux15-de25-share-b-to-the-wrong-master
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The responses of IDs 0 and 1 crossed: the machine's B goes to the pack
+@note side and the pack side's to the machine.
+@old
+      b_mine[i]    = (m_bid == 5'(i));
+@new
+      b_mine[i]    = (m_bid == 5'((i == 0) ? 1 : (i == 1) ? 0 : i));
+@end
+
+@mutation quux15-de25-share-b-counted-against-the-wrong-master
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note Each response routed right but taken off the next port's count of
+@note writes in flight: the machine's count only grows, the pack side's
+@note falls under zero.
+@old
+                   - ((m_bvalid && m_bready && b_mine[i]) ? WN'(1) : WN'(0));
+@new
+                   - ((m_bvalid && m_bready && b_mine[(i + 1) % N]) ? WN'(1) : WN'(0));
+@end
+
+@mutation quux15-de25-share-machine-writes-one-at-a-time
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The share's port 0 left at one write in flight: correct, and the
+@note machine's posted writes wait for each response.
+@old
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND)
+@new
+      .N(3), .M_WRITES(1), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND)
+@end
+
+@mutation quux15-de25-share-machine-write-data-overtaken
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The machine's writes reordered against their data: a write let go
+@note when its address is taken, so the next write's address reaches the
+@note bridge while this one's data is still to come, and AXI4 has no write
+@note ID to tell them apart.
+@old
+        if ((aw_done || aw_take) && (w_done || w_take)) begin
+@new
+        if (aw_done || aw_take) begin
+@end
+
+@mutation quux15-de25-share-machine-writes-an-id-each
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The machine's writes in flight given an ID each, 16 up: the bridge
+@note may then answer and land them in any order.
+@old
+  assign m_awid     = 5'(w_who);
+@new
+  assign m_awid     = (w_who == '0) ? (5'd16 | 5'(wr_n[0])) : 5'(w_who);
+@end
+
+@mutation quux15-de25-share-display-left-out-of-the-yield
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note At the bound the machine yields to the pack side alone: the display
+@note waits for the machine's reads to stop, past its line budget.
+@old
+  assign eligible = yield ? {{(N-1){1'b1}}, 1'b0}
+@new
+  assign eligible = yield ? {{(N-2){1'b0}}, 2'b10}
+@end
+
+@mutation quux15-de25-share-hold-unbounded
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The CADR's hold: raised by the machine's writes as well as its reads,
+@note and no bound.  With the writes posted back to back the pack side and
+@note the display are granted nothing.
+@old
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND)
+@new
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b1), .HOLD_BOUND(HOLD_BOUND * 0)
+@end
+
+@mutation quux15-de25-share-no-bound
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note The hold raised by the machine's reads alone, with no bound: the
+@note machine's fills back to back keep the display and the pack side out,
+@note and its writes keep the pack side's writes out by priority.
+@old
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND)
+@new
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND * 0)
+@end
+
+@mutation quux15-de25-share-pack-side-starved-by-the-hold
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The bound counts only the display's waiting: a pack side asking while
+@note the display does not never makes the machine yield.
+@old
+          if ((s_arvalid[i] && ar_fits[i]) || (s_awvalid[i] && !wr_full[i])) other_waits = 1'b1;
+@new
+          if (i == 2 && ((s_arvalid[i] && ar_fits[i]) || (s_awvalid[i] && !wr_full[i]))) other_waits = 1'b1;
+@end
+
+@mutation quux15-de25-share-bound-never-starts-again
+@check quux15_f2sdram_quux
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The count never started again once it has reached the bound: the
+@note machine yields for good and is granted nothing more.  (Not started
+@note again at another master's grant alone, it is started again whenever
+@note no other master can be granted, which their own limits in flight make
+@note often: measured, no run of the check moved.)
+@old
+        if (rst || !other_waits || other_granted) wait_n <= '0;
+@new
+        if (rst || (1'b0 && (!other_waits || other_granted))) wait_n <= '0;
+@end
+
+@mutation quux15-de25-probe-times-from-the-newest
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_mem_probe.sv
+@note A write's latency taken from the newest stamp in the queue rather than
+@note the oldest: with several writes in flight each is timed short.
+@old
+  assign wr_lat = now - wr_q[wr_head];
+@new
+  assign wr_lat = now - wr_q[wr_tail - WA'(1)];
+@end
+
+@mutation quux15-de25-probe-counts-every-beat
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_f2sdram_port.sv
+@note A read timed at every beat the machine is handed, not its last.
+@old
+    pr_r  <= f2s_rvalid && f2s_rready && f2s_rlast && f2s_rid == 5'(MACHINE);
+@new
+    pr_r  <= f2s_rvalid && f2s_rready && f2s_rid == 5'(MACHINE);
+@end
+
+@mutation quux15-de25-probe-run-keeps-the-longest
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_mem_probe.sv
+@note RUN clears the counts and the sums but not the longest write, which
+@note then carries one from before the run.  Caught by the second run: the
+@note probe is stopped and read 3,000 clocks into the traffic, then RUN
+@note again.
+@old
+      wr_count  <= '0;
+      wr_sum    <= '0;
+      wr_max    <= '0;
+    end else begin
+@new
+      wr_count  <= '0;
+      wr_sum    <= '0;
+    end else begin
+@end
+
+@mutation quux15-de25-probe-counts-after-stop
+@check quux15_f2sdram_quux
+@file rtl/plumbing/quux15_mem_probe.sv
+@note STOP ignored: the figures keep moving after it.
+@old
+      if (stop) running <= 1'b0;
+@new
+      if (stop && 1'b0) running <= 1'b0;
+@end
+
+@mutation quux15-face-probe-words-one-out
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note The probe's words one place out: word 49 reads the reads' sum.
+@old
+                rd_data = probe_fitted ? probe_words[r_word[2:0] - 3'd1] : UNMAPPED;
+@new
+                rd_data = probe_fitted ? probe_words[r_word[2:0]] : UNMAPPED;
+@end
+
+@mutation quux15-face-probe-run-on-a-board-without-one
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note RUN's key a pulse on a board with no probe.
+@old
+      probe_run  <= wr && w_word == 10'd48 && probe_fitted && w_full == PROBE_RUN_KEY;
+@new
+      probe_run  <= wr && w_word == 10'd48 && w_full == PROBE_RUN_KEY;
+@end
+
+@mutation quux15-face-probe-stop-is-run
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note STOP's key taken for RUN's.
+@old
+      probe_stop <= wr && w_word == 10'd48 && probe_fitted && w_full == PROBE_STOP_KEY;
+@new
+      probe_stop <= wr && w_word == 10'd48 && probe_fitted && w_full == (PROBE_RUN_KEY | (PROBE_STOP_KEY & 32'd0));
+@end
+
+@mutation quux15-face-probe-page-on-a-board-without-one
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note Word 48 read with its marker on a board with no probe.
+@old
+        10'd48: rd_data = probe_fitted ? {PROBE_MARK, 13'd0, probe_state} : UNMAPPED;
+@new
+        10'd48: rd_data = {PROBE_MARK, 13'd0, probe_state};
+@end
+
+@mutation quux15-de25-probe-not-fitted
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The DE25-Nano's face told it has no probe: page 3 reads UNMAPPED.
+@old
+      .probe_fitted(1'b1), .probe_state(probe_state), .probe_words(probe_words),
+@new
+      .probe_fitted(1'b0), .probe_state(probe_state), .probe_words(probe_words),
+@end

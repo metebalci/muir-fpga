@@ -31,7 +31,9 @@
 //   and its response comes back to the core; a line fill of five beats
 //   reaches the bridge with ID 0 and its beats come back in order, the last
 //   with RLAST; the tally counts both.  The display reads the frame buffer
-//   with ID 2 once the port is live.
+//   with ID 2 once the port is live.  The latency probe, started and
+//   stopped on the console face's word 48, times both: one read and one
+//   write, each sum its longest, none lost.
 //
 //   THE LAMPS, ONE SOURCE AT A TIME, in the console's steady mode: running,
 //   microcycles, the disk, an error halt, each its own LED and no other, with
@@ -379,6 +381,8 @@ uint32_t LwRead(uint32_t addr) {
 // `quux15_face.sv`'s words, on the lightweight bridge at offset 0.
 constexpr uint32_t kResetWord = 6 * 4, kMainWord = 37 * 4, kPeriodWord = 40 * 4, kLampsWord = 35 * 4;
 constexpr uint32_t kResetKey = 0x52534554u, kLampSteadyKey = 0x53544459u;
+// Page 3, the latency probe: word 48 and its keys, the figures from 49.
+constexpr uint32_t kProbeWord = 48 * 4, kProbeRunKey = 0x5052554Eu, kProbeStopKey = 0x53544F50u;
 
 // The core's master: one write of one beat, or one line fill of five.
 void CoreIdle() {
@@ -544,6 +548,9 @@ int main(int argc, char **argv) {
 
   // ================================ its memory is the processor's
   {
+    LwWrite(kProbeWord, kProbeRunKey);
+    Check(LwRead(kProbeWord) == 0x50420001u, "the probe's word 48 reads %08x after RUN, wanting the marker and "
+          "running", LwRead(kProbeWord));
     const uint32_t wa = kMainBase + 0x12340u;
     const uint64_t wd = 0x0123456789ABCDEFull;
     CoreWrite(wa, wd, 0x1F);
@@ -574,8 +581,18 @@ int main(int argc, char **argv) {
     Check(shown >= 0, "the display read nothing with ID 2 once the port was live");
     Check(mem.display_off == 0, "%ld of the display's reads are outside the frame buffer", mem.display_off);
     Check(mem.other_ids == 0, "%ld transactions reached the bridge with an ID the board does not use", mem.other_ids);
+    LwWrite(kProbeWord, kProbeStopKey);
+    uint32_t pw[9];
+    for (int k = 0; k < 9; ++k) pw[k] = LwRead(kProbeWord + 4u * k);
+    Check(pw[0] == 0x50420000u, "the probe's word 48 reads %08x after STOP, wanting the marker alone", pw[0]);
+    Check(pw[1] == 1 && pw[5] == 1, "the probe timed %u reads and %u writes, wanting one of each", pw[1], pw[5]);
+    Check(pw[2] == pw[4] && pw[2] > 0 && pw[3] == 0, "the probe's read sum %08x:%08x and longest %u, wanting one "
+          "read's", pw[3], pw[2], pw[4]);
+    Check(pw[6] == pw[8] && pw[6] > 0 && pw[7] == 0, "the probe's write sum %08x:%08x and longest %u, wanting one "
+          "write's", pw[7], pw[6], pw[8]);
     std::printf("ok: the core's write and line fill reach the bridge with ID 0 and come back; the tally reads "
-                "%08x and %08x; the display reads with ID 2\n", lo, hi);
+                "%08x and %08x; the display reads with ID 2; the probe timed the read at %u clocks and the write "
+                "at %u\n", lo, hi, pw[4], pw[8]);
   }
 
   // ================================ the console face's words, and the lamps

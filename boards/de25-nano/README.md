@@ -343,6 +343,22 @@ per master, a master waiting for its answer is not asking, so reversing the
 priority moved not one number of the check. The measured worst is 27 ticks of
 growth with both other ports streaming.
 
+**QUUX revision 15 sets the share's three parameters**
+(`rtl/plumbing/quux15_f2sdram_port.sv`). Its master posts up to sixteen word
+writes with one AXI ID and has no memory timeout, so the CADR's two premises
+do not hold for it. The share lets port 0 have sixteen writes in flight, all
+with ID 0, so the bridge answers them in order and each response is routed by
+its ID; the pack side and the display keep one burst each. Only the machine's
+line fills hold the others, since the core waits for a fill and for no posted
+write, and after eight clocks of another master waiting the machine yields
+one grant. Against the testbench's model of the bridge, a stream of writes
+back to back takes 3.0 clocks a write instead of 14, and no read of the
+display waits more than 183 clocks against a raster line's 579. The
+CADR's hold, kept for revision 15, granted the pack side and the display
+nothing at all once the writes were posted back to back. The latency probe on
+the console face's page 3 (`docs/console.md`) times the machine's reads and
+writes at the bridge.
+
 **The port is shut until software opens it**, on bit 0 of `h2f_gp_out`. The
 first-stage loader calibrates the memory and opens its firewall, and the
 secure firmware releases the bridge when U-Boot runs `bridge enable`; until

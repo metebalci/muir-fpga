@@ -3493,6 +3493,7 @@ QUUX15_DE25_CORE_SRC := $(patsubst rtl/machine/quux15_tdp.sv,rtl/plumbing/agilex
                         $(patsubst rtl/machine/quux15_dmem.sv,rtl/plumbing/agilex5/quux15_dmem.sv,\
                         $(patsubst rtl/machine/quux15_validmap.sv,rtl/plumbing/agilex5/quux15_validmap.sv,$(QUUX15_CORE_SRC)))))
 QUUX15_F2SDRAM := rtl/plumbing/quux15_axi3.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_f2sdram_gate.sv \
+                  rtl/plumbing/quux15_mem_probe.sv \
                   rtl/plumbing/cadr_f2sdram_share.sv rtl/plumbing/quux15_f2sdram_port.sv
 QUUX15_DE25_FACES := rtl/plumbing/cadr_input_cables.sv rtl/plumbing/cadr_gp0_default.sv \
                      rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/cadr_gp1_split.sv \
@@ -3565,8 +3566,10 @@ $(BUILD)/quux15_de25_faces.pass: tools/de25_faces_check.py tools/de25_pins_check
 # the share's port numbers, one write ID answered in order, bursts split at
 # 4 KiB, the machine held until the port is live, writes queued at a shut
 # port and landing once it opens, the machine's reset given only once the
-# share has drained, the warm-reset handshake, the processor's reset, and the
-# tally.
+# share has drained, the warm-reset handshake, the processor's reset, the
+# tally; the machine's writes posted at bitblt's and zeroing's rates and back
+# to back, the pack side and the display within their bounds beside them,
+# and the latency probe's figures.
 $(BUILD)/obj_quux15_f2sdram/Vquux15_f2sdram_harness: rtl/plumbing/quux15_axi_master.sv $(QUUX15_F2SDRAM) \
         tb/quux15_f2sdram_harness.sv tb/quux15_f2sdram_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_f2sdram \

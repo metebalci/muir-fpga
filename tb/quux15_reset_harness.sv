@@ -177,7 +177,8 @@ module quux15_reset_harness #(
       .rm_en(rm_en), .rm_snap(rm_snap), .rm_sel(rm_sel), .rm_addr(rm_addr), .rm_word(rm_word),
       .disp_out(), .disp_rotate(), .sleep_set(), .sleep_secs(), .wake(),
       .disp_fitted(1'b0), .sleep_q(15'd0), .asleep(1'b0), .underrun(1'b0), .rd_error(1'b0),
-      .err_clear(), .steady_lamps()
+      .err_clear(), .steady_lamps(),
+      .probe_fitted(1'b0), .probe_state(3'd0), .probe_words('0), .probe_run(), .probe_stop()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 `endif

@@ -47,6 +47,11 @@ module quux15_f2sdram_harness (
     output var logic [31:0]  gp_in,
     output var logic         live,
     output var logic         may_start,
+    // --- the latency probe -------------------------------------------------
+    input  var logic         probe_run,
+    input  var logic         probe_stop,
+    output var logic [2:0]   probe_state,
+    output var logic [255:0] probe_words,
     // --- the disk pack side's port ------------------------------------------
     input  var logic [31:0]  p_awaddr,
     input  var logic [3:0]   p_awlen,
@@ -172,6 +177,7 @@ module quux15_f2sdram_harness (
       .h2f_reset(h2f_reset), .gp_open(gp_open), .gp_half(gp_half),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
       .gp_in(gp_in), .live(live), .may_start(may_start),
+      .probe_run(probe_run), .probe_stop(probe_stop), .probe_state(probe_state), .probe_words(probe_words),
       .p_awaddr(p_awaddr), .p_awlen(p_awlen), .p_awsize(p_awsize),
       .p_awburst(p_awburst), .p_awvalid(p_awvalid), .p_awready(p_awready),
       .p_wdata(p_wdata), .p_wstrb(p_wstrb), .p_wlast(p_wlast),

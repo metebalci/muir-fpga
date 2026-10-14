@@ -107,6 +107,27 @@
 //                 into the pixel domain, so a read in the next few clocks may
 //                 still see it.  Every other write is dropped
 //
+//   page 3, +0xC0: **THE MEMORY PORT'S LATENCY PROBE**
+//   (`quux15_mem_probe.sv`), on a board whose port has one (`probe_fitted`,
+//   the DE25-Nano's); on any other every word of the page reads `UNMAPPED`
+//   and a write there is dropped.  Each latency is in clocks of the
+//   machine's clock, from the bridge taking the machine's address to its
+//   last read beat or its write response.
+//     48 PROBE    a write of `PROBE_RUN_KEY` clears every figure and starts
+//                 the probe, one of `PROBE_STOP_KEY` stops it, each a clock's
+//                 pulse; every other write is dropped.  Read as
+//                 `{PROBE_MARK, 13'd0, lost, saturated, running}`.  **READ
+//                 THE FIGURES STOPPED**: while it runs they move, and a sum
+//                 read beside a count may be a clock apart
+//     49 RD_N     the reads timed: line fills, or each burst of a split one
+//     50 RD_SUM   their latencies' sum, <31:0>
+//     51 RD_SUMH  <47:32> of it in <15:0>
+//     52 RD_MAX   the longest, <19:0>
+//     53 WR_N     the writes timed, each burst of a split word one
+//     54 WR_SUM   their latencies' sum, <31:0>
+//     55 WR_SUMH  <47:32> of it in <15:0>
+//     56 WR_MAX   the longest, <19:0>
+//
 // **A READOUT WORD IS THE MACHINE HALTED**: the core reads its memories on
 // their write ports only while halted, so a word read while it runs is
 // whatever the port last read.  The word is captured `RO_CLOCKS` clocks after
@@ -156,6 +177,11 @@ module quux15_face #(
     // key nor what the word reads back.
     parameter logic [15:0] DISP_ERR_MARK   = 16'h4445,
     parameter logic [31:0] DISP_CLEAR_KEY  = 32'h434C_5244,
+    // **AND WORD 48**, the latency probe's: the marker "PB", and the keys
+    // "PRUN" and "STOP", on the same rule.
+    parameter logic [15:0] PROBE_MARK      = 16'h5042,
+    parameter logic [31:0] PROBE_RUN_KEY   = 32'h5052_554E,
+    parameter logic [31:0] PROBE_STOP_KEY  = 32'h5354_4F50,
     parameter int unsigned ID_W       = 16,
     parameter int unsigned LEN_W      = 8
 ) (
@@ -228,7 +254,15 @@ module quux15_face #(
     input  var logic        rd_error,
     output var logic        err_clear,
     // --- The activity lamp, word 35: steady rather than blinking.
-    output var logic        steady_lamps
+    output var logic        steady_lamps,
+    // --- The memory port's latency probe, page 3: whether there is one;
+    // --- its state and its eight words (49 to 56 in order); RUN and STOP,
+    // --- pulses.
+    input  var logic        probe_fitted,
+    input  var logic [2:0]  probe_state,
+    input  var logic [7:0][31:0] probe_words,
+    output var logic        probe_run,
+    output var logic        probe_stop
 );
 
   localparam int unsigned RO_CLOCKS = 6;
@@ -320,10 +354,14 @@ module quux15_face #(
       sleep_secs   <= 15'd0;
       wake         <= 1'b0;
       err_clear    <= 1'b0;
+      probe_run    <= 1'b0;
+      probe_stop   <= 1'b0;
     end else begin
       sleep_set <= 1'b0;
       wake      <= 1'b0;
       err_clear <= 1'b0;
+      probe_run  <= wr && w_word == 10'd48 && probe_fitted && w_full == PROBE_RUN_KEY;
+      probe_stop <= wr && w_word == 10'd48 && probe_fitted && w_full == PROBE_STOP_KEY;
       if (wr && w_word == 10'd33) begin
         if (w_full == TV_SIMPLE_KEY)      tv_lispm <= 1'b0;
         else if (w_full == TV_LISPM_KEY)  tv_lispm <= 1'b1;
@@ -463,6 +501,9 @@ module quux15_face #(
         10'd40: rd_data = PERIOD;
         10'd41: rd_data = rtc_start;
         10'd42: rd_data = disp_fitted ? {DISP_ERR_MARK, 14'd0, rd_error, underrun} : UNMAPPED;
+        10'd48: rd_data = probe_fitted ? {PROBE_MARK, 13'd0, probe_state} : UNMAPPED;
+        10'd49, 10'd50, 10'd51, 10'd52, 10'd53, 10'd54, 10'd55, 10'd56:
+                rd_data = probe_fitted ? probe_words[r_word[2:0] - 3'd1] : UNMAPPED;
         default: rd_data = UNMAPPED;
       endcase
     end

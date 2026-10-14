@@ -36,7 +36,12 @@
 //     display's two sticky bits read as the display gives them and cleared
 //     by one pulse at the key alone.  A key with a strobe off, or another
 //     value, changes nothing; and with no display output 36 and 42 read
-//     UNMAPPED.
+//     UNMAPPED;
+//   - page 3, the memory port's latency probe: word 48 the marker and the
+//     probe's state, 49 to 56 its eight words each at its own place, RUN's
+//     and STOP's keys each one pulse and nothing else, a key with a strobe
+//     off or at another word nothing; and with no probe every word of the
+//     page UNMAPPED and no key a pulse.
 //
 // It prints `ok:` and exits 0, or names each failure and exits 1.
 
@@ -91,6 +96,10 @@ unsigned last_eadr = 0, last_spy_word = 0;
 // The display output behind words 34, 36 and 42: the pulses counted, the
 // setting it holds as `cadr_display_out.sv` holds it, and its answers.
 long sleep_sets = 0, wakes = 0, clears = 0;
+// The latency probe behind page 3: its words a function of their place,
+// moving every clock, and its two pulses counted.
+long probe_runs = 0, probe_stops = 0;
+uint32_t probe_model(unsigned k) { return 0x9B000000u + 0x01010101u * k + static_cast<uint32_t>(ticks); }
 unsigned last_secs = 0, held_secs = 300;
 
 uint64_t ro_model(unsigned sel, unsigned addr) {
@@ -114,6 +123,7 @@ void Step() {
                                                                  : std::make_pair(0u, 0u);
   d->rm_word = ro_model(head.first, head.second);
   d->sleep_q = held_secs;
+  for (unsigned k = 0; k < 8; ++k) d->probe_words[k] = probe_model(k);
   d->clk = 0;
   d->eval();
   d->clk = 1;
@@ -144,6 +154,8 @@ void Step() {
   }
   if (d->wake) ++wakes;
   if (d->err_clear) ++clears;
+  if (d->probe_run) ++probe_runs;
+  if (d->probe_stop) ++probe_stops;
   if (d->spy_we) {
     ++spy_writes;
     last_eadr = d->spy_eadr;
@@ -222,6 +234,7 @@ int main(int argc, char **argv) {
   d = new Vquux15_face;
   d->build = kBuild;
   d->disp_fitted = 1;
+  d->probe_fitted = 0;
   d->asleep = 0;
   d->underrun = 0;
   d->rd_error = 0;
@@ -491,6 +504,47 @@ int main(int argc, char **argv) {
     d->disp_fitted = 1;
   }
 
+  // ---- page 3: the memory port's latency probe
+  {
+    constexpr uint32_t kRun = 0x5052554Eu, kStop = 0x53544F50u, kPbMark = 0x5042u << 16;
+    d->probe_fitted = 0;
+    d->probe_state = 5;
+    for (unsigned w = 48; w <= 56; ++w) Want("page 3 with no probe, word " + std::to_string(w), Read(w), kUnmapped);
+    Write(48, kRun);
+    Write(48, kStop);
+    Want("RUN and STOP with no probe: no pulse", probe_runs + probe_stops, 0);
+    d->probe_fitted = 1;
+    Want("47 beside the probe", Read(47), kUnmapped);
+    Want("57 beside the probe", Read(57), kUnmapped);
+    Want("48 with the probe lost and running", Read(48), kPbMark | 5u);
+    d->probe_state = 2;
+    Want("48 with the probe saturated", Read(48), kPbMark | 2u);
+    // Each word read is the probe's at the clock the face sampled it; the
+    // model moves a step a clock, so the word must be its own place's
+    // within the read's few clocks.
+    for (unsigned w = 49; w <= 56; ++w) {
+      const long before = ticks;
+      const uint32_t got = Read(w);
+      const uint32_t base = 0x9B000000u + 0x01010101u * (w - 49);
+      const bool ok = got - base >= static_cast<uint32_t>(before) && got - base <= static_cast<uint32_t>(ticks);
+      Want("word " + std::to_string(w) + " is the probe's word " + std::to_string(w - 49), ok, 1);
+    }
+    Write(48, kRun, 0x7u);
+    Write(48, kRun ^ 0x100u);
+    Write(48, kPbMark | 2u);
+    Write(49, kRun);
+    Write(47, kStop);
+    Want("a key with a strobe off, another value, the read-back or another word: no pulse",
+         probe_runs + probe_stops, 0);
+    Write(48, kRun);
+    Want("RUN, one pulse", probe_runs, 1);
+    Want("RUN is not STOP", probe_stops, 0);
+    Write(48, kStop);
+    Want("STOP, one pulse", probe_stops, 1);
+    Want("STOP is not RUN", probe_runs, 1);
+    d->probe_state = 0;
+  }
+
   d->final();
   delete d;
   if (bad) {
@@ -498,6 +552,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("ok: quux15_face, %ld checks: its words, the reset, the latches, the readout's echo, "
-              "the diagnostic registers, the bitstream's words, and words 33 to 36 and 42\n", checks);
+              "the diagnostic registers, the bitstream's words, words 33 to 36 and 42, and the probe's page\n", checks);
   return 0;
 }

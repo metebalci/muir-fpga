@@ -107,6 +107,41 @@
 // valid cannot be withdrawn.  `idle` is what the gate waits for: nothing
 // granted, and nothing outstanding in either direction.
 //
+// **THREE PARAMETERS, AND THEIR DEFAULTS ARE ALL OF THE ABOVE.**  The CADR
+// and QUUX revisions 13 and 14 build this module with its defaults, and
+// everything said so far is what they get.  QUUX revision 15
+// (`quux15_f2sdram_port.sv`) sets the three, because two of the premises
+// above are false for its master: it posts up to sixteen word writes with
+// one AXI ID and fills lines of five beats, so the machine's cycles are no
+// longer single beats one at a time; and it has no memory timeout, so the
+// hold no longer protects a bounded wait.
+//
+//   `M_WRITES`     the machine's writes in flight, port 0 alone: a write of
+//                  the machine's is granted while fewer than this many await
+//                  their responses.  1 is the rule above.  The other ports
+//                  keep one write in flight whatever it is.  The machine's
+//                  writes all carry ID 0, so the bridge answers them in
+//                  order and each B is routed by its ID as before; the share
+//                  counts them.
+//   `HOLD_WRITES`  whether the machine's writes raise the hold, its write
+//                  asking, being presented and awaiting its response, as
+//                  well as its reads.  1 is the rule above.  0 holds the
+//                  others only for the machine's reads: a posted write stalls
+//                  nothing, so holding the others for it buys the machine
+//                  nothing and, with writes in flight back to back, would
+//                  grant the others nothing at all.
+//   `HOLD_BOUND`   how long another master may be kept waiting, in clocks: 0,
+//                  the rule above, is no bound.  Otherwise the clocks are
+//                  counted in which another master asks for what it may be
+//                  granted (a read within its beats, a write with none in
+//                  flight) and is not granted, the gate's `hold` aside; at
+//                  the bound the machine yields: it is granted nothing new,
+//                  on either channel, until another master has been.  Then
+//                  the count starts again.  So no other master waits more
+//                  than the bound plus what is already granted, whatever the
+//                  machine asks, and the machine waits at most one of the
+//                  others' transactions for every bound's clocks.
+//
 // There is no muir reference for any of this, as there is none for the AXI
 // adapter.  `tb/cadr_f2sdram_tb.cpp` holds it: the machine's boot PROM through
 // it against a model of the bridge, the rules above on every transaction, what
@@ -121,7 +156,13 @@
 module cadr_f2sdram_share #(
     // The masters.  Port 0 is the machine and is first; the port number is
     // the transaction ID, so there can be at most thirty-two.
-    parameter int unsigned N = 3
+    parameter int unsigned N = 3,
+    // The machine's writes in flight, whether they raise the hold, and how
+    // long the hold may keep another master waiting (0: no bound).  See the
+    // header; the defaults are the CADR's.
+    parameter int unsigned M_WRITES   = 1,
+    parameter bit          HOLD_WRITES = 1'b1,
+    parameter int unsigned HOLD_BOUND = 0
 ) (
     input  var logic clk,
     input  var logic rst,
@@ -232,11 +273,47 @@ module cadr_f2sdram_share #(
   // Measured without the `w_on` term: over BUSY, 116 reads of the other
   // masters were granted in that one tick.  With it the hold is what the
   // header says, from the tick the machine asks to the tick its answer is back.
-  logic          machine_busy;
+  //
+  // **`HOLD_WRITES` CLEAR, THE MACHINE'S READS ALONE HOLD THE OTHERS**, and
+  // **AT `HOLD_BOUND` THE MACHINE YIELDS** (`yield`): only the others are
+  // eligible until one of them is granted.
+  logic          machine_busy, holding, yield;
   logic [N-1:0]  eligible;
   assign machine_busy = s_arvalid[0] || s_awvalid[0] ||
                         (w_on && (w_who == '0)) || rd_out[0] || wr_out[0];
-  assign eligible = machine_busy ? {{(N-1){1'b0}}, 1'b1} : {N{1'b1}};
+  assign holding  = HOLD_WRITES ? machine_busy : (s_arvalid[0] || rd_out[0]);
+  assign eligible = yield ? {{(N-1){1'b1}}, 1'b0}
+                  : holding ? {{(N-1){1'b0}}, 1'b1} : {N{1'b1}};
+
+  // ------------------------------------------------------------ the bound
+  //
+  // `other_waits`: another master asks for something it may be granted (a
+  // read within its beats, a write with none in flight) and no grant goes
+  // to any of them this clock.  `wait_n` counts those clocks while the gate
+  // lets grants through, and starts again at a grant to another master or
+  // when none of them asks.  With `HOLD_BOUND` 0 nothing of this is built.
+  generate
+    if (HOLD_BOUND == 0) begin : g_unbounded
+      assign yield = 1'b0;
+    end else begin : g_bounded
+      localparam int unsigned BW = $clog2(HOLD_BOUND + 1);
+      logic          other_waits, other_granted;
+      logic [BW-1:0] wait_n;
+      always_comb begin
+        other_waits = 1'b0;
+        for (int i = 1; i < N; i++) begin
+          if ((s_arvalid[i] && ar_fits[i]) || (s_awvalid[i] && !wr_full[i])) other_waits = 1'b1;
+        end
+      end
+      assign other_granted = !hold && ((!ar_on && (ar_can != '0) && (first(ar_can) != '0)) ||
+                                       (!w_on && (aw_can != '0) && (first(aw_can) != '0)));
+      always_ff @(posedge clk) begin
+        if (rst || !other_waits || other_granted) wait_n <= '0;
+        else if (!hold && (wait_n != BW'(HOLD_BOUND))) wait_n <= wait_n + BW'(1);
+      end
+      assign yield = (wait_n == BW'(HOLD_BOUND));
+    end
+  endgenerate
 
   // --------------------------------------------------------------- reads
   //
@@ -277,8 +354,21 @@ module cadr_f2sdram_share #(
   logic          aw_done;      // its address has been taken
   logic          w_done;       // its last data beat has been taken
   logic [N-1:0]  wr_out;       // a write of this master's awaits its response
+  logic [N-1:0]  wr_full;      // as many as it may have do
   logic [N-1:0]  aw_can;
-  assign aw_can = (s_awvalid & ~wr_out) & eligible;
+  assign aw_can = (s_awvalid & ~wr_full) & eligible;
+
+  // Each master's writes awaiting their responses: one at most, and the
+  // machine's `M_WRITES`.  A response may come in the clock a later write of
+  // the same master is let go, so the count takes both.
+  localparam int unsigned WN = $clog2(M_WRITES + 1);
+  logic [N-1:0][WN-1:0] wr_n;
+  always_comb begin
+    for (int i = 0; i < N; i++) begin
+      wr_out[i]  = (wr_n[i] != '0);
+      wr_full[i] = (wr_n[i] == ((i == 0) ? WN'(M_WRITES) : WN'(1)));
+    end
+  end
 
   assign m_awvalid  = w_on && !aw_done;
   assign m_awid     = 5'(w_who);
@@ -302,6 +392,18 @@ module cadr_f2sdram_share #(
   logic aw_take, w_take;
   assign aw_take = m_awvalid && m_awready;
   assign w_take  = m_wvalid && m_wready && m_wlast;
+
+  // The write let go: its address and its last data beat both taken.  It
+  // is then a write in flight, and the next write may be granted.
+  logic w_let_go;
+  always_comb begin
+    w_let_go = 1'b0;
+    if (w_on) begin
+        if ((aw_done || aw_take) && (w_done || w_take)) begin
+          w_let_go = 1'b1;
+        end
+    end
+  end
 
   // -------------------------------------------------- the masters' side
   logic [N-1:0] b_mine, r_mine;
@@ -334,7 +436,7 @@ module cadr_f2sdram_share #(
       w_who   <= '0;
       aw_done <= 1'b0;
       w_done  <= 1'b0;
-      wr_out  <= '0;
+      wr_n    <= '0;
     end else begin
       // The read address: granted, presented, taken.
       if (!ar_on) begin
@@ -358,10 +460,7 @@ module cadr_f2sdram_share #(
       end else begin
         if (aw_take) aw_done <= 1'b1;
         if (w_take)  w_done  <= 1'b1;
-        if ((aw_done || aw_take) && (w_done || w_take)) begin
-          w_on          <= 1'b0;
-          wr_out[w_who] <= 1'b1;
-        end
+        if (w_let_go) w_on <= 1'b0;
       end
 
       // The reads' beats: the burst's length added when its address is
@@ -375,11 +474,14 @@ module cadr_f2sdram_share #(
                        - ((m_rvalid && m_rready && r_mine[i]) ? 5'd1 : 5'd0);
       end
 
-      // The write answers.  A response cannot arrive in the tick its
-      // transaction was taken, so this never meets the setting above for the
-      // same master.
+      // The writes in flight: one more when a write is let go, one fewer at
+      // each response routed to the master.  A response cannot arrive in the
+      // tick its own transaction was let go, but with several in flight it
+      // can arrive then for an earlier one.
       for (int i = 0; i < N; i++) begin
-        if (m_bvalid && m_bready && b_mine[i]) wr_out[i] <= 1'b0;
+        wr_n[i] <= wr_n[i]
+                   + ((w_let_go && (w_who == IW'(i))) ? WN'(1) : WN'(0))
+                   - ((m_bvalid && m_bready && b_mine[i]) ? WN'(1) : WN'(0));
       end
     end
   end

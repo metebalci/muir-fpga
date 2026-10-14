@@ -26,12 +26,32 @@
 //                          `h2f_gp_out[0]`, and the warm-reset handshake.
 //   `cadr_mem_count.sv`    the tally, at the bridge's own handshakes carrying
 //                          the machine's ID, on `h2f_gp_in` by halves.
+//   `quux15_mem_probe.sv`  the latency probe, at the same handshakes, read
+//                          on the console face's page 3.
 //
-// **ONE WRITE IN FLIGHT ON PORT 0.**  The share grants a master its next
-// write once the last has its response (`cadr_f2sdram_share.sv`'s header),
-// so the master's posted writes go to the bridge one at a time; their IDs
-// are the share's 0, in order, and the master's one write ID answers them in
-// order.  Whether port 0 should carry more is MP8 step 3's.
+// **THE MACHINE'S WRITES ARE POSTED THROUGH THE SHARE** (`M_WRITES`, the
+// master's sixteen): the share grants port 0 its next write while fewer than
+// sixteen await their responses, one write presented at a time, so their
+// order on the bridge is the master's.  They all carry the share's ID 0, so
+// the bridge answers them in order, and each B is routed to port 0 by its
+// ID, as the master's one write ID expects.  The pack side and the display
+// keep one burst in flight each, as on the CADR.  With one write in flight
+// the machine's write occupancy is the bridge's whole AW-to-B: measured in
+// `tb/quux15_f2sdram_tb.cpp`, 14 clocks a write back to back against 3.0
+// posted (the bridge model's, B 2 to 21 clocks after the last beat); muir
+// priced the one write at +7 to +8% of the twelve on this board.
+//
+// **THE SHARE'S HOLD IS THE MACHINE'S READS', AND BOUNDED** (`HOLD_WRITES`
+// clear, `HOLD_BOUND`): the CADR's hold, raised while any transaction of the
+// machine's is asking or outstanding, is what bounded the CADR's memory
+// cycle under its NXM timer; revision 15 has no memory timeout, and with its
+// writes posted back to back the hold never fell, so the pack side and the
+// display were granted nothing (measured: 0 and 1 bursts in 42,000 clocks).
+// Here a line fill alone holds the others, since the core waits for it and
+// for no posted write, and at `HOLD_BOUND` clocks of another master waiting
+// the machine yields one grant.  Eight clocks keep a rotated band of the
+// display within its budget under fills back to back (16 did not: 1,457
+// clocks for 64 reads against 1,231).
 //
 // **THE MACHINE'S RESET IS THE CORE'S OWN, AS ON THE OTHER BOARDS.**  On the
 // CADR the adapter is this module's and the gate resets it only once the
@@ -70,7 +90,14 @@
 
 `default_nettype none
 
-module quux15_f2sdram_port (
+module quux15_f2sdram_port #(
+    // The machine's writes in flight on the share's port 0: the master's
+    // in-flight list (`quux15_axi_master.sv`, sixteen).
+    parameter int unsigned M_WRITES   = 16,
+    // How long the share's hold may keep the pack side or the display
+    // waiting, in clocks (`cadr_f2sdram_share.sv`'s `HOLD_BOUND`).
+    parameter int unsigned HOLD_BOUND = 8
+) (
     input  var logic clk,
     // The fabric's reset: the tally's.
     input  var logic rst,
@@ -115,6 +142,13 @@ module quux15_f2sdram_port (
     output var logic        live,
     // The port has been live at least once since the fabric's reset.
     output var logic        may_start,
+    // The latency probe (`quux15_mem_probe.sv`), read on the console face's
+    // words 48 to 56: RUN and STOP, pulses; its state, {lost, saturated,
+    // running}; and its eight words, the face's 49 to 56 in order.
+    input  var logic        probe_run,
+    input  var logic        probe_stop,
+    output var logic [2:0]  probe_state,
+    output var logic [7:0][31:0] probe_words,
 
     // --- the disk pack side's port, AXI3 at 64 bits -----------------------
     input  var logic [31:0] p_awaddr,
@@ -317,7 +351,9 @@ module quux15_f2sdram_port (
     h_rready[DISPLAY]  = d_rready;
   end
 
-  cadr_f2sdram_share #(.N(3)) u_share (
+  cadr_f2sdram_share #(
+      .N(3), .M_WRITES(M_WRITES), .HOLD_WRITES(1'b0), .HOLD_BOUND(HOLD_BOUND)
+  ) u_share (
       .clk(clk), .rst(share_rst), .hold(gate_hold), .idle(idle),
       .s_awaddr(h_awaddr), .s_awlen(h_awlen), .s_awsize(h_awsize), .s_awburst(h_awburst),
       .s_awvalid(h_awvalid), .s_awready(h_awready),
@@ -398,6 +434,35 @@ module quux15_f2sdram_port (
       .rvalid(count_rvalid), .rready(count_rready), .rlast(count_rlast),
       .gpio(tally)
   );
+
+  // --------------------------------------------------- the latency probe
+  //
+  // The same handshakes as the tally's, each copied on one edge, so that
+  // an address and its answer are both a clock late and the latency is the
+  // bridge's.  Its queues are forgotten with the share's transactions.
+  logic pr_ar, pr_r, pr_aw, pr_b;
+  always_ff @(posedge clk) begin
+    pr_ar <= f2s_arvalid && f2s_arready && f2s_arid == 5'(MACHINE);
+    pr_r  <= f2s_rvalid && f2s_rready && f2s_rlast && f2s_rid == 5'(MACHINE);
+    pr_aw <= f2s_awvalid && f2s_awready && f2s_awid == 5'(MACHINE);
+    pr_b  <= f2s_bvalid && f2s_bready && f2s_bid == 5'(MACHINE);
+  end
+
+  logic        pr_running, pr_lost, pr_sat;
+  logic [31:0] pr_rd_count, pr_wr_count;
+  logic [47:0] pr_rd_sum, pr_wr_sum;
+  logic [19:0] pr_rd_max, pr_wr_max;
+  quux15_mem_probe #(.T_W(20), .RD_DEPTH(4), .WR_DEPTH(M_WRITES)) u_probe (
+      .clk(clk), .rst(rst), .port_rst(share_rst),
+      .run(probe_run), .stop(probe_stop),
+      .ar_take(pr_ar), .r_last(pr_r), .aw_take(pr_aw), .b_take(pr_b),
+      .running(pr_running), .lost(pr_lost), .saturated(pr_sat),
+      .rd_count(pr_rd_count), .rd_sum(pr_rd_sum), .rd_max(pr_rd_max),
+      .wr_count(pr_wr_count), .wr_sum(pr_wr_sum), .wr_max(pr_wr_max)
+  );
+  assign probe_state = {pr_lost, pr_sat, pr_running};
+  assign probe_words = {{12'd0, pr_wr_max}, {16'd0, pr_wr_sum[47:32]}, pr_wr_sum[31:0], pr_wr_count,
+                        {12'd0, pr_rd_max}, {16'd0, pr_rd_sum[47:32]}, pr_rd_sum[31:0], pr_rd_count};
 
   // Which half software reads, synchronized in as the gate's three are.
   logic [2:0] half_s;
