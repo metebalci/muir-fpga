@@ -4,22 +4,23 @@
 # Build a bitstream of QUUX revision 15 for the Arty Z7-20
 # (`boards/arty-z7-20/quux15_arty.sv`).
 #
-#     make build/quux15_transfer_prom.hex
+#     make build/boot_prom.quux15.hex
 #     PERIOD_NS=48 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
 #
 # Run from the repository root.  `PERIOD_NS` is the machine's period, the
 # MMCM's divide (48 by default, where MP8's trial fit closed); `PROM` the boot
-# PROM's image, a 64-bit word a line (`golden/src/quux15.rs --prom`); `OUTDIR`
-# where it all goes (`build/bitstream-arty-quux15`).  The memories are placed
-# as `quux15_ram.xdc` says, and asked after synthesis; the report says the
-# period the fit met and the area, and the bitstream carries the tree's build
-# stamp.  It is the Kria KR260's flow (`boards/kria-kr260/vivado/
-# quux15_bitstream.tcl`) on this part, with the board's pins, the display's
-# clocks as `bitstream.tcl` asserts them, a floor under the machine's size,
-# and `rams_enable_check.tcl` last.
+# PROM's image, a 64-bit word a line, PROM 2002 (`build/boot_prom.quux15.hex`)
+# by default and a test program (`golden/src/quux15.rs --prom`) only when
+# named; `OUTDIR` where it all goes (`build/bitstream-arty-quux15`).  The
+# memories are placed as `quux15_ram.xdc` says, and asked after synthesis;
+# the report says the period the fit met and the area, and the bitstream
+# carries the tree's build stamp.  It is the Kria KR260's flow
+# (`boards/kria-kr260/vivado/quux15_bitstream.tcl`) on this part, with the
+# board's pins, the display's clocks as `bitstream.tcl` asserts them, a floor
+# under the machine's size, and `rams_enable_check.tcl` last.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xc7z020clg400-1"}]
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 48}]
-set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/quux15_transfer_prom.hex"}]
+set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
 set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-arty-quux15"}]
 if {[info exists ::env(VIVADO_THREADS)]} { set_param general.maxThreads $::env(VIVADO_THREADS) }
 # The core's `period` is seven bits of 0.5 ns, up to 63.5 ns, and the MMCM
@@ -117,7 +118,10 @@ if {$md_ports < 4} {
     exit 1
 }
 
-opt_design
+# opt_design's phases without its BRAM power optimization: with PROM 2002 as
+# the boot PROM, Vivado 2026.1 segfaults in that step (libxv_pwropt, in the
+# cleanup after an HACOOException).
+opt_design -retarget -propconst -sweep -bufg_opt -shift_register_opt
 place_design
 phys_opt_design
 route_design

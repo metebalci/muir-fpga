@@ -4,18 +4,19 @@
 # Build a bitstream of QUUX revision 15 for the Kria KR260
 # (`boards/kria-kr260/quux15_kr260.sv`).
 #
-#     make build/quux15_transfer_prom.hex
+#     make build/boot_prom.quux15.hex
 #     PERIOD_NS=13 vivado -mode batch -source boards/kria-kr260/vivado/quux15_bitstream.tcl
 #
 # Run from the repository root.  `PERIOD_NS` is the machine's period, the
 # MMCM's divide (13 by default); `PROM` the boot PROM's image, a 64-bit word
-# a line (`golden/src/quux15.rs --prom`); `OUTDIR` where it all goes
-# (`build/bitstream-kr260-quux15`).  The memories are placed as
+# a line, PROM 2002 (`build/boot_prom.quux15.hex`) by default and a test
+# program (`golden/src/quux15.rs --prom`) only when named; `OUTDIR` where
+# it all goes (`build/bitstream-kr260-quux15`).  The memories are placed as
 # `quux15_ram.xdc` says; the report says the period the fit met and the
 # area, and the bitstream carries the tree's build stamp.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xck26-sfvc784-2LV-c"}]
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 13}]
-set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/quux15_transfer_prom.hex"}]
+set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
 set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-kr260-quux15"}]
 if {[info exists ::env(VIVADO_THREADS)]} { set_param general.maxThreads $::env(VIVADO_THREADS) }
 if {![string is integer -strict $period] || $period < 8 || $period > 40} {

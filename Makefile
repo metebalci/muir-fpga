@@ -1288,8 +1288,8 @@ $(BUILD)/boot_prom.quux14.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.to
 	mv $@.tmp $@
 
 # **REVISION 15 BOOTS FROM PROM 2002 ASSEMBLED FOR IT** (contract G3
-# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which the
-# Kria's revision 15 flow carries (`quux15_bitstream.tcl`'s `PROM`).  It comes
+# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which both
+# revision 15 flows carry by default (`quux15_bitstream.tcl`'s `PROM`).  It comes
 # from muir-sys's revision-15 build of PROM 2002, its `promh.mcr` kept in the
 # gitignored `ref/system-2002-rev15/` and held to its digest, read by muir's
 # own reader at revision 15's geometry (`golden/src/prom.rs`); the image is
