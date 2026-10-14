@@ -211,6 +211,55 @@ pub fn main_loop() -> Vec<(String, Case)> {
         v.extend(planted_pairs(d).into_iter().map(|(n, p)| (n, parked(&p))));
     }
     v.extend(d_timing().into_iter().map(|(n, p)| (n, parked(&p))));
+    for d in [false, true] {
+        v.extend(byte_steps(d).into_iter().map(|(n, p)| (n, parked(&p))));
+    }
+    v
+}
+
+/// **Returns that fuse in LC byte mode** (INTERRUPT-CONTROL `<3>`), D as
+/// `d` says, their runs' names ending `-d` when on.  Opcode 3 is the
+/// program's first byte, M 31's `<15:0>` at LC's byte 1; `<23:8>` and
+/// `<31:16>`, at bytes 2 and 3, hold opcodes 1 and 7; the next word is all
+/// 7s.
+///
+///   byte-step-popj   opcode 3's handler a dispatch with `IR<24>` whose
+///                    entry has R and P, so that it falls through and its
+///                    POPJ returns at the microcycle's end: the step leaves
+///                    LC at byte 2, no fetch due, and the return fuses on
+///                    byte 3, opcode 7, through EX's read port of the MACRO
+///                    DISPATCH MEMORY on LC as the step leaves it.  In
+///                    halfword mode no such return fuses: a step inside the
+///                    word leaves a fetch due, and one past it fetches into
+///                    `MD`, which nothing moves to M 31.
+///   byte-mode-clear  opcode 3's handler clears byte mode right before its
+///                    return: RD plans the return while the write is in EX,
+///                    from the copies EX leaves, halfword mode, where it
+///                    fuses on `<15:0>`, opcode 3 again, whose return fuses
+///                    on opcode 7.
+fn byte_steps(d: bool) -> Vec<(String, Preset)> {
+    // An entry of dispatch memory beyond the opcode table, R and P.
+    const FALL: u64 = 0o2400;
+    let program = [hw(3, 0, 0), hw(7, 0, 2), hw(7, 0, 0), hw(7, 0, 0)];
+    let on = if d { "-d" } else { "" };
+    // Byte mode from the start: A 53, which the machine's word 4 writes to
+    // INTERRUPT-CONTROL.
+    let byte_mode = |p: &mut Preset| {
+        for e in p.amem.iter_mut().filter(|e| e.0 == 0o53) {
+            e.1 = 1 << 37;
+        }
+    };
+    let mut v = Vec::new();
+    // The handler's first word steps nothing: the microcycle after a fused
+    // return must not write LC (muir's `macro_dispatch`).
+    let mut p = ml_machine(d, &program, &[filler().raw()]);
+    byte_mode(&mut p);
+    put_at(&mut p, OP_3 + 1, DISPATCH | 1 << 24 | POPJ | FALL << 12);
+    p.dmem.push((FALL as usize, 1 << 16 | 1 << 15));
+    v.push((format!("byte-step-popj{on}"), p));
+    let mut p = ml_machine(d, &program, &[ALU | SETA | a_src(ZERO) | 2 << 19 | 0o37 << 14]);
+    byte_mode(&mut p);
+    v.push((format!("byte-mode-clear{on}"), p));
     v
 }
 

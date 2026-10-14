@@ -26,8 +26,10 @@
 //!   boardcache
 //!             a board's cache at its own size (`board_cache`): the valid
 //!             bits' group edges, two lines that differ in the set's top
-//!             bit alone, and the file device's completion sweeping it
-//!             under a loop of reads (`quux15_devices.rs`'s `sweep_reads`)
+//!             bit alone, the way each set used last against reads and
+//!             walks that overfill two sets (`recency`), and the file
+//!             device's completion sweeping it under a loop of reads
+//!             (`quux15_devices.rs`'s `sweep_reads`)
 //!
 //! `randmem` and `matrixmem` are `quux15_preset.rs`'s random programs and
 //! matrix with their memory starts.  Every run takes -RESET's sweep of the
@@ -975,6 +977,7 @@ pub fn redirect() -> Vec<(String, Preset)> {
 ///             sixteen edges, the top set's next the set 0
 ///   aliases   two lines half a way apart, which differ in the set's top
 ///             bit alone
+///   recency-N the way each set used last (`recency`), four sequences
 pub fn board_cache(cache_words: u32) -> Vec<(String, Preset)> {
     const BOARD_BASE: u64 = 0o200000;
     let sets = u64::from(cache_words) / 16;
@@ -1002,7 +1005,69 @@ pub fn board_cache(cache_words: u32) -> Vec<(String, Preset)> {
     pair(&mut p, BOARD_BASE + 8 * (sets - 1) + 5, BOARD_BASE + 8 * (sets / 2 - 1) + 5, 0o24);
     p.stop();
     v.push(("aliases".to_string(), p));
+    for seed in 1..=4 {
+        v.push((format!("recency-{seed}"), recency(way, seed)));
+    }
     v
+}
+
+/// **The way each set used last** (`recency` in `board_cache`): two sets,
+/// A and B, each with three data lines and one walk's page table's line, so
+/// that a set holds more lines than its two ways and every install evicts
+/// by the order its hits left, and the directory's line in a third set, C,
+/// of its own; the frames placed a whole number of ways apart so that each
+/// line's set is the same on every board.  A fixed sequence at random then reads a data line (a P
+/// lookup, a hit or a fill) or invalidates a walk's page in the TLB and
+/// looks it up again with `MAP(MD)`, which walks (T lookups of the
+/// directory's line and of the page table's, hits or fills): a hit reorders
+/// a set before a later fill in the same set evicts by that order, a P hit
+/// after a T hit and a T hit after a P hit at one set, and either at one set
+/// while the other's last lookup was at the other.  Four runs, each its own
+/// sequence (`seed`).
+fn recency(way: u64, seed: u64) -> Preset {
+    // Frames a way: a frame's second line is in set A at a whole number of
+    // ways from frame 128, and in set B one frame further on; the
+    // directory's first line, at frame 64, in set C.
+    let wayf = (way / 1024).max(2);
+    let frame = |b: u64, m: u64| 128 + wayf * m + b;
+    let dir: u64 = 64;
+    let pt = [frame(0, 0), frame(1, 0)];
+    let lines: Vec<u64> = (1..=3).flat_map(|m| [(frame(0, m) << 10) + 8, (frame(1, m) << 10) + 8]).collect();
+    // Page 10 of the first and of the second 1M words: each page table's
+    // entry in its second line.
+    let pages: [Word; 2] = [10 << 10, 10 << 10 | 1 << 20];
+    let word = |a: u64| (a.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20) & 0xff_ffff_ffff;
+    let mut p = run();
+    for (j, (&va, &t)) in pages.iter().zip(&pt).enumerate() {
+        p.main.push(((dir << 10) as usize + j, rw_entry(t)));
+        p.main.push((((t << 10) + ((va >> 10) & 0o1777)) as usize, rw_entry(3)));
+    }
+    for &a in &lines {
+        p.main.push((a as usize, word(a)));
+    }
+    p.write(dir, REGISTER_PAGE | 0o220);
+    let inv = p.k(2 << 32);
+    let va_k: Vec<u64> = pages.iter().map(|&va| p.k(va)).collect();
+    let mut x: u64 = 0x2545_f491_4f6c_dd1d ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for n in 0..120u64 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        let slot = 0o20 + n % 8;
+        match (x >> 32) % 10 {
+            k @ 0..=5 => {
+                p.read(PHYS | lines[k as usize], slot);
+            }
+            k => {
+                p.op(ALU | SETA | a_src(va_k[(k % 2) as usize]) | MD);
+                p.op(ALU | SETA | a_src(inv) | fd(0o23));
+                p.fill(1);
+                p.op(ALU | SETM | src(0o11) | m_dest(slot));
+            }
+        }
+    }
+    p.stop();
+    p
 }
 
 #[allow(dead_code)]

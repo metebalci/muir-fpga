@@ -371,7 +371,8 @@ QUUX15_PERIODS_redirect := 36 20
 # package and grade, until its own binding fit sets it.  A board's period
 # moves here and nowhere else.  `boardcache` is the board's cache at its own
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
-# that differ in the set's top bit alone, and the completion's sweep under
+# that differ in the set's top bit alone, the way each set used last under
+# reads and walks that overfill two sets, and the completion's sweep under
 # a loop of reads.
 QUUX15_MEMSIDE := memory ports walk window filedev bdisk bdmix matrixmem randmem storeret checkpoints mainsize boardcache
 QUUX15_BOARDS := kria de25 arty

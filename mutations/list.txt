@@ -29165,7 +29165,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 
 # **THE MACRO DISPATCH MEMORY'S READ PORTS** (`quux15_mdmem.sv`), each
 # address formed outside the process that uses its entry: D's port, RD's
-# and EX's port's entries, and the write.
+# and EX's port's entries, EX's and the redirect's addresses (the main
+# loop's runs in byte mode, where a return fuses on a step inside the
+# word), and the write.
 
 @mutation quux15-md-d-port-on-lc-stepped
 @check quux15_mainloop_quux
@@ -29195,6 +29197,30 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
   assign ex_e = hit(ex_a) ? ~ex_w : ex_w;
 @new
   assign ex_e = hit(ex_a) ? ex_w : ~ex_w;
+@end
+
+@mutation quux15-md-ex-port-on-lc-unstepped
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note EX's port reads on LC as the clock began, not as the word's own
+@note dispatch steps it: a POPJ after a dispatch with IR<24> in byte mode
+@note reads the entry of the byte the step passes.
+@old
+             ? md_ex_step[33:0] : lc;
+@new
+             ? lc : lc;
+@end
+
+@mutation quux15-md-rx-port-on-rd-copies
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The redirect's port reads on RD's copies, not the ones EX leaves: a
+@note return planned behind a word that clears byte mode reads the entry
+@note at the byte after LC, not the halfword.
+@old
+  assign md_rx_a = fused_index_on(mmem[5'o31], c_res.bm, c_res.lc);
+@new
+  assign md_rx_a = fused_index_on(mmem[5'o31], c.bm, c.lc);
 @end
 
 @mutation quux15-md-written-a-clock-late
@@ -30861,9 +30887,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # one each for a P hit, a T hit and an install, read only where a fill
 # picks its victim.  Held to `walk` on the Arty Z7-20's cache: of the checks
 # that build this file, it and `bdisk` alone notice the order read inverted,
-# and it catches the most of these.  The RAM's other faults are reached by no
-# trace yet: no hit changes a set's order before a fill evicts from that set,
-# and no two writes meet at one set in one clock.
+# and it catches the most of these.  The faults that need a hit to reorder a
+# set before a fill evicts from it, a P hit after a T hit at one set, or a
+# write while the other port's last lookup was at another set are held to
+# `boardcache` on the Arty's cache, whose `recency` run overfills two sets
+# with reads and walks.
 
 @mutation quux15-recency-bank0-writes-every-clock
 @check quux15_walk_quux_arty
@@ -30919,6 +30947,128 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
   assign rd = b0[ra] ^ b1[ra];
 @end
+
+@mutation quux15-recency-bank0-write-drops-bank1
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note A P hit's write leaves bank 1 out of its XOR: the set's bit read
+@note after it is the bit written XOR bank 1's.
+@old
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b1[wa0] ^ b2[wa0];
+@new
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b2[wa0];
+@end
+
+@mutation quux15-recency-bank0-write-drops-bank2
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note A P hit's write leaves bank 2 out of its XOR: the set's bit read
+@note after it is the bit written XOR bank 2's.
+@old
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b1[wa0] ^ b2[wa0];
+@new
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b1[wa0];
+@end
+
+@mutation quux15-recency-bank0-write-reads-b1-at-another-set
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note A P hit's write reads bank 1 at the T hit's set, not its own:
+@note the bit it writes is off wherever those two banks' bits differ.
+@old
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b1[wa0] ^ b2[wa0];
+@new
+  always_ff @(posedge clk) if (e0) b0[wa0] <= wd0 ^ b1[wa1] ^ b2[wa0];
+@end
+
+@mutation quux15-recency-bank1-write-drops-bank0
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note A T hit's write leaves bank 0 out of its XOR: the set's bit read
+@note after it is the bit written XOR bank 0's.
+@old
+  always_ff @(posedge clk) if (e1) b1[wa1] <= wd1 ^ b0[wa1] ^ b2[wa1];
+@new
+  always_ff @(posedge clk) if (e1) b1[wa1] <= wd1 ^ b2[wa1];
+@end
+
+@mutation quux15-recency-bank1-write-reads-b0-at-another-set
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note A T hit's write reads bank 0 at the P hit's set, not its own:
+@note the bit it writes is off wherever those two banks' bits differ.
+@old
+  always_ff @(posedge clk) if (e1) b1[wa1] <= wd1 ^ b0[wa1] ^ b2[wa1];
+@new
+  always_ff @(posedge clk) if (e1) b1[wa1] <= wd1 ^ b0[wa0] ^ b2[wa1];
+@end
+
+@mutation quux15-recency-bank2-write-drops-bank0
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note An install's write leaves bank 0 out of its XOR: the set's bit read
+@note after it is the bit written XOR bank 0's.
+@old
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b0[wa2] ^ b1[wa2];
+@new
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b1[wa2];
+@end
+
+@mutation quux15-recency-bank2-write-drops-bank1
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note An install's write leaves bank 1 out of its XOR: the set's bit read
+@note after it is the bit written XOR bank 1's.
+@old
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b0[wa2] ^ b1[wa2];
+@new
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b0[wa2];
+@end
+
+@mutation quux15-recency-bank2-write-reads-b1-at-another-set
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note An install's write reads bank 1 at the T hit's set, not its own:
+@note the bit it writes is off wherever those two banks' bits differ.
+@old
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b0[wa2] ^ b1[wa2];
+@new
+  always_ff @(posedge clk) if (e2) b2[wa2] <= wd2 ^ b0[wa2] ^ b1[wa1];
+@end
+
+@mutation quux15-recency-read-drops-bank0
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note The bit read leaves bank 0 out of the XOR, so what bank 0's
+@note writer wrote is read inverted wherever bank 0 holds a 1.
+@old
+  assign rd = b0[ra] ^ b1[ra] ^ b2[ra];
+@new
+  assign rd = b1[ra] ^ b2[ra];
+@end
+
+@mutation quux15-recency-read-drops-bank1
+@check quux15_boardcache_quux_arty
+@file rtl/machine/quux15_recency.sv
+@note The bit read leaves bank 1 out of the XOR, so what bank 1's
+@note writer wrote is read inverted wherever bank 1 holds a 1.
+@old
+  assign rd = b0[ra] ^ b1[ra] ^ b2[ra];
+@new
+  assign rd = b0[ra] ^ b2[ra];
+@end
+
+# NOT HERE, TWO WRITES TO ONE SET IN ONE CLOCK (the enables' order, an
+# install over a T hit over a P hit): no trace has two of the three writes
+# in one clock (`quux15_port.sv`).  An install is the last beat of a fill in
+# flight, and a P or T lookup is made only with no fill in flight, so none
+# is answered beside an install.  A P read is made at WB's grant and a T
+# read by a walk or a write-back: WB's own walk and write-back hold its
+# grant, and EX's `MAP(MD)` or map-bit dispatch is never the word right
+# after a start (A15b.2's rule), so P and T lookups do not meet either.
+# Measured over the traces of the core's checks on each board's cache,
+# `mainsize` and `videosize` aside: no clock answers a P and a T lookup
+# together, or either with an install.
 
 @mutation quux15-two-bubbles-store-reads-past-rds-plan
 @check quux15_transfer_quux_b2
