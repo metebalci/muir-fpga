@@ -32057,11 +32057,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # their own.  The core's testbench takes a write's address and its first beat
 # in one clock and cannot see the fault.
 #
-# NOT HERE, AN EQUIVALENT MUTANT: a first beat taken before its address and
-# offered again.  The narrowing never lets a beat go before its burst's
-# address, and the core's testbench takes the two together, so no pairing the
-# master is built into takes the beat first; the master's `hd_w_done` stands
-# for a port that would.
+# NOT HERE: a first beat taken before its address and offered again.  The
+# narrowing never lets a beat go before its burst's address, and the core's
+# testbench takes the two together, so neither can see it; the Arty Z7-20's
+# HP0 takes the beat first, and `quux15_axi3_quux` holds it below.
 
 @mutation quux15-axi-a-taken-address-offered-again
 @check quux15_axi_narrow128_quux
@@ -32074,6 +32073,176 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       m_awvalid = w_req && !hd_aw_done;
 @new
       m_awvalid = w_req;
+@end
+
+# ---------------------------------------------------------------------------
+# **REVISION 15 ON THE ARTY Z7-20** (MP8 step 6): the master on the board's
+# 64-bit HP0 through `rtl/plumbing/quux15_axi3.sv`, held by
+# `quux15_axi3_quux` against a port that takes a write's address first, its
+# beat first, or each at random; the top level
+# (`boards/arty-z7-20/quux15_arty.sv`), held by `quux15_arty`'s lint and its
+# elaboration checks; and the board's figures read at the instances, held by
+# `quux15_arty_param`.
+
+@mutation quux15-axi-a-taken-beat-offered-again
+@check quux15_axi3_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A write's first beat taken in a clock its address is not stays on the
+@note channel and is taken again: on a port that takes the data first, the
+@note next burst gets this burst's beat.
+@old
+      m_wvalid  = w_req && !hd_w_done;
+@new
+      m_wvalid  = w_req;
+@end
+
+@mutation quux15-axi3-read-length-of-a-line
+@check quux15_axi3_quux
+@file rtl/plumbing/quux15_axi3.sv
+@note A read burst shorter than a line asks the port for four beats more:
+@note the first burst of a line split at 4 KiB is given beats it never asked
+@note for.
+@old
+  assign m_arlen   = s_arlen[3:0];
+@new
+  assign m_arlen   = s_arlen[3:0] | 4'd4;
+@end
+
+@mutation quux15-axi3-write-size-of-four-bytes
+@check quux15_axi3_quux
+@file rtl/plumbing/quux15_axi3.sv
+@note The write size one short: every beat said to be four bytes.
+@old
+  assign m_awsize  = s_awsize[1:0];
+@new
+  assign m_awsize  = s_awsize[1:0] - 2'd1;
+@end
+
+@mutation quux15-arty-cache-of-64k
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The Arty's cache left at the core's 64K words: a part with 140 block
+@note RAM tiles cannot hold it (Q-MP6).
+@old
+  localparam int unsigned CACHE_WORDS = 4096;
+@new
+  localparam int unsigned CACHE_WORDS = 65536;
+@end
+
+@mutation quux15-arty-face-period-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The console face's word 40 left at the 10 ns tick: the programs on
+@note the processing system read a period the machine does not run at.
+@old
+      .ID_W(12), .LEN_W(4), .PERIOD(32'(2 * PERIOD_NS)), .MAIN_UNITS(MAIN_WORDS >> 16),
+@new
+      .ID_W(12), .LEN_W(4), .PERIOD(32'(2 * 10)), .MAIN_UNITS(MAIN_WORDS >> 16),
+@end
+
+@mutation quux15-arty-core-period-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The core told the 10 ns tick: word 25's time and the timers run
+@note several times fast at the board's period.
+@old
+      .period(7'(2 * PERIOD_NS)), .rtc_start(rtc_start),
+@new
+      .period(7'(2 * 10)), .rtc_start(rtc_start),
+@end
+
+@mutation quux15-arty-mmcm-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The MMCM left at 10 ns while everything else is told the period.
+@old
+      .CLKOUT0_DIVIDE_F(real'(PERIOD_NS)) // the period, in nanoseconds
+@new
+      .CLKOUT0_DIVIDE_F(real'(10)) // the period, in nanoseconds
+@end
+
+@mutation quux15-arty-second-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The display's second left at the 10 ns tick's 100,000,000 clocks: at
+@note 48 ns the monitor sleeps 4.8 times later than `--display-sleep` says.
+@old
+  localparam int unsigned SECOND_T = (1_000_000_000 + PERIOD_NS / 2) / PERIOD_NS;
+@new
+  localparam int unsigned SECOND_T = 100_000_000 + 0 * PERIOD_NS;
+@end
+
+@mutation quux15-arty-mouse-step-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The mouse's step left at 1,600 clocks of the 10 ns tick.
+@old
+  localparam int unsigned MOUSE_STEP_T = (16_000 + PERIOD_NS - 1) / PERIOD_NS;
+@new
+  localparam int unsigned MOUSE_STEP_T = (16_000 + 10 - 1) / 10 + 0 * PERIOD_NS;
+@end
+
+@mutation quux15-arty-disk-lamp-at-the-tick
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The disk lamp's stretch left at 2^22 clocks: 200 ms at 48 ns.
+@old
+  localparam int unsigned DISK_LIT_T = (41_943_040 + PERIOD_NS - 1) / PERIOD_NS;
+@new
+  localparam int unsigned DISK_LIT_T = 4_194_304 + 0 * PERIOD_NS;
+@end
+
+@mutation quux15-arty-board-name-one-character-wrong
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The Arty's revision 15 top names itself with one character wrong.
+@old
+  localparam logic [8*64-1:0] BOARD = "Arty Z7-20";
+@new
+  localparam logic [8*64-1:0] BOARD = "Arty Z7-21";
+@end
+
+@mutation quux15-arty-board-name-not-passed
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The Arty's revision 15 top gives its core no name: words 20-24 read 0.
+@old
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H), .BOARD_NAME(BOARD),
+@new
+      .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H),
+@end
+
+@mutation quux15-arty-display-picture-of-the-cadr
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The display output left at its default picture, the CADR's 768 by 963
+@note at 24 words a line, where the video controller is 1280 by 1024.
+@old
+      .PIC_W(VIDEO_W), .PIC_H(VIDEO_H), .WORDS_PER_LINE(VIDEO_W / 32),
+@new
+      .PIC_W(VIDEO_W), .PIC_H(VIDEO_H),
+@end
+
+@mutation quux15-arty-main-words-of-2m
+@check quux15_arty
+@file boards/arty-z7-20/quux15_arty.sv
+@note The Arty's main memory left at the traces' 2M words, short of its
+@note reservation's 32M: the top's elaboration check refuses it.
+@old
+  localparam int unsigned MAIN_WORDS = 32'h0200_0000;
+@new
+  localparam int unsigned MAIN_WORDS = 32'h0020_0000;
+@end
+
+@mutation quux15-arty-main-base-of-the-kria
+@check quux15_arty
+@file boards/arty-z7-20/quux15_arty.sv
+@note The Arty's top states the Kria's main memory base: the top's
+@note elaboration check refuses a base the DDR map does not give.
+@old
+  localparam logic [31:0] MAIN_BASE    = 32'h1200_0000;
+@new
+  localparam logic [31:0] MAIN_BASE    = 32'h5A00_0000;
 @end
 
 # ---------------------------------------------------------------------------

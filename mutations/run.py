@@ -730,6 +730,18 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
+    # And on the Arty Z7-20's 64-bit HP0 through the AXI3 shim, the port
+    # taking the address first, the beat first, or each ready its own
+    # (`tb/quux15_axi3_tb.cpp`).
+    "quux15_axi3_quux": {
+        "sources": ["rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux15_axi3.sv"],
+        "extra": ["tb/quux15_axi3_harness.sv"],
+        "top": "quux15_axi3_harness",
+        "tb": "tb/quux15_axi3_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": None,
+        "machine": "quux",
+    },
     # QUUX's block-disk on its own at revision 13 (`WORD_BITS` 40), against
     # muir's `BlockDisk`:
     # pages, the packed and the 4-byte transfers, the GPT fixture's 8-bit
@@ -2893,6 +2905,50 @@ CHECKS["quux15_kr260_param"] = {
     "machine": "quux",
 }
 
+# Revision 15's Arty Z7-20 top level, linted as `build/quux15_arty.pass`
+# lints it: its elaboration checks, the DDR map's bases and main memory's
+# size against the board's reservation, among them.
+CHECKS["quux15_arty"] = {
+    "kind": "lint",
+    "sources": ["boards/arty-z7-20/quux15_arty.sv", "rtl/plumbing/quux15_axi3.sv"],
+    "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv", "tb/cadr_ps7_stub.sv"],
+    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+              "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
+              "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
+              "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
+              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
+              "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/quux15_axi_master.sv",
+              "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_gp0_split.sv",
+              "rtl/plumbing/cadr_disk_pack.sv",
+              "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
+              "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
+              "rtl/plumbing/quux_fd_face.sv"] + DISPLAY + [
+              "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
+              "boards/arty-z7-20/cadr_ps7.sv"],
+    "top": "quux15_arty",
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
+# And its figures read at the instances (the Makefile's
+# `quux15_arty_param.pass`): the cache, main memory and the bases, the
+# video controller's size at the core, the face and the display, the raster,
+# the board name, the clock and the period, and every time in clocks at
+# each period.  Refusing is being caught.
+CHECKS["quux15_arty_param"] = {
+    "kind": "script",
+    "sources": ["boards/arty-z7-20/quux15_arty.sv"],
+    "cmd": ["tools/quux15_arty_param_check.py"] + CHECKS["quux15_arty"]["stubs"] + [
+        "rtl/machine/cadr_tick_pkg.sv"] + CHECKS["quux15_arty"]["extra"] + CHECKS["quux15_arty"]["sources"],
+    "top": None,
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
 # And at the Kria's 1920 by 1080 (the Makefile's `quux15_videosize.quux.pass`):
 # the core built with `VIDEO_W` and `VIDEO_H` at that size and the Kria's
 # board name, and the testbench's frame buffer as large, held to the
@@ -3373,6 +3429,8 @@ def build_and_run(args, work, check, build_fails=False):
         return kr260_check(args, work, build_fails)
     if check == "quux15_kr260":
         return quux15_kr260_check(args, work, build_fails)
+    if check == "quux15_arty":
+        return quux15_arty_check(args, work, build_fails)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -3648,6 +3706,24 @@ def quux15_kr260_check(args, work, build_fails=False):
             return BROKEN, "%s is not in this copy" % f
     cmd = [args.verilator, "--lint-only", "-Wall", "-DCADR_DDR_MAP_KR260",
            "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260",
+           "--top-module", spec["top"]] + spec["stubs"] + tick_pkg(work) + spec["extra"] + spec["sources"]
+    rc, out = run(cmd, work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes"
+
+
+def quux15_arty_check(args, work, build_fails=False):
+    """Revision 15's Arty Z7-20 top level, linted as `build/quux15_arty.pass`
+    lints it.  Lint failing, an elaboration check among it, is the mutation
+    being caught, judged by `lint_verdict`.
+    """
+    spec = CHECKS["quux15_arty"]
+    for f in spec["sources"] + spec["stubs"] + spec["extra"]:
+        if not os.path.exists(os.path.join(work, f)):
+            return BROKEN, "%s is not in this copy" % f
+    cmd = [args.verilator, "--lint-only", "-Wall",
+           "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20",
            "--top-module", spec["top"]] + spec["stubs"] + tick_pkg(work) + spec["extra"] + spec["sources"]
     rc, out = run(cmd, work)
     if rc != 0:

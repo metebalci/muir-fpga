@@ -423,6 +423,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(QUUX15_BOARD_PASSES) \
        $(BUILD)/quux15_videosize.quux.pass $(BUILD)/quux15_halt_probe.quux.pass \
        $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
+       $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
@@ -1521,6 +1522,24 @@ $(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness: rtl/plumbing/qu
 
 $(BUILD)/quux15_axi_narrow128.quux.pass: $(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness
 	$(BUILD)/obj_quux15_axi_narrow128/Vquux15_axi_narrow128_harness
+	@touch $@
+
+# **AND ON THE ARTY Z7-20'S 64-BIT HP0**, `rtl/plumbing/quux15_axi3.sv` as
+# `boards/arty-z7-20/quux15_arty.sv` builds the pair
+# (`tb/quux15_axi3_harness.sv`): the same master and the same memory, the
+# port AXI3 at the master's own width, run three ways --- the address taken
+# before its first beat, the beat before its address, and each ready its
+# own --- since an HP port may take a write's data first, which the Kria's
+# narrowing never lets its port do (`tb/quux15_axi3_tb.cpp`).
+$(BUILD)/obj_quux15_axi3/Vquux15_axi3_harness: rtl/plumbing/quux15_axi_master.sv \
+        rtl/plumbing/quux15_axi3.sv tb/quux15_axi3_harness.sv tb/quux15_axi3_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_axi3 \
+	    --top-module quux15_axi3_harness rtl/plumbing/quux15_axi_master.sv \
+	    rtl/plumbing/quux15_axi3.sv tb/quux15_axi3_harness.sv \
+	    $(abspath tb/quux15_axi3_tb.cpp)
+
+$(BUILD)/quux15_axi3.quux.pass: $(BUILD)/obj_quux15_axi3/Vquux15_axi3_harness
+	$(BUILD)/obj_quux15_axi3/Vquux15_axi3_harness
 	@touch $@
 
 # ------------------------------------ where QUUX differs, on both machines
@@ -3323,6 +3342,43 @@ $(BUILD)/quux15_kr260_param.pass: tools/quux15_kr260_param_check.py tools/machin
                                   boards/kria-kr260/display_raster.mk | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_kr260_param_check.py \
 	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv $(QUUX15_KR260_SRC)
+	@touch $@
+
+# **REVISION 15 ON THE ARTY Z7-20** (`boards/arty-z7-20/quux15_arty.sv`):
+# its own top level, the same core and faces as the Kria's on this board's
+# processing system, linted as its flow builds it, with the Zynq-7000's
+# stubs; and every linted file in the flow's list.
+QUUX15_ARTY_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) rtl/plumbing/cadr_input_cables.sv \
+    rtl/plumbing/quux15_axi3.sv \
+    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
+    rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv \
+    rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux_fd_face.sv $(DISPLAY_SRC) \
+    rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
+    tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv boards/arty-z7-20/quux15_arty.sv
+$(BUILD)/quux15_arty.pass: $(QUUX15_ARTY_SRC) $(BOARD_STUBS) \
+                           boards/arty-z7-20/vivado/quux15_bitstream.tcl | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+	    -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --top-module quux15_arty \
+	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)
+	@# The flow reads the same files: every one of them in its list.
+	@for f in $(filter-out tb/%,$(QUUX15_ARTY_SRC)); do \
+	   grep -q "$$f" boards/arty-z7-20/vivado/quux15_bitstream.tcl \
+	     || { echo "quux15_arty: $$f is linted and not in quux15_bitstream.tcl"; exit 1; }; \
+	 done
+	@touch $@
+
+# **AND ITS FIGURES, READ AT THE INSTANCES** (`tools/quux15_arty_param_check.py`):
+# the cache's 4K words, main memory's 32M and the two bases, one write ID,
+# the video controller's 1280 by 1024 at the core, the face and the display
+# output, VESA's raster, the board name, the MMCM's divide and the period at
+# the core and the face, and every time in clocks --- the display's second,
+# the lamps' hold and stretch, the mouse's step --- the period's, at each
+# period the board's fits are asked for and at 10 ns.
+$(BUILD)/quux15_arty_param.pass: tools/quux15_arty_param_check.py tools/machine_param_check.py \
+                                 $(QUUX15_ARTY_SRC) $(BOARD_STUBS) | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_arty_param_check.py \
+	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)
 	@touch $@
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
