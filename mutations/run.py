@@ -2790,7 +2790,7 @@ QUUX15_PERIODS_OF["network"] = (20, 17, 36)
 QUUX15_PERIODS_OF["regread"] = (20, 36)
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
-        "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+        "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_mdmem.sv", "rtl/machine/quux15_dmem.sv", "rtl/machine/quux15_exec.sv",
                     "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
                     "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
                     "rtl/machine/quux15_validmap.sv", "rtl/machine/quux15_recency.sv",
@@ -2857,6 +2857,24 @@ for _b in QUUX15_BOARDS:
             CHECKS["quux15_alu_quux"], flags=_flags,
             golden=["quux15_%s.quux.p%s%s.golden" % (_p, _q, "" if _b == "kria" else "." + _b)])
 
+# **REVISION 15'S RAMS ON AN AGILEX 5** (the Makefile's
+# `quux15_<ram>_eq.quux.pass`): each Agilex 5 version in
+# `rtl/plumbing/agilex5/` built beside its behavioral version and run under
+# the same random use by `tools/quux15_ram_eq_check.py`, which exits 1 when
+# the two differ and 2 when a build fails.
+for _r in ("mdmem", "dmem", "tdp", "validmap"):
+    CHECKS["quux15_%s_eq_quux" % _r] = {
+        "kind": "script",
+        "sources": ["rtl/plumbing/agilex5/quux15_%s.sv" % _r],
+        "cmd": ["tools/quux15_ram_eq_check.py", _r, "--work", "eq_" + _r],
+        "broken_rc": 2,
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+        "machine": "quux",
+    }
+
 # Revision 15's Kria KR260 top level, linted as `build/quux15_kr260.pass`
 # lints it (`quux15_kr260_check`): its elaboration checks, the DDR map's
 # bases and main memory's size against the board's reservation, among them.
@@ -2864,7 +2882,8 @@ CHECKS["quux15_kr260"] = {
     "kind": "lint",
     "sources": ["boards/kria-kr260/quux15_kr260.sv"],
     "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv", "tb/cadr_kr260_stubs.sv"],
-    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_mdmem.sv", "rtl/machine/quux15_dmem.sv",
+              "rtl/machine/quux15_exec.sv",
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
@@ -2912,7 +2931,8 @@ CHECKS["quux15_arty"] = {
     "kind": "lint",
     "sources": ["boards/arty-z7-20/quux15_arty.sv", "rtl/plumbing/quux15_axi3.sv"],
     "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv", "tb/cadr_ps7_stub.sv"],
-    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_mdmem.sv", "rtl/machine/quux15_dmem.sv",
+              "rtl/machine/quux15_exec.sv",
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",

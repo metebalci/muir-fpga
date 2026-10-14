@@ -40,7 +40,7 @@ set sources [list \
     rtl/machine/quux15_ram.sv rtl/machine/quux15_tdp.sv rtl/machine/quux15_store.sv \
     rtl/machine/quux15_exec.sv rtl/machine/quux_muldiv.sv rtl/plumbing/quux15_axi_master.sv \
     rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/machine/quux15_devices.sv \
-    rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv rtl/machine/quux15_core.sv \
+    rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv rtl/machine/quux15_core.sv rtl/machine/quux15_mdmem.sv rtl/machine/quux15_dmem.sv \
     rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
     rtl/plumbing/cadr_input_cables.sv rtl/plumbing/quux15_axi3.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
@@ -102,6 +102,18 @@ foreach {what pat} {
 }
 if {!$rams_ok} {
     puts "Q15ARTY: FAILED --- a memory is not in block RAM as quux15_ram.xdc says"
+    exit 1
+}
+
+# **THE MACRO DISPATCH MEMORY READ AT ITS FOUR ADDRESSES** (`quux15_mdmem.sv`;
+# `tools/quux15_lutram_ports.tcl`): RD's, EX's, D's and the readout's, each
+# its own read port in LUT RAM.  The redirect's fifth feeds nothing with one
+# bubble, so four, and a build with fewer reads one address at another's.
+source tools/quux15_lutram_ports.tcl
+lassign [quux15_lutram_read_ports *u_core/u_mdmem/* [expr {1024 * 18}]] md_cells md_ports
+puts "Q15ARTY: the macro dispatch memory: $md_cells LUT RAM cell(s), $md_ports read port(s)"
+if {$md_ports < 4} {
+    puts "Q15ARTY: FAILED --- the macro dispatch memory is built with $md_ports read port(s), and its RTL reads it at 4"
     exit 1
 }
 

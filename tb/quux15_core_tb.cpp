@@ -143,6 +143,13 @@
 // differences and the first one again on its last line, `FAIL: ... the first
 // at clock <k>, <column>`, which the stand-in's check reads.
 
+// The Agilex 5 TDP's word, one column for a RAM without byte enables
+// (`rtl/plumbing/agilex5/quux15_tdp.sv`), when the core is built with it.
+#ifdef QUUX15_A5
+#define A5TDP(p) p##__DOT__g_one__DOT__c__DOT__mem
+#else
+#define A5TDP(p) p##__DOT__mem
+#endif
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -388,21 +395,31 @@ bool load(Top *dut, const Run &run, const char *path) {
       r->quux15_core__DOT__store__DOT__prom[i.address] = i.word;
     else if (i.memory == "imem" && i.address < 16384)
       // The store keeps `<47:0>` inverted (`quux15_store.sv`).
-      r->quux15_core__DOT__store__DOT__ram__DOT__mem[i.address] = i.word ^ 0x0000ffffffffffffull;
+      r->A5TDP(quux15_core__DOT__store__DOT__ram)[i.address] = i.word ^ 0x0000ffffffffffffull;
     else if (i.memory == "amem" && i.address < 1024)
-      r->quux15_core__DOT__amem__DOT__mem[i.address] = i.word & 0xffffffffffull;
+      r->A5TDP(quux15_core__DOT__amem)[i.address] = i.word & 0xffffffffffull;
     else if (i.memory == "mmem" && i.address < 32)
       r->quux15_core__DOT__mmem[i.address] = i.word & 0xffffffffffull;
     else if (i.memory == "dmem" && i.address < 4096 && i.address % 2 == 0)
       // Dispatch memory's halves, its even entries and its odd.
-      r->quux15_core__DOT__dmem_even[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
+      r->quux15_core__DOT__u_dmem__DOT__even[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
     else if (i.memory == "dmem" && i.address < 4096)
-      r->quux15_core__DOT__dmem_odd[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
+      r->quux15_core__DOT__u_dmem__DOT__odd[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
     else if (i.memory == "mdmem" && i.address < 1024)
       // The MACRO DISPATCH MEMORY's entries, eighteen bits.
-      r->quux15_core__DOT__mdmem[i.address] = static_cast<uint32_t>(i.word & 0x3ffff);
+#ifdef QUUX15_A5
+      // The Agilex 5 version's copies, one a read port, each loaded alike.
+      for (auto *m : {r->quux15_core__DOT__u_mdmem__DOT__g_copy__BRA__0__KET____DOT__u_copy__DOT__mem.m_storage,
+                      r->quux15_core__DOT__u_mdmem__DOT__g_copy__BRA__1__KET____DOT__u_copy__DOT__mem.m_storage,
+                      r->quux15_core__DOT__u_mdmem__DOT__g_copy__BRA__2__KET____DOT__u_copy__DOT__mem.m_storage,
+                      r->quux15_core__DOT__u_mdmem__DOT__g_copy__BRA__3__KET____DOT__u_copy__DOT__mem.m_storage,
+                      r->quux15_core__DOT__u_mdmem__DOT__g_copy__BRA__4__KET____DOT__u_copy__DOT__mem.m_storage})
+        m[i.address] = static_cast<uint32_t>(i.word & 0x3ffff);
+#else
+      r->quux15_core__DOT__u_mdmem__DOT__mem[i.address] = static_cast<uint32_t>(i.word & 0x3ffff);
+#endif
     else if (i.memory == "pdl" && i.address < 16384)
-      r->quux15_core__DOT__pdl__DOT__mem[i.address] = i.word & 0xffffffffffull;
+      r->A5TDP(quux15_core__DOT__pdl)[i.address] = i.word & 0xffffffffffull;
     else if (i.memory == "main" && i.address < kMainWords)
       ;  // the testbench's own, `Bench::image`
     else

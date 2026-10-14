@@ -28851,12 +28851,20 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 
 @mutation quux15-fused-return-reads-a-stale-entry
 @check quux15_mainloop_quux
-@file rtl/machine/quux15_core.sv
-@note A fused return reads the entry one before the one the halfword names.
+@file rtl/machine/quux15_mdmem.sv
+@note Every read of the MACRO DISPATCH MEMORY takes the entry one before the one its address names.
 @old
-    e = mdmem[hw[15:6]];
+  assign rd_w = mem[rd_a];
+  assign rx_w = mem[rx_a];
+  assign ex_w = mem[ex_a];
+  assign d_w  = mem[d_a];
+  assign ro_w = mem[ro_a];
 @new
-    e = mdmem[hw[15:6] - 10'd1];
+  assign rd_w = mem[rd_a - 10'd1];
+  assign rx_w = mem[rx_a - 10'd1];
+  assign ex_w = mem[ex_a - 10'd1];
+  assign d_w  = mem[d_a - 10'd1];
+  assign ro_w = mem[ro_a - 10'd1];
 @end
 
 @mutation quux15-operand-arg-without-the-one
@@ -28959,9 +28967,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note Destination 7 writes the entry beside the one the index names.
 @old
-        if (mdmem_we) mdmem[mdindex] <= x_ob[17:0];
+      .clk, .we(md_we), .waddr(mdindex), .wdata(x_ob[17:0]),
 @new
-        if (mdmem_we) mdmem[mdindex ^ 10'd1] <= x_ob[17:0];
+      .clk, .we(md_we), .waddr(mdindex ^ 10'd1), .wdata(x_ob[17:0]),
 @end
 
 @mutation quux15-macro-dispatch-register-not-written
@@ -29004,6 +29012,258 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || fd_code(ex_ir) == 5'o5 || fd_code(ex_ir) == 5'o6
 @new
       if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || 1'b0 || 1'b0
+@end
+
+# **THE MACRO DISPATCH MEMORY'S READ PORTS** (`quux15_mdmem.sv`), each
+# address formed outside the process that uses its entry: D's port, RD's
+# and EX's port's entries, and the write.
+
+@mutation quux15-md-d-port-on-lc-stepped
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's port reads at LC stepped once more than D's own call takes it.
+@old
+  assign md_d_a  = fused_index(land_word, intctl[3], lc);
+@new
+  assign md_d_a  = fused_index_on(land_word, intctl[3], lc);
+@end
+
+@mutation quux15-md-rd-entry-inverted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD's plan takes the complement of the entry its port reads.
+@old
+                     md_rd_e, md_rd_a);
+@new
+                     ~md_rd_e, md_rd_a);
+@end
+
+@mutation quux15-md-ex-entry-inverted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_mdmem.sv
+@note EX's port gives the complement of the entry at its address.
+@old
+  assign ex_e = hit(ex_a) ? ~ex_w : ex_w;
+@new
+  assign ex_e = hit(ex_a) ? ex_w : ~ex_w;
+@end
+
+@mutation quux15-md-written-a-clock-late
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_mdmem.sv
+@note Destination 7's entry lands a clock after the edge that takes it, as
+@note an MLAB's write would without the Agilex 5 version's forwarding.
+@old
+  always_ff @(posedge clk) begin
+    if (we) mem[waddr] <= wdata;
+  end
+@new
+  logic we_l = 1'b0;
+  logic [9:0] waddr_l;
+  logic [17:0] wdata_l;
+  always_ff @(posedge clk) begin
+    if (we_l) mem[waddr_l] <= wdata_l;
+    we_l <= we; waddr_l <= waddr; wdata_l <= wdata;
+  end
+@end
+
+# **THE AGILEX 5 MACRO DISPATCH MEMORY** (`rtl/plumbing/agilex5/
+# quux15_mdmem.sv`) against the behavioral one, `altdpram`'s write window
+# poisoned (`tools/quux15_ram_eq_check.py mdmem`).
+
+@mutation quux15-a5-md-a-copy-written-late
+@check quux15_mdmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_mdmem.sv
+@note EX's copy takes each write a clock after the others.
+@old
+        .inclock(clk), .wren(we), .wraddress(waddr), .data(wdata),
+@new
+        .inclock(clk), .wren(k == 2 ? we_q : we), .wraddress(k == 2 ? waddr_q : waddr),
+        .data(k == 2 ? wdata_q : wdata),
+@end
+
+@mutation quux15-a5-md-ports-swapped
+@check quux15_mdmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_mdmem.sv
+@note RD's and the redirect's ports read each other's addresses.
+@old
+  assign ra = {ro_a, d_a, ex_a, rx_a, rd_a};
+@new
+  assign ra = {ro_a, d_a, ex_a, rd_a, rx_a};
+@end
+
+@mutation quux15-a5-md-a-copy-never-written
+@check quux15_mdmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_mdmem.sv
+@note The readout's copy is never written.
+@old
+        .inclock(clk), .wren(we), .wraddress(waddr), .data(wdata),
+@new
+        .inclock(clk), .wren(k == 4 ? 1'b0 : we), .wraddress(waddr), .data(wdata),
+@end
+
+@mutation quux15-a5-md-forwarding-on-nine-bits
+@check quux15_mdmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_mdmem.sv
+@note The forwarding compares the read's address with the write's on nine
+@note bits of the ten.
+@old
+    assign re[k] = (we_q && waddr_q == ra[k]) ? wdata_q : mq[k];
+@new
+    assign re[k] = (we_q && (waddr_q | 10'h200) == (ra[k] | 10'h200)) ? wdata_q : mq[k];
+@end
+
+@mutation quux15-a5-md-no-forwarding
+@check quux15_mdmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_mdmem.sv
+@note A read in the MLAB's write window takes the MLAB's word, not the
+@note entry just written.
+@old
+    assign re[k] = (we_q && waddr_q == ra[k]) ? wdata_q : mq[k];
+@new
+    assign re[k] = (we_q && waddr_q == ra[k] && 1'b0) ? wdata_q : mq[k];
+@end
+
+# **DISPATCH MEMORY'S WRITE** (`quux15_dmem.sv`): the boot PROM dispatches
+# through the entry its word before wrote.
+
+@mutation quux15-dmem-written-a-clock-late
+@check quux15_alu_quux
+@file rtl/machine/quux15_dmem.sv
+@note A dispatch-memory write lands a clock after the edge that takes it,
+@note as an MLAB's would without the Agilex 5 version's forwarding.
+@old
+  always_ff @(posedge clk) begin
+    if (we && !waddr[0]) even[waddr[11:1]] <= wdata;
+    if (we && waddr[0]) odd[waddr[11:1]] <= wdata;
+  end
+@new
+  logic we_l = 1'b0;
+  logic [11:0] waddr_l;
+  logic [16:0] wdata_l;
+  always_ff @(posedge clk) begin
+    if (we_l && !waddr_l[0]) even[waddr_l[11:1]] <= wdata_l;
+    if (we_l && waddr_l[0]) odd[waddr_l[11:1]] <= wdata_l;
+    we_l <= we; waddr_l <= waddr; wdata_l <= wdata;
+  end
+@end
+
+# **THE AGILEX 5 DISPATCH MEMORY** (`rtl/plumbing/agilex5/quux15_dmem.sv`)
+# against the behavioral one, each MLAB's write window poisoned
+# (`tools/quux15_ram_eq_check.py dmem`).
+
+@mutation quux15-a5-dmem-no-forwarding
+@check quux15_dmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_dmem.sv
+@note A read in the MLAB's write window takes the MLAB's entry, not the
+@note entry just written.
+@old
+    fw_we <= we;
+@new
+    fw_we <= 1'b0;
+@end
+
+@mutation quux15-a5-dmem-forwarding-across-the-halves
+@check quux15_dmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_dmem.sv
+@note EX's port forwards the held entry to its address in the other half.
+@old
+  assign ex_e = (fw_we && fw_wa == ex_a) ? fw_wd : ex_m;
+@new
+  assign ex_e = (fw_we && fw_wa[11:1] == ex_a[11:1]) ? fw_wd : ex_m;
+@end
+
+@mutation quux15-a5-dmem-readout-not-forwarded
+@check quux15_dmem_eq_quux
+@file rtl/plumbing/agilex5/quux15_dmem.sv
+@note The readout's port takes the MLAB's entry in its write window.
+@old
+  assign ro_e = (fw_we && fw_wa == ro_a) ? fw_wd : ro_m;
+@new
+  assign ro_e = (fw_we && fw_wa == ro_a && 1'b0) ? fw_wd : ro_m;
+@end
+
+# **THE AGILEX 5 VALID BITS** (`rtl/plumbing/agilex5/quux15_validmap.sv`)
+# against the behavioral ones, each MLAB's write window poisoned
+# (`tools/quux15_ram_eq_check.py validmap`).
+
+@mutation quux15-a5-valid-no-forwarding
+@check quux15_validmap_eq_quux
+@file rtl/plumbing/agilex5/quux15_validmap.sv
+@note A read in an MLAB's write window takes the MLAB's bit, not the bit
+@note just written.
+@old
+    fw_we <= col_we;
+@new
+    fw_we <= '0;
+@end
+
+@mutation quux15-a5-valid-forwarding-on-the-group-less-a-bit
+@check quux15_validmap_eq_quux
+@file rtl/plumbing/agilex5/quux15_validmap.sv
+@note The write held for forwarding names its group without the low bit.
+@old
+    fw_wa <= col_wa;
+@new
+    fw_wa <= col_wa & ~(AW-6)'(1);
+@end
+
+@mutation quux15-a5-valid-forwarding-the-bit-to-every-column
+@check quux15_validmap_eq_quux
+@file rtl/plumbing/agilex5/quux15_validmap.sv
+@note A group made valid forwards the written bit to every column, where
+@note the others were cleared.
+@old
+    fw_wd <= col_wd;
+@new
+    fw_wd <= {64{wbit}};
+@end
+
+@mutation quux15-a5-valid-third-read-not-forwarded
+@check quux15_validmap_eq_quux
+@file rtl/plumbing/agilex5/quux15_validmap.sv
+@note The cache's third read takes the MLAB's bit in its write window.
+@old
+  assign h2 = fw_we[raddr2[5:0]] && fw_wa == raddr2[AW-1:6];
+@new
+  assign h2 = fw_we[raddr2[5:0]] && fw_wa == raddr2[AW-1:6] && 1'b0;
+@end
+
+# **THE AGILEX 5 TRUE DUAL-PORT RAM** (`rtl/plumbing/agilex5/quux15_tdp.sv`)
+# against the behavioral one at every form the core instantiates
+# (`tools/quux15_ram_eq_check.py tdp`).
+
+@mutation quux15-a5-tdp-column-reads-on-its-own-enable
+@check quux15_tdp_eq_quux
+@file rtl/plumbing/agilex5/quux15_tdp.sv
+@note A column port B does not write reads while another column is
+@note written, where the behavioral RAM leaves the port's word as it was.
+@old
+          .b_we(b_en && b_we[CB*k]), .b_re(b_en && ~|b_we), .b_addr,
+@new
+          .b_we(b_en && b_we[CB*k]), .b_re(b_en && !b_we[CB*k]), .b_addr,
+@end
+
+@mutation quux15-a5-tdp-one-enable-for-every-column
+@check quux15_tdp_eq_quux
+@file rtl/plumbing/agilex5/quux15_tdp.sv
+@note Every column of port B writes on the first column's enable.
+@old
+          .b_we(b_en && b_we[CB*k]), .b_re(b_en && ~|b_we), .b_addr,
+@new
+          .b_we(b_en && b_we[0]), .b_re(b_en && ~|b_we), .b_addr,
+@end
+
+@mutation quux15-a5-tdp-guard-on-port-a-alone
+@check quux15_tdp_eq_quux
+@file rtl/plumbing/agilex5/quux15_tdp.sv
+@note The guard against a write of part of a column looks at port A alone,
+@note and the lines are written on port B.
+@old
+        if ((a_en && a_we[CB*k +: CB] != '0 && a_we[CB*k +: CB] != '1)
+            || (b_en && b_we[CB*k +: CB] != '0 && b_we[CB*k +: CB] != '1))
+@new
+        if (a_en && a_we[CB*k +: CB] != '0 && a_we[CB*k +: CB] != '1)
 @end
 
 @mutation quux15-main-decode-one-word-past
@@ -30712,12 +30972,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 
 @mutation quux15-readout-dispatch-halves-crossed
 @check quux15_checkpoints_quux
-@file rtl/machine/quux15_core.sv
+@file rtl/machine/quux15_dmem.sv
 @note The readout takes dispatch memory's even entries for its odd ones.
 @old
-      4'd6:    rm_small <= {47'd0, rm_addr_q[0] ? dmem_odd[rm_addr_q[11:1]] : dmem_even[rm_addr_q[11:1]]};
+  assign ro_e = ro_a[0] ? odd[ro_a[11:1]] : even[ro_a[11:1]];
 @new
-      4'd6:    rm_small <= {47'd0, !rm_addr_q[0] ? dmem_odd[rm_addr_q[11:1]] : dmem_even[rm_addr_q[11:1]]};
+  assign ro_e = !ro_a[0] ? odd[ro_a[11:1]] : even[ro_a[11:1]];
 @end
 
 @mutation quux15-readout-pdl-index-for-pointer

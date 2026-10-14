@@ -389,6 +389,10 @@ QUUX15_BOARD_PASSES = $(foreach b,$(QUUX15_BOARDS),$(QUUX15_MEMSIDE:%=$(BUILD)/q
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
 QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem memory time $(QUUX15_GROUPS)
+# Revision 15's RAMs on an Agilex 5 against their behavioral versions
+# (below, `tools/quux15_ram_eq_check.py`).
+QUUX15_EQ_PASSES := $(BUILD)/quux15_mdmem_eq.quux.pass $(BUILD)/quux15_dmem_eq.quux.pass \
+                    $(BUILD)/quux15_tdp_eq.quux.pass $(BUILD)/quux15_validmap_eq.quux.pass
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -421,6 +425,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
        $(QUUX15_BOARD_PASSES) \
+       $(QUUX15_EQ_PASSES) \
        $(BUILD)/quux15_videosize.quux.pass $(BUILD)/quux15_halt_probe.quux.pass \
        $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_kr260_param.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
@@ -1645,7 +1650,8 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 # `QUUX15_SEED`), and the RAMs' read of an address written in the same
 # clock poisoned (`QUUX15_RDW_POISON`), which the core must never use.
 # Each trace is run under two seeds.
-QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
+QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_mdmem.sv rtl/machine/quux15_dmem.sv \
+                   rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv \
@@ -1776,6 +1782,81 @@ $$(BUILD)/quux15_$(1).quux.$(2).pass: $$(BUILD)/obj_quux15_core$$(call quux15_bo
 	@touch $$@
 endef
 $(foreach b,$(QUUX15_BOARDS),$(foreach g,$(QUUX15_MEMSIDE),$(eval $(call QUUX15_BOARD_RULE,$(g),$(b)))))
+
+# **REVISION 15'S RAMS ON AN AGILEX 5** (`rtl/plumbing/agilex5/`; CLAUDE.md's
+# vendor rule): the macro dispatch memory (`quux15_mdmem.sv`) in MLAB copies
+# of Altera's `altdpram`, the true dual-port RAM (`quux15_tdp.sv`) in word
+# columns, and dispatch memory (`quux15_dmem.sv`) and the valid bits
+# (`quux15_validmap.sv`) with their last write forwarded through the MLAB's
+# write window, each held to its behavioral version in `rtl/machine/` by
+# `tools/quux15_ram_eq_check.py`: random writes and reads, the outputs
+# compared clock for clock, each MLAB's write window poisoned (`altdpram`
+# modelled by our own `tb/quux15_altdpram_model.sv`; the inferred ones under
+# `QUUX15_A5_MLAB_POISON`); the TDP at every width and byte-enable form the
+# core instantiates, and its guard against a write of part of a column.
+# `QUUX15_EQ_PASSES`, the checks themselves, is set above `CHECK_QUUX`.
+$(BUILD)/quux15_mdmem_eq.quux.pass: tools/quux15_ram_eq_check.py tb/quux15_mdmem_eq_tb.sv \
+                                    tb/quux15_altdpram_model.sv rtl/machine/quux15_mdmem.sv \
+                                    rtl/plumbing/agilex5/quux15_mdmem.sv | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_ram_eq_check.py mdmem --work $(BUILD)/quux15_mdmem_eq
+	@touch $@
+$(BUILD)/quux15_dmem_eq.quux.pass: tools/quux15_ram_eq_check.py tb/quux15_dmem_eq_tb.sv \
+                                   rtl/machine/quux15_dmem.sv rtl/plumbing/agilex5/quux15_dmem.sv | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_ram_eq_check.py dmem --work $(BUILD)/quux15_dmem_eq
+	@touch $@
+$(BUILD)/quux15_tdp_eq.quux.pass: tools/quux15_ram_eq_check.py tb/quux15_tdp_eq_tb.sv \
+                                  rtl/machine/quux15_tdp.sv rtl/plumbing/agilex5/quux15_tdp.sv | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_ram_eq_check.py tdp --work $(BUILD)/quux15_tdp_eq
+	@touch $@
+$(BUILD)/quux15_validmap_eq.quux.pass: tools/quux15_ram_eq_check.py tb/quux15_validmap_eq_tb.sv \
+                                       rtl/machine/quux15_validmap.sv rtl/plumbing/agilex5/quux15_validmap.sv | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/quux15_ram_eq_check.py validmap --work $(BUILD)/quux15_validmap_eq
+	@touch $@
+
+# **AND THE CORE'S GOLDENS ON THE AGILEX 5 RTL** (`make quux15-a5
+# MACHINE=quux`, by hand, as `quux15-b2`, five more builds of the core and
+# about half an hour at `-j5`): the core built with the Agilex 5 TDP, macro
+# dispatch memory, dispatch memory and valid bits, each MLAB's write window
+# poisoned (`QUUX15_A5`, the testbench's names for the RAMs' words), and
+# held to every program of `QUUX15_CORE`, `mainsize` and `videosize`, and
+# the memory side's groups at the DE25-Nano's cache and period.
+QUUX15_A5_SRC := $(subst rtl/machine/quux15_tdp.sv,rtl/plumbing/agilex5/quux15_tdp.sv,\
+                 $(subst rtl/machine/quux15_mdmem.sv,rtl/plumbing/agilex5/quux15_mdmem.sv tb/quux15_altdpram_model.sv,\
+                 $(subst rtl/machine/quux15_validmap.sv,rtl/plumbing/agilex5/quux15_validmap.sv,\
+                 $(subst rtl/machine/quux15_dmem.sv,rtl/plumbing/agilex5/quux15_dmem.sv,\
+                 $(QUUX15_CORE_SRC)))))
+QUUX15_A5_FLAGS := -CFLAGS -DQUUX15_A5 +define+QUUX15_A5_MLAB_POISON
+define QUUX15_A5_BUILD
+$$(BUILD)/obj_quux15_core_a5$(1)/Vquux15_core: $$(QUUX15_A5_SRC) tb/quux15_core_tb.cpp $$(BUILD)/q15chk/libq15chk.a | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) $$(QUUX15_CORE_FLAGS) $$(QUUX15_A5_FLAGS) $(2) \
+	    -O2 -CFLAGS -O2 -Mdir $$(BUILD)/obj_quux15_core_a5$(1) \
+	    --top-module quux15_core $$(QUUX15_A5_SRC) $$(abspath tb/quux15_core_tb.cpp)
+endef
+$(eval $(call QUUX15_A5_BUILD,,))
+$(eval $(call QUUX15_A5_BUILD,_32m,$(QUUX15_MAIN32)))
+$(eval $(call QUUX15_A5_BUILD,_hd,-GVIDEO_W=1920 -GVIDEO_H=1080 -GBOARD_NAME='"Kria KR260"' -CFLAGS -DQUUX15_VIDEO_W=1920 -CFLAGS -DQUUX15_VIDEO_H=1080))
+$(eval $(call QUUX15_A5_BUILD,_de25,-GCACHE_WORDS=$(QUUX15_CACHE_de25) -CFLAGS -DQUUX15_CACHE_WORDS=$(QUUX15_CACHE_de25)))
+$(eval $(call QUUX15_A5_BUILD,_32m_de25,$(QUUX15_MAIN32) -GCACHE_WORDS=$(QUUX15_CACHE_de25) -CFLAGS -DQUUX15_CACHE_WORDS=$(QUUX15_CACHE_de25)))
+# `quux15_<program>.quux.a5.pass` on the build `$(2)`, held to the traces
+# `$(3)`.
+define QUUX15_A5_RULE
+$$(BUILD)/quux15_$(1).quux.a5$(4).pass: $$(BUILD)/obj_quux15_core_a5$(2)/Vquux15_core $(3)
+	@for s in $$(QUUX15_SEEDS); do \
+	   QUUX15_SEED=$$$$s $$(BUILD)/obj_quux15_core_a5$(2)/Vquux15_core $(3) || exit 1; \
+	 done
+	@touch $$@
+endef
+quux15_traces_of = $(foreach q,$(or $(QUUX15_PERIODS_$(1)),$(QUUX15_PERIODS)),$(BUILD)/quux15_$(1).quux.p$(q).golden)
+$(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_A5_RULE,$(p),,$(call quux15_traces_of,$(p)),)))
+$(eval $(call QUUX15_A5_RULE,mainsize,_32m,$(call quux15_traces_of,mainsize),))
+$(eval $(call QUUX15_A5_RULE,videosize,_hd,$(call quux15_traces_of,videosize),))
+$(foreach g,$(QUUX15_MEMSIDE),$(eval $(call QUUX15_A5_RULE,$(g),$(call quux15_board_obj,$(g),de25),\
+    $(BUILD)/quux15_$(g).quux.p$(QUUX15_PERIOD_de25).de25.golden,.de25)))
+QUUX15_A5_PASSES := $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.a5.pass) \
+                    $(BUILD)/quux15_mainsize.quux.a5.pass $(BUILD)/quux15_videosize.quux.a5.pass \
+                    $(QUUX15_MEMSIDE:%=$(BUILD)/quux15_%.quux.a5.de25.pass)
+.PHONY: quux15-a5
+quux15-a5: $(QUUX15_A5_PASSES)
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
