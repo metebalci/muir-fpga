@@ -39,8 +39,11 @@ set_false_path -to   $dbg_pads
 # 10 ns the lock's launch on the 20 ns reference and the machine's edges
 # keep a whole period apart; at revision 15's periods they do not (at 23 ns
 # the analyzer gave the crossing 1 ns, the worst path of the fit), and a
-# synchronizer's first register is timed by nobody.
-set lock_crossing [get_registers -nowarn {rst_sync[0]}]
+# synchronizer's first register is timed by nobody.  `lock_sync`, the lock
+# alone for the machine's hard reset, is the same crossing into its own
+# synchronizer, and is cut the same way (left timed, it was the one failing
+# path of a 23 ns fit, -0.545 ns).
+set lock_crossing [get_registers -nowarn {rst_sync[0] lock_sync[0]}]
 set_false_path -to $lock_crossing
 
 # **THE PROCESSOR'S ASYNCHRONOUS BITS**, as `cadr_ddr.sdc` cuts them on the

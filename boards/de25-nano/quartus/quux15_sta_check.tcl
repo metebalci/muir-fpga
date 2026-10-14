@@ -327,16 +327,18 @@ if {[info exists ::ddr_crossing] && [get_collection_size $::ddr_crossing] > 0} {
         puts "sta: no timed path ends at the processor's bits' first registers"
     }
 }
-if {![info exists ::lock_crossing] || [get_collection_size $::lock_crossing] != 1} {
-    puts "sta: FAIL: quux15_de25.sdc names no register for the PLL's lock's synchronizer"
+# The lock reaches two synchronizers: the fabric reset's, with KEY1, and the
+# machine's hard reset's, the lock alone.
+if {![info exists ::lock_crossing] || [get_collection_size $::lock_crossing] != 2} {
+    puts "sta: FAIL: quux15_de25.sdc does not name both registers the PLL's lock's synchronizers start at"
     incr failures
 } else {
-    set timed [get_collection_size [get_timing_paths -setup -to [get_pins -nowarn {rst_sync[0]|d}] -npaths 10]]
+    set timed [get_collection_size [get_timing_paths -setup -to [get_pins -nowarn {rst_sync[0]|d lock_sync[0]|d}] -npaths 10]]
     if {$timed > 0} {
-        puts "sta: FAIL: $timed timed paths end at the fabric reset's first synchronizer register"
+        puts "sta: FAIL: $timed timed paths end at the PLL's lock's first synchronizer registers"
         incr failures
     } else {
-        puts "sta: no timed path ends at the fabric reset's first synchronizer register, the PLL's lock's"
+        puts "sta: no timed path ends at the PLL's lock's first synchronizer registers, the fabric reset's and the hard reset's"
     }
 }
 sta_hps_reset_sync
