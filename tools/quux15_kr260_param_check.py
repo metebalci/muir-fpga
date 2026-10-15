@@ -169,6 +169,9 @@ def main():
     if sorted(raster()) != sorted(["H_ACTIVE", "H_FRONT", "H_SYNC", "H_BACK",
                                    "V_ACTIVE", "V_FRONT", "V_SYNC", "V_BACK"]):
         say(False, "display_raster.mk names %s" % sorted(raster()))
+    # The tree's own build/, which a copy that has run nothing else (a
+    # mutation run selecting only this check) does not have yet.
+    os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_kr260_param.", dir="build")
     try:
         for p in PERIODS:

@@ -243,6 +243,9 @@ def main():
     if not sources:
         print(__doc__)
         return 2
+    # The tree's own build/, which a copy that has run nothing else (a
+    # mutation run selecting only this check) does not have yet.
+    os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_arty_param.", dir="build")
     try:
         for p in PERIODS:
