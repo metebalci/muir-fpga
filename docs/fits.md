@@ -25,6 +25,27 @@ reports none.
 
 ## From a clean tree
 
+These fits are QUUX revision 15's on the Arty Z7-20 and the DE25-Nano, with
+muir pinned at `f77695c` and PROM 2002 in the boot PROM. Revision 15 has no
+K: its clock is the period its fit closes at, 48 ns on the Arty Z7-20 and
+22.5 ns on the DE25-Nano. The Arty Z7-20's was built from `aa4a6ad`, its
+stamp reading `aa4a6ad0`, and the DE25-Nano's from `b1b4bcb`, its stamp
+reading `b1b4bcb0`, both trees clean. Both boards' revision 15 is 1280 by
+1024, with a cache of 4K words on the Arty Z7-20 and 16K on the DE25-Nano.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 15, 48 ns | +0.493 ns | +0.024 ns | 28,766 of 53,200 LUTs, 54.07% | 96 of 140 BRAM tiles | 8,838 of 13,300 | `aa4a6ad` | clean | 2026-10-15 |
+| DE25-Nano | QUUX revision 15, 22.5 ns | +0.002 ns | 0.000 ns | 37,690 of 46,800 ALMs, 81% | 162 of 358 M20K | --- | `b1b4bcb` | clean | 2026-10-15 |
+
+The Arty Z7-20's passed its RAM enable check over 198 ports, with the
+control store, both ways of the cache's lines and the TLB in block RAM. The
+DE25-Nano's flow read the machine's clock back as 22.500 ns, the period
+asked, and found the write address at every writing port of revision 15's
+PDL buffer, control store and A memory and of block-disk's block store. Its
+worst setup slack is at the slow corners at 0 °C; at 100 °C it is +1.966 ns.
+Both boards ran revision 15's board acceptance on these bitstreams.
+
 These fits were built from `c3b8fd2`, the release commit for Systems 1003
 and 2001 after revision 14's first fits: revision 13's PDL buffer infers on
 Quartus again, with muir pinned at `203b1b4`. QUUX is revision 13, at five
@@ -338,6 +359,22 @@ On the DE25-Nano the worst setup path is an HDMI output pin. The machine
 clock's own worst setup slack is +2.347 ns.
 
 ## From a modified tree
+
+This fit is QUUX revision 15's on the Kria KR260 at 19 ns, with muir pinned at
+`8c80a82`. It was built from the working tree on `23ee875`, whose tracked
+sources are `5a15914`'s but for one check's script. Its stamp reads
+`23ee8753`, the tree modified and carrying an untracked file. Revision 15
+has no K, and its clock is the period. The Kria KR260's revision 15 is 1920
+by 1080, with a cache of 64K words.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Kria KR260 | QUUX revision 15, 19 ns | +0.244 ns | +0.010 ns | 30,967 of 117,120 LUTs, 26.44% | 43.5 of 144 BRAM tiles, 14 of 64 URAM | 5,844 of 14,640 CLBs | working tree on `23ee875` | modified | 2026-10-13 |
+
+The flow placed 14 UltraRAM cells and found the 39 live video pins. It
+grouped the display's pixel clock apart from the machine's, naming 59
+registers of its crossings. The Kria KR260's revision 15 board acceptance
+ran on this bitstream (`docs/board.md`).
 
 These fits were built from the working tree on `2df53b7` with the CADR's
 reservation shrunk to 17.125 MB on every board: main memory moved to 16 MB

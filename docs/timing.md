@@ -586,6 +586,13 @@ of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
 DE25-Nano and the Kria KR260 run at K = 4, which is 40 ns a microcycle, and
 the Arty Z7-20 at K = 5, 50 ns a microcycle.
 
+This section is revisions 13 and 14. Revision 15 is pipelined and has no K.
+Each board runs its clock at the period its fit closes at: 19 ns on the Kria
+KR260, 22.5 ns on the DE25-Nano and 48 ns on the Arty Z7-20. A board tick is
+then one clock of that period, so every time the board's top level hands a
+module is turned into clocks there (What is not MIT's timing at all, below).
+A board may be slower than another, and the design is the same on all three.
+
 **The Arty's revision 13 takes a longer microcycle, not a slower clock.** Its
 map, two levels through the memory path's decode, misses four ticks on that
 part by about a nanosecond and meets five. The tick stays at 10 ns, so the
@@ -769,12 +776,12 @@ processor read hits a word from before the transfer after DONE, which is the
 second rule. The coherence run of `build/quux13_port.quux.k4.pass` holds both
 rules with the processor and a transfer running together.
 
-**Revision 15's cache**, as its contract specifies it and not yet built here,
-keeps the two ways and the lines of eight words, 40 bytes, write-through and
-allocated on a read miss only. Its size is a board's parameter, outside
-`rtl/machine/`: 64K words on the Kria KR260, 16K on the DE25-Nano and 4K on
-the Arty Z7-20, each board taking the largest size up to its own whose hit
-is two clocks.
+**Revision 15's cache** keeps the two ways and the lines of eight words, 40
+bytes, write-through and allocated on a read miss only. Its size is a board's
+parameter, outside `rtl/machine/`: the core's `CACHE_WORDS`, 64K words by
+default, which the Kria KR260 keeps, and 16K on the DE25-Nano and 4K on the
+Arty Z7-20, which their top levels set. A smaller cache has fewer sets, and
+its lines, ways and rules are the same.
 
 **Revision 15's block-disk transfer** is a requester on revision 15's port
 (`rtl/machine/quux15_port.sv`'s D), below the processor, a word at a time,
@@ -868,14 +875,20 @@ would otherwise stop honoring it silently when the grid moved.
 **On revision 15 a board tick is a clock of the period, so each of these
 that is a time is turned into clocks by the board's top.** The modules state
 them at the 10 ns tick, and revision 15 runs at whatever period its fit
-closes at. `boards/kria-kr260/quux15_kr260.sv` computes each from its
-`PERIOD_NS`, the one place the period is decided:
+closes at. Each board's revision 15 top level computes each from its period,
+the one place the period is decided on that board:
+`boards/kria-kr260/quux15_kr260.sv` and `boards/arty-z7-20/quux15_arty.sv`
+from `PERIOD_NS`, in nanoseconds, and `boards/de25-nano/quux15_de25.sv` from
+`PERIOD`, in units of 0.5 ns:
 
-| Constant | The time | At 19 ns |
-|---|---|---|
-| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 52,631,579 |
-| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,207,529 |
-| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 843 |
+| Constant | The time | Kria KR260, 19 ns | DE25-Nano, 22.5 ns | Arty Z7-20, 48 ns |
+|---|---|---|---|---|
+| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 52,631,579 | 44,444,444 | 20,833,333 |
+| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,207,529 | 1,864,136 | 873,814 |
+| `DISK_LIT_T`, the disk lamp's stretch | the same 41,943,040 ns, rounded up | --- | 1,864,136 | 873,814 |
+| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 843 | 712 | 334 |
+
+The Kria KR260 has no disk lamp.
 
 The counts that are not times stay counts: the display's `SLEEP_S` is in
 seconds, `OUTSTANDING` and `cadr_axi_rd128.sv`'s `DEPTH` are reads in flight,
@@ -883,7 +896,10 @@ the lamp's `BLINK_BIT` counts microcycles, the console face's `RESET_T` and
 `RO_CLOCKS` are clocks of the machine's own, and the raster's figures are the
 pixel clock's. `build/quux15_kr260_param.pass` reads the three back at the
 top's instances at 10, 13, 18 and 19 ns and holds each to the figure computed
-from the period apart from the top.
+from the period apart from the top. `build/quux15_arty_param.pass` does the
+same for the Arty Z7-20's four at 10, 44, 47 and 48 ns, and
+`build/quux15_de25_param.pass` for the DE25-Nano's four at 10, 22, 22.5, 23
+and 24 ns and at the top's own period.
 
 ## If you are about to change an instant
 

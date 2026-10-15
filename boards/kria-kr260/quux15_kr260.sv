@@ -38,8 +38,7 @@
 //     0xA000_0000 through `cadr_gp0_split.sv`, its bursts on HP2 through
 //     `cadr_axi_burst128.sv`, its interrupt on `pl_ps_irq0`<0>, and
 //     `cadr-disk-packs --machine quux` the drive.  The split's network and
-//     serial line pages are answered with a constant until their steps
-//     bring them.
+//     serial line pages are answered with a constant.
 //   - **THE KEYBOARD AND THE MOUSE ON `M_AXI_HPM0_FPD`**, the split's input
 //     page at 0xA000_3000, as `cadr_kr260.sv` has it: `cadr_input_cables.sv`,
 //     unchanged but for its mouse's step, which comes from the period, so
@@ -67,12 +66,12 @@
 //     reaches the picture.  The console face's words 33 to 36 drive it, as
 //     `cadr_console.sv`'s do, and its word 42 reads and clears its two
 //     sticky bits.
-//   - **NOT ON THIS BOARD YET**: the network's cable and the serial line,
-//     which the programs that serve them bring; the debug cable, which QUUX
-//     never has (contract Q5), PMOD1's pads left undriven.
-//     The core's Chaosnet interface (`quux15_chaos.sv`) is built, its cable
-//     tied off as a cable with nothing on it: a frame sent goes nowhere and
-//     is away at once, nothing arrives, and the address switches read 0.
+//   - **NO NETWORK**: QUUX has no Chaosnet cable.  The core's interface
+//     (`quux15_chaos.sv`) is built and its cable tied off as a cable with
+//     nothing on it: a frame sent goes nowhere and is away at once, nothing
+//     arrives, and the address switches read 0.  No serial line, which
+//     QUUX drops with the I/O board, and no debug cable either (contract
+//     Q5): PMOD1's pads undriven.
 //   - **TWO LAMPS**: UF1 the microcycle lamp (`cadr_lamp_microcycle.sv`),
 //     blinking with the committed microcycles, so it flickers while the
 //     machine runs and freezes when it stops, or steady at the console's
@@ -389,7 +388,7 @@ module quux15_kr260 #(
   // HPM0: `cadr_gp0_split.sv`'s pages at 0xA000_0000, as `cadr_kr260.sv`
   // has them: the disk packs' registers, the input's page, the file
   // device's page, and the pages of the network and the serial line,
-  // answered with a constant until their steps bring them; and every other
+  // which QUUX has not got, answered with a constant; and every other
   // address.
   logic [31:0] gp0_rdata, gp0_wdata;
   logic [3:0]  gp0_wstrb;

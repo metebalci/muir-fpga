@@ -591,6 +591,11 @@ network.
 The pins are `D19` for BTN0 and `D20` for BTN1, `LVCMOS33`, from Digilent's
 `Arty-Z7-20-Master.xdc`.
 
+**On QUUX revision 15 BTN0 does nothing**, because revision 15 has no
+`-BOOT2`. The console and the keyboard's boot word boot it. BTN1 is the reset
+request above. The DE25-Nano's revision 15 does the same with its keys: KEY1
+is the request and KEY0 does nothing (`boards/de25-nano/quux15_de25.sv`).
+
 ## The switches
 
 The board has two slide switches and this design uses one of them.
@@ -619,6 +624,10 @@ has the whole of how the two work together.
 
 The pin is `M20`, `LVCMOS33`, from Digilent's `Arty-Z7-20-Master.xdc`. SW1 is
 `M19` and is brought out so that the design's port list matches the board.
+
+**On QUUX revision 15 SW0 does nothing.** Revision 15 has no no-auto-boot. It
+comes out of reset running, and the console's word 1 says so. The
+DE25-Nano's switches do nothing on revision 15 either.
 
 ## The Pmod headers
 
@@ -711,7 +720,8 @@ counters said on those runs.
 
 ## What the LEDs say
 
-The six lamps read left to right as the machine's own progress.
+The six lamps read left to right as the machine's own progress. This is the
+CADR's assignment. QUUX revision 15's is at the end of this section.
 
     LD0   MACHRUN            lit means the machine should be running
     LD1   the fabric clock   the slow blink, about 1.5 Hz at 100 MHz
@@ -900,6 +910,23 @@ table takes it from there.
 that no memory means no progress. The fabric's answer is that no memory means
 slow progress. That is the first behavior anyone here observed on silicon that
 was predicted wrongly, and it was predicted wrongly in this file.
+
+**QUUX revision 15 keeps each lamp's meaning where it has the signal**
+(`boards/arty-z7-20/quux15_arty.sv`):
+
+    LD0   running            lit while the machine is not halted
+    LD1   the fabric clock   as above
+    LD2   microcycles        a committed microcycle, as above
+    LD3   disk activity      lit while block-disk moves a block
+    LD4   ERRHALT            red at an error halt
+    LD5   dark               revision 15 has no PROM select to show
+
+Revision 15 has no `MACHRUN`, so LD0 does not dim while the machine waits on
+memory. The DE25-Nano's revision 15 gives its LEDR0 to LEDR5 the same six
+meanings, lights LEDR6 while the memory port is open and leaves LEDR7 dark
+(`boards/de25-nano/quux15_de25.sv`). Every hold and stretch is turned into
+clocks of the board's period (`docs/timing.md`, What is not MIT's timing at
+all).
 
 ## The fault bitstream
 
@@ -3231,3 +3258,158 @@ the card was changed. That is now a known way back and not an assumption.
 was already running, the band is the same band, and the card's boot partition
 ends the session byte-identical to how it started. The drive bay was written
 to only by the band itself, as it is whenever the board runs.
+
+## QUUX revision 15 on the Kria KR260, 13 October 2026
+
+The Kria KR260 booted QUUX revision 15 and ran its board acceptance on the
+bitstream of its 19 ns fit in `docs/fits.md`, built from the working tree on
+`23ee875`. Every result was logged beside the identity the fabric gave, 560
+lines of "QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type
+4), 40-bit words, period 19 ns; build 23ee8753 (commit 23ee875, tree modified
+and carrying an untracked file)". The bitstream was loaded 45 times, and
+each load's header named the same user ID. The band was System 2002's
+disk band on a GPT disk, booted by PROM 2002, and a high band made from it
+with the same microcode. The case files ran over HOST:, served by the file
+device from the card.
+
+### What was checked on the board
+
+- **The boot.** All 45 boots reached the listener. Main memory was 32M
+  words, which the console's word 37 and the band's own memory size agree
+  on.
+- **lispm-check over HOST:.** 49 of the 50 case files gave muir's verdicts,
+  on the disk band and on the high band. The fiftieth is the network's
+  transmit order, which revision 15 drops with the network.
+- **The numbers.** 32-bit fixnums and IEEE singles passed their cases, and
+  the numbers, floats, fixnum-boundary and bignum cases gave muir's verdicts.
+- **The file device.** A file was compiled from HOST: and loaded at every
+  boot.
+- **A disk save.** A marked band was saved, cold-booted and found marked,
+  then the old band was restored and warm-booted.
+- **The sixty-cycle clock.** It counted 59.9994 to 60.0003 a second over
+  682 s.
+- **The control store.** It was unchanged across 1,805 s of running.
+- **A checkpoint.** Taken at four points, each resumed in muir and came back
+  byte for byte. The run's own script named the board's copy of each file
+  where the host's was meant, so the round trips were run again by hand from
+  the host's copies.
+- **The garbage collector.** The long session passed on both bands, with
+  28.3 s of consing on the disk band, and so did a tenured collection and a
+  save with young objects.
+- **Words 224 and 225** read zero after all the runs.
+
+Main memory's port priority was written by hand after each of the 45 loads
+and read back as 15 every time. The served set of that day had no script
+that writes it. The set served since writes it at boot (`docs/boot.md`).
+After the run the CADR was put back on the board, and its served set and its
+card's top-level files were as before.
+
+### What this does not establish
+
+**The stamp does not name a commit.** The bitstream was built from a modified
+tree, so the run is tied to the tree's tracked sources, `5a15914`'s, and not
+to a commit's stamp.
+
+**The board name read empty.** That tree's core gave words 20 to 24 as zero,
+so `(si:board-name)` returned NIL, as the design then said. The board name
+has since been put in every revision 15 top level.
+
+**The memory's latency was not measured.** This board's revision 15 has no
+latency probe.
+
+## QUUX revision 15 on the Arty Z7-20 and the DE25-Nano, 15 October 2026
+
+Both boards booted QUUX revision 15 and ran its board acceptance, each on the
+bitstream of its fit in `docs/fits.md`: the Arty Z7-20 at 48 ns from
+`aa4a6ad`, the DE25-Nano at 22.5 ns from `b1b4bcb`. Every result was logged
+beside the identity the fabric gave. On the Arty Z7-20 that was "QUUX
+revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), 40-bit
+words, period 48 ns; build aa4a6ad0 (commit aa4a6ad, tree clean)". On the
+DE25-Nano it was the same with "period 22.5 ns; no build stamp", because
+that board's face cannot read its stamp (below). The band was System 2002 on
+a GPT disk, booted by PROM 2002, and the HOST: tree was the band's own
+source with its microcode, served by the file device from the card.
+
+### What was checked on the boards
+
+The same list ran on both boards:
+
+- **The boot.** The banner read "Experimental System 2002, Microcode 2002,
+  32768K, QUUX on Arty Z7-20", and "QUUX on DE25-Nano" on the other board.
+  The Arty Z7-20 booted 23 times and reached the listener every time. The
+  DE25-Nano booted 25 times. Once it came up with no network, and a reboot
+  from the serial console cleared that (below).
+- **lispm-check over HOST:.** 49 of the 50 case files gave muir's verdicts.
+  The fiftieth is the network's transmit order, which revision 15 drops with
+  the network. The board-name cases give each board's own name, by design.
+- **The numbers.** 32-bit fixnums and IEEE singles passed their cases.
+- **The file device.** A file was compiled from HOST: and loaded at every
+  boot.
+- **A disk save.** A marked band was saved, cold-booted and found marked,
+  then the old band was restored and warm-booted.
+- **The sixty-cycle clock.** It counted 60.0000 to 60.0020 a second over
+  about ten minutes on each board. On the Arty Z7-20 the first window read
+  47.6 a second, which is what a reset of the counter it reads about 140 s
+  into the window would give. That reset is inferred and was not seen, and
+  two later windows measured the rate.
+- **The control store.** It was unchanged after thirty minutes of running.
+- **A checkpoint.** Taken at several points, each resumed in muir and came
+  back byte for byte.
+- **The garbage collector.** The long session, a tenured collection, and a
+  save with young objects all passed.
+- **The display output.** No underrun or read error came up through ten
+  minutes of bitblt and scrolling print (`docs/display-output.md`).
+
+Afterwards the CADR was put back on each board. Its card, but for the saved
+clock, and its served files were as before.
+
+### A board is slower, and the design is the same
+
+The two boards ran one design. Only their periods and their parts differ, so
+the same work takes longer on the slower board. The garbage collector's long
+session took 61.0 s of consing on the Arty Z7-20 at 48 ns and 28.1 s on the
+DE25-Nano at 22.5 ns. That is a ratio of 2.17, against a ratio of periods of
+2.13. The period is not the whole of it: the Kria KR260 took 28.3 s at 19
+ns, about the DE25-Nano's time, with a larger cache and its own memory path.
+
+What differs between the three boards running revision 15, the Kria KR260
+included:
+
+| | Kria KR260 | DE25-Nano | Arty Z7-20 |
+|---|---|---|---|
+| The period | 19 ns | 22.5 ns | 48 ns |
+| The cache | 64K words | 16K words | 4K words |
+| The display | 1920x1080 at 60 Hz, DisplayPort | 1280x1024 at 60 Hz, HDMI | 1280x1024 at 60 Hz, HDMI |
+| Main memory's port | `S_AXI_HP0_FPD`, 128 bits | the processor system's FPGA-to-SDRAM bridge, shared with the packs and the display | `S_AXI_HP0`, 64 bits |
+| The port's priority | written at boot (`docs/boot.md`) | not set | not set |
+| The latency probe | none | the console's page 3 | none |
+| The stamp read from the running fabric | yes | no, the bitstream's USERCODE only | yes |
+
+None of the three has a network, a serial line or the debug cable on
+revision 15. QUUX has no Chaosnet, and it drops the serial line and the debug
+cable (contract Q5). Each board's display mode is fixed and needs a fit to
+change (`docs/display-output.md`).
+
+**The DE25-Nano's memory is the processor system's.** Its probe timed every
+read and write the machine made through the bridge, over 57 runs. Reads took
+553 ns on average, and the longest of 98.8 million took 2.9 us. Writes took
+460 ns on average, and the longest took 1.6 us. The probe starts at the
+bridge's address handshake, so the whole path the machine waits on is at
+least these figures. `docs/console.md` has the probe.
+
+### What this does not establish
+
+**The build stamp of the DE25-Nano's running fabric was not read on the
+board.** Its face reads all ones. What links the run to `b1b4bcb` is the
+bitstream: the fit gave USERCODE `b1b4bcb0`, the configuration file made
+from it carries the same user code, and the board was served that file by
+its digest.
+
+**One boot of the DE25-Nano's 25 came up with no network.** The processing
+system's SMMU reported translation faults for the Ethernet controller, and
+the board got no address and could not be reached. The machine itself was
+running. A reboot from the serial console cleared it, and no other boot
+showed it. Its cause was not investigated.
+
+**No monitor result is recorded here.** The screens these runs captured were
+`cadr-terminal`'s, read from the frame buffer in DDR.

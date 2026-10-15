@@ -938,7 +938,7 @@ overrides the fetch job's bound beside it, so neither is in force on the board.
 A second is `SECOND_T` edges of the machine's clock, 100,000,000 at the 10 ns
 tick. That is a fabric choice like the debug window's watchdog, so it is counted
 in board ticks and not on MIT's grid. A board whose clock is not the tick
-passes its own: revision 15 on the Kria KR260 derives it from its period, below.
+passes its own: revision 15 derives it from its period on each board, below.
 
 ### What holds it
 
@@ -1354,8 +1354,9 @@ next frame. The border, where there is one, stays black.
 `err_clear` port, a pulse in the machine's clock domain, clears `rd_error` at
 once and `underrun` once it has crossed into the pixel domain. A fault on the
 same edge as the clear wins. The console's word 42 reads both and clears them
-(`docs/console.md`). The Arty Z7-20, the DE25-Nano and revision 14's Kria tie
-`bow` and `err_clear` low, so there nothing changes.
+(`docs/console.md`). The CADR's and revisions 13 and 14's top levels
+(`cadr_arty.sv`, `cadr_de25.sv`, `cadr_kr260.sv`) tie `bow` and `err_clear`
+low, so there nothing changes. Every revision 15 top level drives both.
 
 **The sleep's second is the period's.** The top computes `SECOND_T` from its
 period, a second to the nearest clock: 52,631,579 at 19 ns.
@@ -1369,6 +1370,53 @@ frames, then the clear, which must leave `rd_error` down. The core at 1920 by
 1080 is held to muir at that size by `build/quux15_videosize.quux.pass`, and
 `build/quux15_kr260_param.pass` reads the size, the raster and `SECOND_T` back
 at the top's instances.
+
+## Revision 15 on the Arty Z7-20 and the DE25-Nano
+
+QUUX revision 15's top levels for these two boards,
+`boards/arty-z7-20/quux15_arty.sv` and `boards/de25-nano/quux15_de25.sv`,
+build the same display output as `cadr_arty.sv` and `cadr_de25.sv` do. On the
+Arty Z7-20 `cadr_display_out.sv` reads `S_AXI_HP3` and the picture goes out
+on the HDMI connector through `cadr_hdmi_tx.sv` and `cadr_hdmi_phy.sv`. On
+the DE25-Nano it reads the FPGA-to-SDRAM bridge's share and goes out through
+the ADV7513, which `cadr_adv7513.sv` writes over its two wires. Both are
+VESA's 1280x1024 at 60 Hz, the mode revisions 13 and 14 have on these
+boards.
+
+**The picture is the video controller at the raster's size, 1280 by 1024.**
+The two tops give the core, the console's word 39 and the display the same
+size: 40 words a line, 40,960 words, filling the raster. The core's feature
+words 11 and 12 say it. A picture that fills the raster cannot turn a
+quarter, so it stays upright when a turn is asked for. These boards'
+revision 15 has no color board, so the color map reads zero.
+
+**The rest is the Kria KR260's.** DDR holds the screen, because the cache is
+write-through. Word 210's black-on-white reaches the picture, and the
+console's word 42 reads and clears the two sticky faults.
+
+**The board differs, and the design does not.** The mode is the board's, and
+changing it needs a fit (1. The video mode): 1280 by 1024 here and 1920 by
+1080 on the Kria KR260. The sleep's second is counted in clocks of the board's
+period, to the nearest clock: 20,833,333 at the Arty Z7-20's 48 ns and
+44,444,444 at the DE25-Nano's 22.5 ns.
+
+**What holds it.** `build/display_out.quux.pass` builds the display at the
+picture these two boards pass it, with the configurations the Kria KR260's
+build adds (black-on-white, the slowed port and then the clear, the errors
+and then the clear), its memory side at 10 ns.
+`build/quux15_arty_param.pass` and `build/quux15_de25_param.pass` read the
+size, the raster and `SECOND_T` back at each top's instances. The Arty
+Z7-20's flow reads `rtl/plumbing/xilinx7/cadr_hdmi.xdc` and asserts that the
+display's clocks are grouped apart from the machine's. The DE25-Nano's flow
+reads its pixel clock back as 108.003 MHz for the mode's 108.0 and times all
+27 video pins against the forwarded clock.
+
+**On silicon**, on both boards, the console's word 42 was cleared at boot
+and then read every ten seconds through ten minutes of bitblt and scrolling
+print. Neither sticky fault came up on either board, so the display output
+fetched every line in time under that load. The screens those runs captured
+were `cadr-terminal`'s, which reads the frame buffer from DDR, and not the
+HDMI output's.
 
 ## What is not built
 
