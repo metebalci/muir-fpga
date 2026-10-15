@@ -84,6 +84,13 @@ if {$rev15 && (![string is integer -strict $period] || $period < 20 || $period >
     puts "project: PERIOD is '$period', which is not revision 15's period in 0.5 ns"
     exit 1
 }
+# Revision 15's boot PROM, the image `build.sh` chose and names: PROM 2002
+# unless `PROM` named a test program.
+set prom [expr {[info exists ::env(PROM)] ? $::env(PROM) : ""}]
+if {$rev15 && $prom eq ""} {
+    puts "project: no PROM: build.sh names revision 15's boot PROM"
+    exit 1
+}
 set userid  [lindex $argv 1]
 set sources [lrange $argv 2 end]
 set root    [pwd]
@@ -348,9 +355,9 @@ if {!$fault && !$rev15} {
 # start without them, and the synthesis report's parameter table is where the
 # two paths can be read back.
 if {$rev15} {
-    # Revision 15's core reads its own PROM and no sync PROM, and the period
-    # is its top level's parameter.
-    set_parameter -name PROM_HEX [file join $root build quux15_transfer_prom.hex]
+    # Revision 15's core reads its own PROM, the one `build.sh` names, and
+    # no sync PROM, and the period is its top level's parameter.
+    set_parameter -name PROM_HEX [file join $root $prom]
     set_parameter -name PERIOD $period
 } elseif {!$fault} {
     # QUUX boots from its own PROM, version 2001, revision 13's (`WORD_BITS`

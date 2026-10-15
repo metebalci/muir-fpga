@@ -112,12 +112,15 @@
 `default_nettype none
 
 module quux15_de25 #(
+    // The boot PROM's image, which the flow names: PROM 2002
+    // (`build/boot_prom.quux15.hex`) unless `PROM` names a test program,
+    // as on the Kria KR260 and the Arty Z7-20.
     parameter string PROM_HEX = "build/quux15_transfer_prom.hex",
     // **THE PERIOD**, in units of 0.5 ns: the one place it is decided on
     // this board, which `build.sh` sets from `PERIOD_NS` and asks the PLL
-    // for.  27 ns, the board's provisional period in the goldens, until its
-    // binding fit sets it.
-    parameter int unsigned PERIOD = 54
+    // for.  22.5 ns, the board's binding fit's and its period in the
+    // goldens.
+    parameter int unsigned PERIOD = 45
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,

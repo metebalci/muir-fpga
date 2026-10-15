@@ -176,8 +176,9 @@ long write_interval(Config c) {
 // **THE DISPLAY'S LINE BUDGET**: a raster line of 1280x1024 at 60 Hz is
 // 1,688 pixels at 108 MHz, 15.63 us, and the display asks for a line's words
 // (or a band's next word) one line ahead.  579 clocks is that line at 27 ns,
-// the longest period this board's revision 15 is built at, so the fewest
-// clocks a line has.  No read of the display's may wait longer.
+// longer than any period this board's revision 15 is built at (22.5 ns, its
+// binding fit's), so fewer clocks than a line has.  No read of the
+// display's may wait longer.
 constexpr long kLineBudget = 579;
 // The pack side has no raster, but it must not starve: no burst of its may
 // wait longer than this from its valid to its answer.

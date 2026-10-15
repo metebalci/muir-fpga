@@ -598,7 +598,7 @@ int main(int argc, char **argv) {
   // ================================ the console face's words, and the lamps
   {
     const uint32_t period = LwRead(kPeriodWord), units = LwRead(kMainWord);
-    Check(period == 54, "the console's word 40 reads %u, and the period is 54 half-nanoseconds", period);
+    Check(period == 45, "the console's word 40 reads %u, and the period is 45 half-nanoseconds", period);
     Check(units == 0x42440200u, "the console's word 37 reads %08x, and main memory is \"BD\" and 512 units",
           units);
     LwWrite(kLampsWord, kLampSteadyKey);

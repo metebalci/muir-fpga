@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Whether the machine a board is built as reaches `cadr_machine`.
 
-    python3 tools/machine_param_check.py .
+    python3 tools/machine_param_check.py . [--make]
 
 `MACHINE` is "cadr", MIT's machine, or "quux", the evolved CADR.  Each board's
 top level takes it as a parameter and hands it to `cadr_machine`, and the
@@ -66,10 +66,22 @@ the generic reach synthesis there; `boards/de25-nano/quartus/build.sh` reads
 the value back out of Quartus's synthesis report, and the Arty's flow has no
 such read-back.  It does not check where either flow writes its build.
 
+**AND THE DE25-NANO'S REVISION 15 BUILDS AT ITS BINDING PERIOD FROM PROM
+2002 BY DEFAULT**, as the Kria KR260's and the Arty Z7-20's flows do: its
+`build.sh`, asked for no period and no PROM, says 22.5 ns, the binding fit's,
+and `build/boot_prom.quux15.hex`; it takes the image `PROM` names; it holds
+the image to `PROM_SHA256` when given, refusing one that differs and taking
+one that agrees; and it refuses `PROM` on any other revision.  With
+`--make`, which the Makefile passes and the mutation runner's copy (which has
+no Makefile) does not, `make -n de25 ... REVISION=15` hands `build.sh` the
+period 22.5, PROM 2002's image and that image's digest, written here apart
+from the Makefile, and with `PROM` named, that image and no digest.
+
 Exit status 0 when every case agrees, 1 otherwise, with each case's line
 printed either way.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -184,6 +196,14 @@ BOARDS = {
 
 # A name that is not a machine, and close enough to one to be a typing slip.
 NOT_A_MACHINE = "cdr"
+
+# The DE25-Nano's revision 15 by default: the binding fit's period, and PROM
+# 2002 assembled for revision 15, its image's path and digest (the Makefile's
+# `QUUX15_PROM_2002_SHA256`, written again here).
+DE25_Q15_PERIOD_NS = "22.5"
+DE25_Q15_PROM = "build/boot_prom.quux15.hex"
+DE25_Q15_PROM_SHA256 = "2b27752f9327d5ed3e61c7af39777d8ebf7e6ab971f6fdaa2e56bfe1c88cdb1c"
+DE25_Q15_TEST_PROM = "build/quux15_transfer_prom.hex"
 
 failures = []
 log = []
@@ -781,9 +801,8 @@ def refused_at(board, config, value, message, instance):
 
 def flow(what, cmd, env_add, rc_want, has, lacks):
     env = dict(os.environ)
-    env.pop("MACHINE", None)
-    env.pop("WORD_BITS", None)
-    env.pop("REVISION", None)
+    for name in ("MACHINE", "WORD_BITS", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256"):
+        env.pop(name, None)
     env.update(env_add)
     rc, out = run(cmd, env)
     wrong = []
@@ -797,10 +816,38 @@ def flow(what, cmd, env_add, rc_want, has, lacks):
         say(True, what)
 
 
+def make_flow(what, make_args, has, lacks):
+    """`make -s -n` of the DE25-Nano's flow, joined across its continuation
+    lines: what it hands `build.sh`, each of `has` on the line that runs it
+    and none of `lacks`.  PROM 2002's image is not remade (`-o`): nothing in
+    `make check` reads it, and `-n` runs nothing."""
+    env = dict(os.environ)
+    for name in ("MACHINE", "WORD_BITS", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256", "MAKEFLAGS", "MFLAGS"):
+        env.pop(name, None)
+    rc, out = run(["make", "-s", "-n", "-o", DE25_Q15_PROM, "de25"] + make_args, env)
+    line = [l for l in out.replace("\\\n", " ").split("\n") if "boards/de25-nano/quartus/build.sh" in l]
+    wrong = []
+    if rc != 0:
+        wrong.append("make exited %d" % rc)
+    if len(line) != 1:
+        wrong.append("%d lines run build.sh" % len(line))
+    else:
+        words = line[0].split()
+        wrong += ["the line has no %s" % h for h in has if h not in words]
+        wrong += ["the line has %s" % h for h in lacks if any(w.startswith(h) for w in words)]
+    if wrong:
+        say(False, "%s --- %s:\n%s" % (what, ", ".join(wrong), out.strip()))
+    else:
+        say(True, what)
+
+
 def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: machine_param_check.py <repository root>")
-    os.chdir(sys.argv[1])
+    args = sys.argv[1:]
+    with_make = "--make" in args
+    args = [a for a in args if a != "--make"]
+    if len(args) != 1:
+        sys.exit("usage: machine_param_check.py <repository root> [--make]")
+    os.chdir(args[0])
     os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="machine_param.", dir="build")
     try:
@@ -1038,6 +1085,39 @@ def main():
         flow("the DE25-Nano's build.sh refuses REVISION=15 at a period it cannot run", cmd,
              dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15", PERIOD_NS="9.5"), 1,
              ["de25: REFUSED: PERIOD_NS is 9.5; revision 15 runs at 10 to 63.5 ns"], [])
+        # Revision 15 by default: the binding fit's period and PROM 2002.
+        q15 = dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15")
+        flow("the DE25-Nano's build.sh builds revision 15 at %s ns from PROM 2002 by default"
+             % DE25_Q15_PERIOD_NS, cmd, q15, 1,
+             ["de25: revision 15 at %s ns:" % DE25_Q15_PERIOD_NS,
+              "de25: the boot PROM is %s\n" % DE25_Q15_PROM], [])
+        flow("the DE25-Nano's build.sh takes the boot PROM PROM names on revision 15", cmd,
+             dict(q15, PROM=DE25_Q15_TEST_PROM), 1,
+             ["de25: the boot PROM is %s\n" % DE25_Q15_TEST_PROM], ["the boot PROM is %s" % DE25_Q15_PROM])
+        image = out("not-prom-2002.hex")
+        with open(image, "w") as f:
+            f.write("0000000000000000\n")
+        with open(image, "rb") as f:
+            image_sha = hashlib.sha256(f.read()).hexdigest()
+        flow("the DE25-Nano's build.sh refuses a boot PROM whose digest is not PROM_SHA256's", cmd,
+             dict(q15, PROM=image, PROM_SHA256=DE25_Q15_PROM_SHA256), 1,
+             ["de25: REFUSED: %s's sha256 is %s, and PROM_SHA256 is %s" % (image, image_sha, DE25_Q15_PROM_SHA256)],
+             ["PROM_SHA256's"])
+        flow("the DE25-Nano's build.sh takes a boot PROM whose digest is PROM_SHA256's", cmd,
+             dict(q15, PROM=image, PROM_SHA256=image_sha), 1,
+             ["de25: the boot PROM's sha256 is %s, PROM_SHA256's\n" % image_sha], ["and PROM_SHA256 is"])
+        flow("the DE25-Nano's build.sh refuses PROM on revision 14", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="14", PROM=DE25_Q15_TEST_PROM), 1,
+             ["de25: REFUSED: PROM=%s names revision 15's boot PROM" % DE25_Q15_TEST_PROM], [])
+        if with_make:
+            q15_make = ["MACHINE=quux", "WORD_BITS=40", "REVISION=15", "DDR=1", "HDMI=1"]
+            make_flow("make de25 REVISION=15 hands build.sh %s ns and PROM 2002 with its digest" % DE25_Q15_PERIOD_NS,
+                      q15_make,
+                      ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_PROM,
+                       "PROM_SHA256=%s" % DE25_Q15_PROM_SHA256], [])
+            make_flow("make de25 REVISION=15 PROM=%s hands build.sh that image and no digest" % DE25_Q15_TEST_PROM,
+                      q15_make + ["PROM=%s" % DE25_Q15_TEST_PROM],
+                      ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_TEST_PROM], ["PROM_SHA256="])
         flow("the DE25-Nano's build.sh refuses REVISION=14 on the CADR", cmd,
              dict(nowhere, MACHINE="cadr", REVISION="14"), 1,
              ["de25: REFUSED: REVISION=14 is QUUX's, and MACHINE=cadr"], [])

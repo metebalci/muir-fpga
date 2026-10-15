@@ -47,14 +47,17 @@
 # **`REVISION=15` BUILDS QUUX REVISION 15**, `boards/de25-nano/quux15_de25.sv`
 # with `MACHINE=quux WORD_BITS=40`, always the whole board (`DDR=1 HDMI=1`),
 # into `build/de25-quux15-ddr-hdmi/`.  Its period is `PERIOD_NS`, in whole or
-# half nanoseconds, 27 unless asked: the I/O PLL is asked for 2,000 / (2 x
-# `PERIOD_NS`) MHz, the top level is given the period in units of 0.5 ns, and
-# `quux15_sta_check.tcl` refuses a build whose machine clock is not the
-# period asked.  Its sources swap in `rtl/plumbing/agilex5/`'s versions of the
-# core's true dual-port RAM, macro dispatch memory, dispatch memory and valid
-# bits (the Makefile's `QUUX15_DE25_SRC`), and `project.tcl` places its small
-# RAMs.  Its checks are its own: the RAM summary below, `rams_check.tcl`'s
-# rules for revision 15, `quux15_sta_check.tcl`, and a size floor.
+# half nanoseconds, 22.5 unless asked, the board's binding fit's: the I/O PLL
+# is asked for 2,000 / (2 x `PERIOD_NS`) MHz, the top level is given the
+# period in units of 0.5 ns, and `quux15_sta_check.tcl` refuses a build whose
+# machine clock is not the period asked.  Its boot PROM is PROM 2002
+# (`build/boot_prom.quux15.hex`) unless `PROM` names another image, as on the
+# Kria KR260 and the Arty Z7-20 (`quux15_bitstream.tcl`'s `PROM`).  Its
+# sources swap in `rtl/plumbing/agilex5/`'s versions of the core's true
+# dual-port RAM, macro dispatch memory, dispatch memory and valid bits (the
+# Makefile's `QUUX15_DE25_SRC`), and `project.tcl` places its small RAMs.
+# Its checks are its own: the RAM summary below, `rams_check.tcl`'s rules for
+# revision 15, `quux15_sta_check.tcl`, and a size floor.
 #
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
@@ -142,7 +145,7 @@ fi
 # **REVISION 15'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked
 # for it and the timing check reads it back.  Ten to 63.5, the core's
 # `period` being seven bits of 0.5 ns.  Revisions 13 and 14 run at the tick.
-period_ns=${PERIOD_NS:-27}
+period_ns=${PERIOD_NS:-22.5}
 period_half=0
 if [ "$revision" = 15 ]; then
     case $period_ns in
@@ -153,7 +156,38 @@ if [ "$revision" = 15 ]; then
     if [ "$period_half" -lt 20 ] || [ "$period_half" -gt 127 ]; then
         refuse "PERIOD_NS is $period_ns; revision 15 runs at 10 to 63.5 ns"
     fi
+    say "revision 15 at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
 fi
+
+# **THE BOOT PROM.**  The CADR's is MIT's; QUUX revision 13 boots from
+# PROM 2001 (contract G2 §2.8) and revision 14 from PROM 2002
+# (`make build/boot_prom.quux14.hex`), and `project.tcl` chooses theirs the
+# same way.  **REVISION 15'S IS PROM 2002 ASSEMBLED FOR IT**,
+# `build/boot_prom.quux15.hex`, a 64-bit word a line, as on the Kria KR260
+# and the Arty Z7-20; `PROM` names another image, a test program's
+# (`golden/src/quux15.rs --prom`), and only then is another taken, which
+# `project.tcl` is handed.  `PROM` is revision 15's alone and refused on any
+# other build, where it would be ignored.  Revision 15 reads no sync PROM.
+# Synthesis's parameter table is read back below.
+prom_image=build/boot_prom.hex
+[ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
+if [ "$revision" = 15 ]; then
+    prom_image=${PROM:-build/boot_prom.quux15.hex}
+elif [ -n "${PROM:-}" ]; then
+    refuse "PROM=$PROM names revision 15's boot PROM, and this build is not revision 15's: it boots from $prom_image"
+fi
+say "the boot PROM is $prom_image"
+[ -s "$prom_image" ] || refuse "$prom_image is missing; \`make de25\` builds it first"
+# **AND ITS DIGEST**, said in the log and held to `PROM_SHA256` where the
+# flow gives one: `make de25` gives PROM 2002's with revision 15's own
+# image, so that a file of that name holding anything else is refused rather
+# than fitted.
+prom_sha=$(sha256sum < "$prom_image" | cut -d ' ' -f 1)
+if [ -n "${PROM_SHA256:-}" ] && [ "$prom_sha" != "$PROM_SHA256" ]; then
+    refuse "$prom_image's sha256 is $prom_sha, and PROM_SHA256 is $PROM_SHA256"
+fi
+say "the boot PROM's sha256 is $prom_sha${PROM_SHA256:+, PROM_SHA256's}"
+[ -s build/sync_prom.hex ] || refuse "build/sync_prom.hex is missing; \`make de25\` builds it first"
 
 conf=boards/de25-nano/local.conf
 conf_value() {
@@ -169,19 +203,6 @@ for tool in "$bin/quartus_sh" "$bin/quartus_ipgenerate" "$bin/quartus_syn" \
             "$bin/quartus_fit" "$bin/quartus_sta" "$bin/quartus_asm" \
             "$qsys/ip-deploy" "$qsys/qsys-script"; do
     [ -x "$tool" ] || refuse "$tool is not there"
-done
-
-# QUUX's boot PROM is its own, version 2001 (contract G2 §2.8).
-# `project.tcl` chooses it the same way, and synthesis's parameter table is
-# read back below.
-# Revision 14's is PROM 2002 (`make build/boot_prom.quux14.hex`).
-prom_image=build/boot_prom.hex
-[ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
-# Revision 15's is its own core's, a 64-bit word a line
-# (`golden/src/quux15.rs --prom`), and it reads no sync PROM.
-[ "$revision" = 15 ] && prom_image=build/quux15_transfer_prom.hex
-for image in "$prom_image" build/sync_prom.hex; do
-    [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
 
 # **ONLY THIS FAMILY'S PLUMBING.**  Vendor-specific RTL lives under
@@ -321,9 +342,6 @@ fi
 if [ "$fault" -eq 0 ]; then
     say "the machine is $machine, into $out"
 fi
-if [ "$revision" = 15 ]; then
-    say "revision 15 at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
-fi
 rm -rf "$out"
 mkdir -p "$out/ip" "$out/tmp"
 
@@ -449,7 +467,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
-    WORD_BITS="$word_bits" REVISION="$revision" PERIOD="$period_half" DE25_HPS_BOOT="$hps_boot" \
+    WORD_BITS="$word_bits" REVISION="$revision" PERIOD="$period_half" PROM="$prom_image" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it

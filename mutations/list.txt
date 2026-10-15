@@ -33403,6 +33403,99 @@ if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
     if [ "$period_half" -lt 19 ] || [ "$period_half" -gt 127 ]; then
 @end
 
+# **AND THE DE25-NANO'S REVISION 15 BY DEFAULT** (`machine_param`): the
+# binding fit's period and PROM 2002, `PROM` taken on revision 15 and
+# refused elsewhere, and the image held to `PROM_SHA256`; and the top's own
+# period (`quux15_de25_param`, `quux15_de25`).
+
+@mutation machine-param-the-de25-q15-boots-the-transfer-program
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note Revision 15 on the DE25-Nano built with the transfer test program as
+@note its boot PROM when no PROM is named, not PROM 2002.
+@old
+    prom_image=${PROM:-build/boot_prom.quux15.hex}
+@new
+    prom_image=${PROM:-build/quux15_transfer_prom.hex}
+@end
+
+@mutation machine-param-the-de25-q15-ignores-prom
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note Revision 15 on the DE25-Nano built from PROM 2002 whatever PROM
+@note names: a test program asked for is never fitted.
+@old
+    prom_image=${PROM:-build/boot_prom.quux15.hex}
+@new
+    prom_image=build/boot_prom.quux15.hex
+@end
+
+@mutation machine-param-the-de25-q15-period-left-at-27
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note Revision 15 on the DE25-Nano built at the provisional 27 ns when no
+@note period is asked, not the binding fit's 22.5 ns.
+@old
+period_ns=${PERIOD_NS:-22.5}
+@new
+period_ns=${PERIOD_NS:-27}
+@end
+
+@mutation machine-param-the-de25-takes-prom-off-revision-15
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note PROM taken beside a build that is not revision 15's and ignored: the
+@note image asked for is not the one fitted, and nothing says so.
+@old
+elif [ -n "${PROM:-}" ]; then
+@new
+elif [ -n "${PROM:-}" ] && false; then
+@end
+
+@mutation machine-param-the-de25-prom-digest-not-held
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The boot PROM's image not held to PROM_SHA256: a file named for PROM
+@note 2002 that holds another program is fitted as PROM 2002.
+@old
+if [ -n "${PROM_SHA256:-}" ] && [ "$prom_sha" != "$PROM_SHA256" ]; then
+@new
+if [ -n "${PROM_SHA256:-}" ] && [ "$prom_sha" = nothing ]; then
+@end
+
+@mutation machine-param-the-de25-prom-digest-always-refused
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note Every image refused once PROM_SHA256 is given, PROM 2002's own among
+@note them: the stock build never reaches Quartus.
+@old
+if [ -n "${PROM_SHA256:-}" ] && [ "$prom_sha" != "$PROM_SHA256" ]; then
+@new
+if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
+@end
+
+@mutation quux15-de25-own-period-left-at-27
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The top's own period left at the provisional 27 ns, not the binding
+@note fit's 22.5 ns.
+@old
+    parameter int unsigned PERIOD = 45
+@new
+    parameter int unsigned PERIOD = 54
+@end
+
+@mutation quux15-de25-own-period-left-at-27-console
+@check quux15_de25
+@file boards/de25-nano/quux15_de25.sv
+@note The top's own period left at the provisional 27 ns: the console's
+@note word 40 reads 54.
+@old
+    parameter int unsigned PERIOD = 45
+@new
+    parameter int unsigned PERIOD = 54
+@end
+
 # **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**
 # (`quux15_reset_arty`, `quux15_reset_kr260`): revision 15's top levels
 # simulated around the processing system's simulation, the port's reset the

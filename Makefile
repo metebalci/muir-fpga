@@ -371,10 +371,9 @@ QUUX15_PERIODS_redirect := 36 20
 # `CACHE_WORDS`.  The Kria KR260's are muir's defaults, so its traces carry
 # no board in their names; another board's do, `.p<P>.<board>.golden`.
 # The periods are in units of 0.5 ns: the Kria's 19 ns, its binding fit's;
-# the Arty Z7-20's 48 ns, its trial fit's; and the DE25-Nano's 27 ns,
-# PROVISIONAL: the trial fit's on the A5EB028, a part of its family,
-# package and grade, until its own binding fit sets it.  A board's period
-# moves here and nowhere else.  `boardcache` is the board's cache at its own
+# the Arty Z7-20's 48 ns, its trial fit's; and the DE25-Nano's 22.5 ns, its
+# binding fit's.  A board's period moves here and nowhere else.
+# `boardcache` is the board's cache at its own
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
 # that differ in the set's top bit alone, the way each set used last under
 # reads and walks that overfill two sets, and the completion's sweep under
@@ -386,7 +385,7 @@ QUUX15_CACHE_kria := 65536
 QUUX15_CACHE_de25 := 16384
 QUUX15_CACHE_arty := 4096
 QUUX15_PERIOD_kria := 38
-QUUX15_PERIOD_de25 := 54
+QUUX15_PERIOD_de25 := 45
 QUUX15_PERIOD_arty := 96
 quux15_board_tag = $(if $(filter kria,$(1)),,.$(1))
 QUUX15_BOARD_TRACES = $(foreach b,$(QUUX15_BOARDS),$(foreach g,$(QUUX15_MEMSIDE),\
@@ -1296,9 +1295,10 @@ $(BUILD)/boot_prom.quux14.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.to
 	mv $@.tmp $@
 
 # **REVISION 15 BOOTS FROM PROM 2002 ASSEMBLED FOR IT** (contract G3
-# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which both
-# revision 15 flows carry by default (`quux15_bitstream.tcl`'s `PROM`).  It comes
-# from muir-sys's revision-15 build of PROM 2002, its `promh.mcr` kept in the
+# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which every
+# revision 15 flow carries by default (`quux15_bitstream.tcl`'s `PROM`, and
+# the DE25-Nano's `build.sh`'s).  It comes from muir-sys's revision-15 build
+# of PROM 2002, its `promh.mcr` kept in the
 # gitignored `ref/system-2002-rev15/` and held to its digest, read by muir's
 # own reader at revision 15's geometry (`golden/src/prom.rs`); the image is
 # held to its digest as well.  Nothing in `make check` reads it.
@@ -3503,9 +3503,9 @@ QUUX15_DE25_FACES := rtl/plumbing/cadr_input_cables.sv rtl/plumbing/cadr_gp0_def
 QUUX15_DE25_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_DE25_CORE_SRC) $(QUUX15_F2SDRAM) \
                    $(QUUX15_DE25_FACES) boards/de25-nano/quux15_de25.sv
 QUUX15_DE25_STUBS := tb/cadr_de25_stubs.sv tb/quux15_altdpram_model.sv
-# The period the flow is asked for, in nanoseconds, whole or a half; 27 by
-# default, the board's in the goldens (`QUUX15_PERIOD_de25`, in units of 0.5
-# ns), until its binding fit sets it.
+# The period the flow is asked for, in nanoseconds, whole or a half; 22.5 by
+# default, the board's binding fit's and its period in the goldens
+# (`QUUX15_PERIOD_de25`, in units of 0.5 ns).
 PERIOD_NS ?= $(shell echo $(QUUX15_PERIOD_de25) | awk '{ p = $$1 / 2; print (p == int(p)) ? int(p) : p }')
 
 # **LINTED AS THE FLOW BUILDS IT, EVERY LINTED FILE IN THE FLOW'S LIST, AND
@@ -3530,7 +3530,8 @@ $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
                            $(BUILD)/obj_quux15_de25_top/Vquux15_de25 | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    --top-module quux15_de25 $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
-	@$(MAKE) -s -n de25 MACHINE=quux WORD_BITS=40 REVISION=15 DDR=1 HDMI=1 > $(BUILD)/quux15_de25.flow 2>&1 \
+	@$(MAKE) -s -n -o $(BUILD)/boot_prom.quux15.hex de25 MACHINE=quux WORD_BITS=40 REVISION=15 DDR=1 HDMI=1 \
+	   > $(BUILD)/quux15_de25.flow 2>&1 \
 	   || { echo "quux15_de25: make -n de25 REVISION=15 failed; see $(BUILD)/quux15_de25.flow"; exit 1; }
 	@for f in $(filter-out tb/%,$(QUUX15_DE25_SRC)); do \
 	   tr -d '\\\n' < $(BUILD)/quux15_de25.flow | grep -q "build.sh .*$$f" \
@@ -3544,7 +3545,8 @@ $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
 # the cache's 16K words, main memory's 32M and the two bases, one write ID,
 # the video controller's 1280 by 1024 at the core, the face and the display
 # output, VESA's raster, the board name, the period at the core and the
-# face, and every time in clocks, at 10, 22, 23.5, 24 and 27 ns.
+# face, and every time in clocks, at 10, 22, 22.5, 23 and 24 ns; and the
+# top's own period, the board's binding fit's 22.5 ns.
 $(BUILD)/quux15_de25_param.pass: tools/quux15_de25_param_check.py tools/machine_param_check.py \
                                  $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_de25_param_check.py $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
@@ -3672,7 +3674,10 @@ $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT
 # before any vendor tool is looked for.  In the same tree it counts the debug
 # cable's connector, join and window, which the CADR has and QUUX does not
 # (contract Q5), and reads what drives the connector's pads.  Its header says
-# what it cannot see.
+# what it cannot see.  With `--make` it also asks `make -n de25 ...
+# REVISION=15` what the flow hands the DE25-Nano's `build.sh` by default and
+# with `PROM` named: the binding fit's period and PROM 2002 with its digest,
+# or the image named and no digest.
 #
 # Then make's own half, which the script cannot run: `make de25` hands the
 # machine to the Quartus flow, and `check MACHINE=quux` holds the machine
@@ -3702,7 +3707,7 @@ $(BUILD)/machine_guard.pass: tools/machine_guard_check.py $(MACHINE_SRC) $(QUUX1
 
 $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile \
                            boards/kria-kr260/display_raster.mk | $(BUILD)
-	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/machine_param_check.py .
+	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/machine_param_check.py . --make
 	$(MAKE) -s -n de25 MACHINE=quux | tr -d '\\\n' \
 	    | grep -q 'MACHINE=quux .*boards/de25-nano/quartus/build.sh' \
 	    || { echo "machine: make de25 MACHINE=quux does not hand the machine to build.sh"; exit 1; }
@@ -3834,17 +3839,23 @@ DE25_SPL_HEX ?=
 # behavioral one.
 DE25_MACHINE_SRC = $(filter-out rtl/plumbing/quux_keep_net.sv,$(MACHINE_SRC)) rtl/plumbing/agilex5/quux_keep_net.sv
 # **AND `REVISION=15`, ITS OWN TOP LEVEL AND LIST** (`QUUX15_DE25_SRC`, above),
-# at `PERIOD_NS`, its PROM its core's (`build/quux15_transfer_prom.hex`).
+# at `PERIOD_NS`, its boot PROM PROM 2002 (`build/boot_prom.quux15.hex`), as
+# on the Kria KR260 and the Arty Z7-20, unless `PROM` names another image, a
+# test program's: `make de25 ... REVISION=15 PROM=build/quux15_transfer_prom.hex`.
+# PROM 2002's image goes to `build.sh` with its digest, `PROM_SHA256`, so that
+# a file of that name holding anything else is refused rather than fitted.
+QUUX15_DE25_PROM = $(or $(PROM),$(BUILD)/boot_prom.quux15.hex)
 DE25_SRC = $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC),$(DE25_MACHINE_SRC) $(DE25_TOP) \
              $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
              $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
              $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI)))
-de25: $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC) $(BUILD)/quux15_transfer_prom.hex $(BUILD)/sync_prom.hex,\
+de25: $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(BUILD)/sync_prom.hex,\
       $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
       $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex))
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
 	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) $(if $(REVISION),REVISION=$(REVISION)) \
-	    $(if $(filter 15,$(REVISION)),PERIOD_NS=$(PERIOD_NS)) \
+	    $(if $(filter 15,$(REVISION)),PERIOD_NS=$(PERIOD_NS) PROM=$(QUUX15_DE25_PROM) \
+	        $(if $(filter $(BUILD)/boot_prom.quux15.hex,$(QUUX15_DE25_PROM)),PROM_SHA256=$(QUUX15_PROM_2002_SHA256))) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(DE25_SRC)
 
@@ -3857,7 +3868,10 @@ de25: $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC) $(BUILD)/quux15_transfer_
 # fit.  No simulation sees it, and a fit of the revision that was being
 # worked on does not either.  Where no Quartus is configured
 # (`QUARTUS_ROOTDIR`, or the board's `local.conf`), the pass says it was
-# skipped and is not written, so it runs again where Quartus is.
+# skipped and is not written, so it runs again where Quartus is.  Revision
+# 15 is synthesized with the transfer test program as its boot PROM
+# (`PROM`), which `make check` builds, because nothing in `make check` reads
+# PROM 2002's image (`QUUX15_PROM_2002`, above).
 DE25_SYN_FLOW := boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/project.tcl \
                  $(wildcard boards/de25-nano/quartus/*.sdc) boards/de25-nano/quartus/rams_check.tcl
 $(BUILD)/de25_syn.pass: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) $(DE25_SYN_FLOW) \
@@ -3871,7 +3885,8 @@ $(BUILD)/de25_syn.pass: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI)
 	   log=$(BUILD)/de25_syn.$$m$$r.log; \
 	   $(MAKE) --no-print-directory -o $(BUILD)/boot_prom.hex -o $(BUILD)/sync_prom.hex \
 	       -o $(BUILD)/boot_prom.quux13.hex -o $(BUILD)/boot_prom.quux14.hex -o $(BUILD)/quux15_transfer_prom.hex \
-	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} DDR=1 HDMI=1 DE25_SYN_ONLY=1 > $$log 2>&1 \
+	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} $$([ "$$r" = 15 ] && echo PROM=$(BUILD)/quux15_transfer_prom.hex) \
+	       DDR=1 HDMI=1 DE25_SYN_ONLY=1 > $$log 2>&1 \
 	     || { echo "de25_syn: $$m $${r:+revision $$r} does NOT synthesize on Quartus; see $$log"; \
 	          grep -h '^de25: REFUSED' $$log; exit 1; }; \
 	   echo "de25_syn: $$m $${r:+revision $$r} synthesizes, its synthesis checks passed"; \
