@@ -33981,6 +33981,143 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
       .probe_fitted(1'b0), .probe_state(probe_state), .probe_words(probe_words),
 @end
 
+# ---------------------------------------------------------------------------
+# **THE KRIA KR260'S LATENCY PROBE** (`boards/kria-kr260/quux15_kr260.sv`):
+# `rtl/plumbing/quux15_mem_probe.sv` at `S_AXI_HP0_FPD`'s own handshakes,
+# read on the console face's page 3.  `quux15_kr260_probe` holds it: the top
+# level simulated with the shell's master port driven and HP0's memory
+# modeled by `tb/quux15_kr260_probe_tb.cpp`, page 3 against the port's
+# handshakes timed there, a run started with transactions in flight, the
+# port's reset under them, and 32 write bursts unanswered at once.
+
+@mutation quux15-kr260-probe-not-fitted
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note The Kria KR260's face told it has no probe: page 3 reads UNMAPPED.
+@old
+      .probe_fitted(1'b1), .probe_state(probe_state), .probe_words(probe_words),
+@new
+      .probe_fitted(1'b0), .probe_state(probe_state), .probe_words(probe_words),
+@end
+
+@mutation quux15-kr260-probe-counts-every-beat
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A read timed at every beat the port hands back, not its last.
+@old
+    pr_r  <= hp0_rvalid && qm_rready && hp0_rlast;
+@new
+    pr_r  <= hp0_rvalid && qm_rready;
+@end
+
+@mutation quux15-kr260-probe-read-ends-without-rready
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A read's end taken at the last beat offered, not taken: a beat the
+@note master holds off is counted at every clock it waits.
+@old
+    pr_r  <= hp0_rvalid && qm_rready && hp0_rlast;
+@new
+    pr_r  <= hp0_rvalid && hp0_rlast;
+@end
+
+@mutation quux15-kr260-probe-read-starts-when-offered
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A read's start taken at every clock its address is offered, not at
+@note the port taking it: an address the port holds off is stamped again.
+@old
+    pr_ar <= hp0_arvalid && hp0_arready;
+@new
+    pr_ar <= hp0_arvalid;
+@end
+
+@mutation quux15-kr260-probe-write-starts-at-its-beats
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A write's start taken at its data beats, not its address.
+@old
+    pr_aw <= hp0_awvalid && hp0_awready;
+@new
+    pr_aw <= hp0_wvalid && hp0_wready;
+@end
+
+@mutation quux15-kr260-probe-write-ends-at-its-last-beat
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A write's end taken at its last data beat, not its response.
+@old
+    pr_b  <= qm_bvalid && qm_bready;
+@new
+    pr_b  <= hp0_wvalid && hp0_wready && hp0_wlast;
+@end
+
+@mutation quux15-kr260-probe-write-ends-without-bready
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note A write's end taken at its response offered, not taken.
+@old
+    pr_b  <= qm_bvalid && qm_bready;
+@new
+    pr_b  <= qm_bvalid;
+@end
+
+@mutation quux15-kr260-probe-queues-kept-through-the-port-reset
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note The probe's queues not given the port's reset: the stamps of the
+@note transactions the reset forgot are matched to the next run's answers.
+@old
+      .clk(clk), .rst(rst), .port_rst(axi_rst),
+@new
+      .clk(clk), .rst(rst), .port_rst(1'b0),
+@end
+
+@mutation quux15-kr260-probe-figures-reset-with-the-port
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note The figures given the port's reset rather than the fabric's: a run's
+@note figures are lost when the port is reset after it.
+@old
+      .clk(clk), .rst(rst), .port_rst(axi_rst),
+@new
+      .clk(clk), .rst(axi_rst), .port_rst(axi_rst),
+@end
+
+@mutation quux15-kr260-probe-sixteen-writes-deep
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note The write queue sixteen deep, the DE25-Nano's share's bound: with
+@note sixteen posted writes split at 4 KiB, 32 bursts are in flight on HP0.
+@old
+  quux15_mem_probe #(.T_W(20), .RD_DEPTH(4), .WR_DEPTH(32)) u_probe (
+@new
+  quux15_mem_probe #(.T_W(20), .RD_DEPTH(4), .WR_DEPTH(16)) u_probe (
+@end
+
+@mutation quux15-kr260-probe-directions-crossed
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note The two directions' figures crossed on page 3: words 49 to 52 the
+@note writes', 53 to 56 the reads'.
+@old
+  assign probe_words = {{12'd0, pr_wr_max}, {16'd0, pr_wr_sum[47:32]}, pr_wr_sum[31:0], pr_wr_count,
+                        {12'd0, pr_rd_max}, {16'd0, pr_rd_sum[47:32]}, pr_rd_sum[31:0], pr_rd_count};
+@new
+  assign probe_words = {{12'd0, pr_rd_max}, {16'd0, pr_rd_sum[47:32]}, pr_rd_sum[31:0], pr_rd_count,
+                        {12'd0, pr_wr_max}, {16'd0, pr_wr_sum[47:32]}, pr_wr_sum[31:0], pr_wr_count};
+@end
+
+@mutation quux15-kr260-probe-state-bits-reversed
+@check quux15_kr260_probe
+@file boards/kria-kr260/quux15_kr260.sv
+@note Word 48's three bits in the wrong order: running read as lost.
+@old
+  assign probe_state = {pr_lost, pr_sat, pr_running};
+@new
+  assign probe_state = {pr_running, pr_sat, pr_lost};
+@end
+
 # ------------------------------------------------------------ quux_card ---
 #
 # `tools/quux_card_check.py`, the QUUX card set's check: the served tree's

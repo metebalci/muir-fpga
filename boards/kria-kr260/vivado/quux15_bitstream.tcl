@@ -41,7 +41,7 @@ set sources [list \
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
-    rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux15_face.sv rtl/plumbing/quux15_mem_probe.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
     rtl/plumbing/quux_fd_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
     boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv]

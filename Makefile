@@ -437,6 +437,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
        $(BUILD)/quux15_de25.pass $(BUILD)/quux15_de25_param.pass $(BUILD)/quux15_de25_faces.pass \
        $(BUILD)/quux15_f2sdram.quux.pass $(BUILD)/quux15_reset_arty.pass $(BUILD)/quux15_reset_kr260.pass \
+       $(BUILD)/quux15_kr260_probe.pass \
        $(BUILD)/quux15_reset_axi.quux.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
@@ -3407,7 +3408,7 @@ QUUX15_KR260_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) r
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
-    rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux15_face.sv rtl/plumbing/quux15_mem_probe.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
     rtl/plumbing/quux_fd_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
     boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
@@ -3647,6 +3648,24 @@ $(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) t
 	    $(abspath tb/quux15_zynq_reset_tb.cpp)
 $(BUILD)/quux15_reset_kr260.pass: $(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
 	$(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
+	@touch $@
+
+# **AND THE KRIA KR260'S LATENCY PROBE** (`tb/quux15_kr260_probe_tb.cpp`):
+# the same top level around the same simulation, the shell's master port
+# driven and `S_AXI_HP0_FPD`'s memory modeled by the testbench, the probe
+# started, stopped and read on the console face's page 3 and its figures
+# held to the port's handshakes timed by the testbench.
+$(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv \
+        boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+        tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv tb/quux15_kr260_probe_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -DCADR_DDR_MAP_KR260 \
+	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 \
+	    -Mdir $(BUILD)/obj_quux15_kr260_probe --top-module quux15_kr260 \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv \
+	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) \
+	    $(abspath tb/quux15_kr260_probe_tb.cpp)
+$(BUILD)/quux15_kr260_probe.pass: $(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260
+	$(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260
 	@touch $@
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \

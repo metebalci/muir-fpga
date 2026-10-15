@@ -2909,6 +2909,7 @@ CHECKS["quux15_kr260"] = {
               "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
               "rtl/plumbing/cadr_axi_burst128.sv",
               "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
+              "rtl/plumbing/quux15_mem_probe.sv",
               "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
               "rtl/plumbing/quux_fd_face.sv", "rtl/plumbing/cadr_display_out.sv",
               "rtl/plumbing/cadr_axi_rd128.sv", "boards/kria-kr260/cadr_kr260_pixel_clock.sv",
@@ -3086,6 +3087,18 @@ for _board, _top, _ps, _define, _map in (
         "golden": None,
         "machine": "quux",
     }
+
+# **AND THE KRIA KR260'S LATENCY PROBE** (the Makefile's
+# `quux15_kr260_probe.pass`, `tb/quux15_kr260_probe_tb.cpp`): the same top
+# level and simulation, its master port driven and HP0's memory modeled by
+# the testbench, the probe's figures on the face's page 3 held to the port's
+# handshakes timed there.
+CHECKS["quux15_kr260_probe"] = dict(CHECKS["quux15_reset_kr260"],
+    sources=CHECKS["quux15_reset_kr260"]["sources"] + ["rtl/plumbing/quux15_mem_probe.sv"],
+    extra=[f for f in CHECKS["quux15_reset_kr260"]["extra"] if f != "rtl/plumbing/quux15_mem_probe.sv"],
+    tb="tb/quux15_kr260_probe_tb.cpp",
+    flags=["-Wno-PINCONNECTEMPTY", "-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+           "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260", "-DCADR_DDR_MAP_KR260"])
 
 # **A RESET ASKED FOR WHILE THE MEMORY PORT IS BUSY** (the Makefile's
 # `quux15_reset_axi.quux.pass`): the core and the console face in

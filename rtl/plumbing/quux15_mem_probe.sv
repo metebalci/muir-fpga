@@ -3,7 +3,9 @@
 //
 // **THE MEMORY PORT'S LATENCY PROBE**: how long the bridge takes to answer
 // the machine, timed at the bridge's own handshakes, for the DE25-Nano's
-// FPGA-to-SDRAM bridge (`quux15_f2sdram_port.sv`).  The tally
+// FPGA-to-SDRAM bridge (`quux15_f2sdram_port.sv`) and the Kria KR260's
+// `S_AXI_HP0_FPD` (`boards/kria-kr260/quux15_kr260.sv`), each board's own
+// wiring feeding it its port's four handshakes.  The tally
 // (`cadr_mem_count.sv`) counts requests and answers and has no timer, so it
 // cannot give a latency; this does, for the machine's port alone:
 //
@@ -19,8 +21,10 @@
 // The machine's transactions carry one ID, so the bridge answers each
 // direction in order, and the probe keeps the clock each address was taken
 // in a queue per direction, as deep as that direction can have in flight
-// (the share's `M_WRITES` writes; reads by beats, a line's five, so three
-// lines at most).  A latency is the clock its answer came in less the
+// (on the DE25-Nano the share's `M_WRITES` writes; reads by beats, a
+// line's five, so three lines at most; on the Kria KR260 the master's
+// sixteen posted writes each split in two at most, and a line's two
+// reads).  A latency is the clock its answer came in less the
 // clock at the queue's head.
 //
 // **IT RUNS ONLY WHEN TOLD.**  `run`, a clock's pulse, clears every figure
@@ -43,7 +47,9 @@
 // the queues.  `rst` is the fabric's, the figures' and the run's.
 //
 // What holds it: `tb/quux15_f2sdram_tb.cpp` times the same handshakes itself
-// in every configuration and compares the figures the face reads.
+// in every configuration and compares the figures the face reads, and
+// `tb/quux15_kr260_probe_tb.cpp` does the same through the Kria KR260's
+// top level.
 
 `default_nettype none
 

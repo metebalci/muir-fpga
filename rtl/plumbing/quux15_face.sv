@@ -109,10 +109,10 @@
 //
 //   page 3, +0xC0: **THE MEMORY PORT'S LATENCY PROBE**
 //   (`quux15_mem_probe.sv`), on a board whose port has one (`probe_fitted`,
-//   the DE25-Nano's); on any other every word of the page reads `UNMAPPED`
-//   and a write there is dropped.  Each latency is in clocks of the
-//   machine's clock, from the bridge taking the machine's address to its
-//   last read beat or its write response.
+//   the DE25-Nano's and the Kria KR260's); on any other every word of the
+//   page reads `UNMAPPED` and a write there is dropped.  Each latency is in
+//   clocks of the machine's clock, from the port taking the machine's
+//   address to its last read beat or its write response.
 //     48 PROBE    a write of `PROBE_RUN_KEY` clears every figure and starts
 //                 the probe, one of `PROBE_STOP_KEY` stops it, each a clock's
 //                 pulse; every other write is dropped.  Read as

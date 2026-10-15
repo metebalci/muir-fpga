@@ -32,6 +32,12 @@
 //     other address on both master ports is answered with a constant
 //     (`cadr_gp0_default.sv`), since a read nothing answers hangs both Arm
 //     cores.
+//   - **THE LATENCY PROBE ON THE FACE'S PAGE 3**
+//     (`rtl/plumbing/quux15_mem_probe.sv`), at HP0's own handshakes as the
+//     DE25-Nano's is at its bridge's: a read from the port taking its
+//     address to its last beat, a write from the port taking its address to
+//     its response, in clocks of the machine's clock
+//     (`tb/quux15_kr260_probe_tb.cpp` holds it).
 //   - **THE DISK PACKS ON `M_AXI_HPM0_FPD` AND `S_AXI_HP2_FPD`**, as
 //     `cadr_kr260.sv` has them: block-disk's block store (the core's
 //     `quux15_block_walk.sv`) served by `cadr_disk_pack.sv`, its registers at
@@ -369,6 +375,44 @@ module quux15_kr260 #(
   end
   logic [95:0] gpio_i;
   assign gpio_i = {1'b0, clk_gray, tally};
+
+  // ------------------------------------------------- the latency probe
+  //
+  // `rtl/plumbing/quux15_mem_probe.sv` at HP0's own handshakes, as the
+  // DE25-Nano's port times its bridge's: a read from the port taking its
+  // address to the port's last beat of it, a write from the port taking its
+  // address to its response, in clocks of the machine's clock, read on the
+  // console face's page 3.  The machine is alone on HP0, so no ID is
+  // compared.  Each handshake is copied on one edge, so that an address and
+  // its answer are both a clock late and the latency is the port's.  The
+  // queues are as deep as the master's bursts in flight: a line's two
+  // reads, and its sixteen posted writes each split in two at most.  They
+  // are forgotten with the port's reset; the figures are the fabric's.
+  logic probe_run, probe_stop;
+  logic pr_ar, pr_r, pr_aw, pr_b;
+  always_ff @(posedge clk) begin
+    pr_ar <= hp0_arvalid && hp0_arready;
+    pr_r  <= hp0_rvalid && qm_rready && hp0_rlast;
+    pr_aw <= hp0_awvalid && hp0_awready;
+    pr_b  <= qm_bvalid && qm_bready;
+  end
+  logic             pr_running, pr_lost, pr_sat;
+  logic [31:0]      pr_rd_count, pr_wr_count;
+  logic [47:0]      pr_rd_sum, pr_wr_sum;
+  logic [19:0]      pr_rd_max, pr_wr_max;
+  logic [2:0]       probe_state;
+  logic [7:0][31:0] probe_words;
+  quux15_mem_probe #(.T_W(20), .RD_DEPTH(4), .WR_DEPTH(32)) u_probe (
+      .clk(clk), .rst(rst), .port_rst(axi_rst),
+      .run(probe_run), .stop(probe_stop),
+      .ar_take(pr_ar), .r_last(pr_r), .aw_take(pr_aw), .b_take(pr_b),
+      .running(pr_running), .lost(pr_lost), .saturated(pr_sat),
+      .rd_count(pr_rd_count), .rd_sum(pr_rd_sum), .rd_max(pr_rd_max),
+      .wr_count(pr_wr_count), .wr_sum(pr_wr_sum), .wr_max(pr_wr_max)
+  );
+  assign probe_state = {pr_lost, pr_sat, pr_running};
+  assign probe_words = {{12'd0, pr_wr_max}, {16'd0, pr_wr_sum[47:32]}, pr_wr_sum[31:0], pr_wr_count,
+                        {12'd0, pr_rd_max}, {16'd0, pr_rd_sum[47:32]}, pr_rd_sum[31:0], pr_rd_count};
 
   // ------------------------------------- the master ports: HPM0 and HPM1
   logic [39:0]  hpm0_awaddr, hpm0_araddr, hpm1_awaddr, hpm1_araddr;
@@ -743,7 +787,6 @@ module quux15_kr260 #(
   logic        con_sleep_set, con_wake, con_err_clear, con_steady_lamps;
   logic [14:0] con_sleep_secs, disp_sleep_setting;
   logic        disp_asleep, disp_underrun_s2, disp_rd_error;
-  logic        probe_run, probe_stop;
 
   quux15_face #(
       .ID_W(16), .LEN_W(8), .PERIOD(32'(2 * PERIOD_NS)), .MAIN_UNITS(MAIN_WORDS >> 16),
@@ -772,8 +815,8 @@ module quux15_kr260 #(
       .disp_fitted(1'b1), .sleep_q(disp_sleep_setting), .asleep(disp_asleep),
       .underrun(disp_underrun_s2), .rd_error(disp_rd_error), .err_clear(con_err_clear),
       .steady_lamps(con_steady_lamps),
-      // No latency probe on this board's port: page 3 reads `UNMAPPED`.
-      .probe_fitted(1'b0), .probe_state(3'd0), .probe_words('0),
+      // The latency probe at HP0, page 3.
+      .probe_fitted(1'b1), .probe_state(probe_state), .probe_words(probe_words),
       .probe_run(probe_run), .probe_stop(probe_stop)
   );
 
@@ -996,7 +1039,7 @@ module quux15_kr260 #(
   // What nothing on this board reads yet.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = ^{probe_run, probe_stop, obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
+  assign unused = ^{obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
                     obs_spcptr, obs_q, obs_vma, obs_md, obs_lc, obs_ic, obs_opnd, obs_ea, obs_em,
                     obs_ob, obs_oalow, obs_oahigh, obs_grant, obs_gaddr, obs_mdl, obs_mdword,
                     obs_reg, obs_raddr, obs_queue, obs_inflight, obs_halted, ro_word,
