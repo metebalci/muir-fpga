@@ -839,6 +839,24 @@ stage_tree() {
 [ -z "$SYS" ]  || stage_tree sys  "$SYS"  "sources" "$sys_total"
 [ -z "$SITE" ] || stage_tree site "$SITE" "site configuration" "$site_total"
 
+# **AND A QUUX CARD'S TREE CARRIES ITS MICROCODE'S ERROR TABLE.**  A QUUX band
+# reads the table of the microcode it runs from `sys/ubin/ucadr.tbl`, and
+# without that file keeps the table saved inside it, which is another build's
+# when the disk's microcode was replaced after the save: every trap is then
+# looked up at the wrong address.  So a QUUX card given SYS is refused without
+# `sys/ubin/ucadr.tbl` and `ucadr.mcr`, and, when its disk is staged, unless
+# the `.mcr` is the microcode partition QUUX's PROM loads from that disk
+# (`tools/quux_card_check.py`, which a card put together by hand runs too).
+if [ "$MACHINE" = quux ] && [ -n "$SYS" ]; then
+  if [ -f "$OUT/card/packs/disk-pack-0.img" ]; then
+    python3 tools/quux_card_check.py --card "$OUT/card" \
+      || die "sys/ and packs/disk-pack-0.img are not one QUUX set (tools/quux_card_check.py, above)"
+  else
+    python3 tools/quux_card_check.py --tree "$OUT/card" \
+      || die "sys/ lacks the microcode's files a QUUX band reads (tools/quux_card_check.py, above)"
+  fi
+fi  # a QUUX card's tree carries its microcode's error table
+
 # **AND A README, WHICH IS NOT DECORATION.**  This card is what somebody sees
 # when they put it in a Windows machine, and a volume holding a folder named
 # for a board and a 270 MB `.img` explains nothing.  It is also the first

@@ -1921,6 +1921,20 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # A QUUX card set: the served tree's `sys/ubin/ucadr.tbl` and `ucadr.mcr`,
+    # and the `.mcr` against the partition QUUX's PROM loads, found through
+    # the disk's GPT as the PROM finds it.  `tools/quux_card_check.py
+    # --self-test` over small disks it makes, raw and as fixed and dynamic
+    # VHDs, each refusal beside a set that passes.  Refusing is being caught.
+    "quux_card": {
+        "kind": "script",
+        "sources": ["tools/quux_card_check.py"],
+        "cmd": ["tools/quux_card_check.py", "--self-test"],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # What every board's image must carry, derived from the packages' own
     # install rules, as `build/rootfs_packages.pass` runs it with no Buildroot:
     # the derivation that `rootfs_check.py` compares an image against, and the

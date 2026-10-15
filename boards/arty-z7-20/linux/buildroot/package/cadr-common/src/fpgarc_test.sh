@@ -5990,6 +5990,67 @@ if lift_root_guard "$WORK/rootguard.sh"; then
 	fi
 fi
 
+# **A QUUX CARD'S sys/ CARRIES ITS MICROCODE'S ERROR TABLE**, and with its
+# disk staged the `.mcr` is the partition the PROM loads from it
+# (`tools/quux_card_check.py`, whose own self test holds the comparison).
+# The block is lifted on its anchors and run from the tree's root against
+# fabricated cards: one with both files passes and one without the table is
+# refused, which is the pair that tells a guard from one that passes or
+# refuses everything; the CADR's card is not held to it; and with a disk, a
+# good set made by the tool's own fixtures passes and a disk with no GPT is
+# refused.
+case_head "a QUUX card's sys/ carries its microcode's error table, and its .mcr is its disk's"
+sandbox
+if lift 'if [ "$MACHINE" = quux ] && [ -n "$SYS" ]; then' \
+        "fi  # a QUUX card's tree carries its microcode's error table" "$WORK/qcard.sh"; then
+	qcard() {
+		( set -eu
+		  OUT="$WORK/q"; MACHINE=$1; SYS=given
+		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+		  cd "$TREE"
+		  . "$WORK/qcard.sh" ) > "$WORK/q.out" 2>&1
+	}
+	mkdir -p "$WORK/q/card/sys/ubin" "$WORK/q/card/packs" "$WORK/q/card/site"
+	echo table > "$WORK/q/card/sys/ubin/ucadr.tbl"
+	echo microcode > "$WORK/q/card/sys/ubin/ucadr.mcr"
+	if qcard quux; then
+		ok "a QUUX card whose sys/ubin/ has ucadr.tbl and ucadr.mcr passes"
+	else
+		fail "a QUUX card with both files is refused: $(cat "$WORK/q.out")"
+	fi
+	rm "$WORK/q/card/sys/ubin/ucadr.tbl"
+	if qcard quux; then
+		fail "a QUUX card without sys/ubin/ucadr.tbl passes"
+	elif grep -q 'REFUSED: the served tree has no sys/ubin/ucadr.tbl' "$WORK/q.out"; then
+		ok "and one without sys/ubin/ucadr.tbl is refused by name"
+	else
+		fail "a QUUX card without ucadr.tbl is refused, but not for it: $(cat "$WORK/q.out")"
+	fi
+	if qcard cadr; then
+		ok "and the CADR's card is not held to it"
+	else
+		fail "the CADR's card is held to QUUX's files: $(cat "$WORK/q.out")"
+	fi
+	echo table > "$WORK/q/card/sys/ubin/ucadr.tbl"
+	( cd "$TREE" && python3 -c 'import sys; sys.path.insert(0, "tools")
+import quux_card_check as q
+open(sys.argv[1], "wb").write(q._disk(q.GOOD)); open(sys.argv[2], "wb").write(q.GOOD)' \
+	    "$WORK/q/card/packs/disk-pack-0.img" "$WORK/q/card/sys/ubin/ucadr.mcr" )
+	if qcard quux && grep -q 'is MCR1.s first 1024 bytes, byte for byte' "$WORK/q.out"; then
+		ok "a QUUX card whose .mcr is its disk's current microcode passes"
+	else
+		fail "a QUUX card whose .mcr is its disk's is refused: $(cat "$WORK/q.out")"
+	fi
+	head -c 65536 /dev/zero > "$WORK/q/card/packs/disk-pack-0.img"
+	if qcard quux; then
+		fail "a QUUX card whose disk has no GPT passes"
+	elif grep -q 'REFUSED: the disk: no GPT' "$WORK/q.out"; then
+		ok "and one whose disk has no GPT is refused by name"
+	else
+		fail "a QUUX card whose disk has no GPT is refused, but not for it: $(cat "$WORK/q.out")"
+	fi
+fi
+
 # **THE ZIP IS THE CARD, AND IT IS READ BACK OUT RATHER THAN TRUSTED.**  It is
 # what a user unpacks onto a card they formatted, so it is the artifact, and an
 # artifact nobody read back is a claim.  The block is lifted and run against a

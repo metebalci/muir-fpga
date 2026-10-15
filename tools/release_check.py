@@ -55,7 +55,10 @@ board, no Vivado and no Quartus, and holds:
      files --- the tarball holds one folder with `sys/` and `site/` in it, a
      QUUX disk uncompresses to a VHD and a CADR pack to a T-300's or T-80's
      size.  Before release-1003 and release-2001 exist this runs on the
-     hand-over's files.
+     hand-over's files.  A QUUX system's two files are also one set
+     (`tools/quux_card_check.py`): the tarball's `sys/ubin/` carries
+     `ucadr.tbl` and `ucadr.mcr`, and the `.mcr` is the microcode partition
+     QUUX's PROM loads from the disk.
 
 It prints one line a zip and fails with every problem listed.
 """
@@ -63,6 +66,7 @@ It prints one line a zip and fails with every problem listed.
 import argparse
 import gzip
 import hashlib
+import io
 import os
 import re
 import shutil
@@ -72,6 +76,8 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+
+import quux_card_check
 
 # The release, one zip a machine and board.
 ZIPS = [("cadr", "arty-z7-20"), ("cadr", "cora-z7-07s"), ("cadr", "de25-nano"),
@@ -290,6 +296,7 @@ def check_assets(machine, directory, notes):
         problems.append("%s: %s holds %s at its top and %s inside, wanting one folder with "
                         "sys and site in it" % (tag, tars[0], sorted(tops), sorted(inner)))
     size, last = 0, b""
+    whole = bytearray()
     with gzip.open(os.path.join(directory, disk[0])) as f:
         while True:
             chunk = f.read(1 << 20)
@@ -297,9 +304,29 @@ def check_assets(machine, directory, notes):
                 break
             size += len(chunk)
             last = (last + chunk)[-512:]
+            if machine == "quux":
+                whole += chunk
     if machine == "quux":
         if not last.startswith(b"conectix"):
             problems.append("%s: %s does not uncompress to a VHD" % (tag, disk[0]))
+        # The disk and the sources are one set: the sources' sys/ubin/ carries
+        # the microcode's error table, and its ucadr.mcr is the microcode
+        # partition QUUX's PROM loads from the disk (tools/quux_card_check.py).
+        ubin = {}
+        with tarfile.open(os.path.join(directory, tars[0])) as t:
+            for m in t.getmembers():
+                parts = m.name.split("/")
+                if m.isfile() and len(parts) == 4 and parts[1:3] == ["sys", "ubin"] \
+                        and parts[3] in ("ucadr.tbl", "ucadr.mcr"):
+                    ubin[parts[3]] = t.extractfile(m).read()
+        for name in ("ucadr.tbl", "ucadr.mcr"):
+            if name not in ubin:
+                problems.append("%s: %s has no sys/ubin/%s" % (tag, tars[0], name))
+        said = []
+        disk_image = quux_card_check.Disk(io.BytesIO(bytes(whole)), size)
+        for p in quux_card_check.compare(disk_image, ubin.get("ucadr.mcr"), said.append):
+            problems.append("%s: %s against %s: %s" % (tag, disk[0], tars[0], p))
+        notes += ["%s: %s" % (tag, line) for line in said if "byte for byte" in line]
     elif size not in (269562880, 70937600):
         problems.append("%s: %s uncompresses to %d bytes, not a T-300 or T-80 pack"
                         % (tag, disk[0], size))

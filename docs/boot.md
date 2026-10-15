@@ -577,6 +577,24 @@ release's, whose names never change (`latest-quux`'s `quux-disk.vhd.gz` and
 error table; loading or compiling a file of the system needs the system's
 `sys` and `site` folders on the card.
 
+**On QUUX, the disk and the system's files are one set.** The band reads the
+error table of the microcode it runs from `sys/ubin/ucadr.tbl`. Without that
+file it uses the table saved inside the band, which is another build's table
+when the disk's microcode was replaced after the band was saved, and every trap
+is then looked up at the wrong address. `tools/quux_card_check.py` checks a
+set, and a card put together by hand is checked with it before it goes into a
+board:
+
+    python3 tools/quux_card_check.py --card <the card's root>
+    python3 tools/quux_card_check.py --pack <the disk> --tree <the folder holding sys/ and site/>
+
+It refuses a set without `sys/ubin/ucadr.tbl` or `sys/ubin/ucadr.mcr`, or whose
+`ucadr.mcr` is not the microcode partition QUUX's PROM loads from the disk: the
+first partition of the microcode's type with GPT attribute bit 48, compared
+byte for byte over the file's length. It prints what it compared, with SHA-256
+digests. `mksd-buildroot.sh` runs it on every QUUX card it is given `SYS` for,
+and `make release-check` on a QUUX system's disk and sources.
+
 The download is given to a tenth of a megabyte because it is not the same to
 the byte twice: a zip stores each file's own time, so two builds of the same
 files differ in a few dozen bytes. What lands on the card does not, and those

@@ -165,7 +165,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/displayport.pass \
        $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass \
-       $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
+       $(BUILD)/fpgarc.pass $(BUILD)/quux_card.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
@@ -5873,6 +5873,7 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       boards/arty-z7-20/linux/buildroot/package/quux-file-device/S81quux-file-device \
                       boards/arty-z7-20/linux/mksd-buildroot.sh \
                       boards/arty-z7-20/linux/mksd-release.sh \
+                      tools/quux_card_check.py \
                       boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uEnv.txt.in \
                       boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uEnv.txt.in \
                       boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.txt.in \
@@ -5890,6 +5891,21 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	@echo "fpgarc: the main memory reaches the console before the drive, the CADR's as boards"
 	@echo "fpgarc: and QUUX's in megawords, each refusing the other's flag, and the"
 	@echo "fpgarc: Kria KR260's card is found by its reader and not by its label"
+	@touch $@
+
+# **A QUUX CARD SET: THE DISK'S CURRENT MICROCODE AND THE SERVED TREE'S.**  A
+# band reads its microcode's error table from the served `sys/ubin/ucadr.tbl`,
+# and without one keeps the table saved inside it, which is another build's
+# when the disk's MCR1 was replaced after the save.  `tools/quux_card_check.py`
+# refuses a set without `sys/ubin/ucadr.tbl` or `ucadr.mcr`, or whose `.mcr` is
+# not the partition QUUX's PROM loads (found through the GPT, attribute bit
+# 48).  This runs its self test: small disks made in the test, raw and as
+# fixed and dynamic VHDs, each refusal beside a set that passes, and muir's Q8
+# disks, made by qemu, as the outside witness for its VHD reader.
+# `mksd-buildroot.sh` runs the tool on a QUUX card and `release_check.py` on a
+# QUUX system's disk and sources.
+$(BUILD)/quux_card.pass: tools/quux_card_check.py | $(BUILD)
+	python3 tools/quux_card_check.py --self-test --q8-disks $(Q8_DISKS)
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES

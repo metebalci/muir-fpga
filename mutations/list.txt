@@ -33980,3 +33980,221 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @new
       .probe_fitted(1'b0), .probe_state(probe_state), .probe_words(probe_words),
 @end
+
+# ------------------------------------------------------------ quux_card ---
+#
+# `tools/quux_card_check.py`, the QUUX card set's check: the served tree's
+# `sys/ubin/ucadr.tbl` and `ucadr.mcr`, and the `.mcr` against the partition
+# QUUX's PROM loads, found through the GPT as the PROM finds it.  Its self
+# test is the check; each record below breaks one rule of the reader or of
+# the comparison, and the case named in its note is the one that must catch it.
+
+@mutation quux-card-gpt-signature-not-read
+@check quux_card
+@file tools/quux_card_check.py
+@note A disk with no `EFI PART` read as a GPT anyway.  Caught at "no GPT":
+@note refused, but for the entry size and not as no GPT.
+@old
+    if head[:8] != b"EFI PART":
+@new
+    if head[:8] != b"EFI PART" and False:
+@end
+
+@mutation quux-card-odd-entry-array-taken
+@check quux_card
+@file tools/quux_card_check.py
+@note An entry array on an odd sector taken, which the PROM refuses.  Caught
+@note at "a GPT whose entries start on an odd sector": passed.
+@old
+    if array & 1 or array >> 32:
+@new
+    if array >> 32:
+@end
+
+@mutation quux-card-entry-size-not-read
+@check quux_card
+@file tools/quux_card_check.py
+@note Entries of 256 bytes read in steps of 128.  Caught at "a GPT of
+@note 256-byte entries": passed.
+@old
+    if size != 128:
+@new
+    if size == 0:
+@end
+
+@mutation quux-card-partition-type-not-read
+@check quux_card
+@file tools/quux_card_check.py
+@note Any partition with bit 48 taken for the microcode: the band partition
+@note before MCR1.  Caught at "a good set, raw": refused.
+@old
+        if struct.unpack("<I", e[0:4])[0] != MCR_TYPE_WORD0:
+@new
+        if struct.unpack("<I", e[0:4])[0] == 0:
+@end
+
+@mutation quux-card-current-bit-47
+@check quux_card
+@file tools/quux_card_check.py
+@note Attribute bit 47 for 48: the decoy MCR2, bits 0, 47 and 49, is taken.
+@note Caught at "a good set, raw": refused.
+@old
+CURRENT_BIT = 48                     # the GPT attribute bit the PROM looks for
+@new
+CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
+@end
+
+@mutation quux-card-any-attribute-is-current
+@check quux_card
+@file tools/quux_card_check.py
+@note Any attribute bit taken for current.  Caught at "a good set, raw":
+@note the decoy MCR2 is taken and refused.
+@old
+        if not (struct.unpack("<Q", e[48:56])[0] >> CURRENT_BIT) & 1:
+@new
+        if not struct.unpack("<Q", e[48:56])[0]:
+@end
+
+@mutation quux-card-last-current-taken
+@check quux_card
+@file tools/quux_card_check.py
+@note The last current microcode partition taken, not the first in the
+@note array's order.  Caught at "a good set, raw": MCR3 is taken and refused.
+@old
+    for i in range(count):
+@new
+    for i in reversed(range(count)):
+@end
+
+@mutation quux-card-odd-start-taken
+@check quux_card
+@file tools/quux_card_check.py
+@note A microcode partition on an odd sector taken, where the PROM halts.
+@note Caught at "the current microcode on an odd sector": passed.
+@old
+        if first & 1:
+@new
+        if first & 1 and False:
+@end
+
+@mutation quux-card-truncated-mcr-taken
+@check quux_card
+@file tools/quux_card_check.py
+@note A `.mcr` up to 64 bytes short of what its sections say taken.  Caught
+@note at "ucadr.mcr truncated inside what the PROM reads": passed.
+@old
+            if n > len(mcr):
+@new
+            if n > len(mcr) + 64:
+@end
+
+@mutation quux-card-truncation-bound-off-by-one
+@check quux_card
+@file tools/quux_card_check.py
+@note A `.mcr` exactly as long as the PROM reads called truncated.  Caught at
+@note "a .mcr exactly as long as the PROM reads": refused.
+@old
+            if n > len(mcr):
+@new
+            if n >= len(mcr):
+@end
+
+@mutation quux-card-partition-bound-off-by-one
+@check quux_card
+@file tools/quux_card_check.py
+@note A `.mcr` exactly as long as the partition refused.  Caught at "a .mcr
+@note exactly as long as MCR1": refused.
+@old
+        if len(mcr) > part:
+@new
+        if len(mcr) >= part:
+@end
+
+@mutation quux-card-first-bytes-only
+@check quux_card
+@file tools/quux_card_check.py
+@note Only the first 64 bytes compared.  Caught at "ucadr.mcr one byte off
+@note inside what the PROM reads": passed.
+@old
+        if held != mcr:
+@new
+        if held[:64] != mcr[:64]:
+@end
+
+@mutation quux-card-no-ubin-not-told
+@check quux_card
+@file tools/quux_card_check.py
+@note A tree with no `sys/ubin/` reported only file by file.  Caught at "no
+@note sys/ubin/": refused, but not for the missing directory.
+@old
+    if not os.path.isdir(ubin):
+@new
+    if False:
+@end
+
+@mutation quux-card-table-not-required
+@check quux_card
+@file tools/quux_card_check.py
+@note `ucadr.tbl` not required, the file whose absence started this.  Caught
+@note at "no ucadr.tbl": passed.
+@old
+    for name in ("ucadr.tbl", "ucadr.mcr"):
+@new
+    for name in ("ucadr.mcr",):
+@end
+
+@mutation quux-card-vhd-footer-not-read
+@check quux_card
+@file tools/quux_card_check.py
+@note A VHD read as a raw disk.  A fixed VHD reads the same either way; a
+@note dynamic one does not.  Caught at "a good set, dynamic VHD": refused.
+@old
+            if footer[:8] == b"conectix":
+@new
+            if footer[:8] == b"conectiX":
+@end
+
+@mutation quux-card-vhd-checksum-not-held
+@check quux_card
+@file tools/quux_card_check.py
+@note A VHD footer whose checksum is wrong taken.  Caught at "a dynamic VHD
+@note whose footer's checksum is wrong": passed.
+@old
+        if want != got:
+@new
+        if want != got and False:
+@end
+
+@mutation quux-card-dynamic-bitmap-not-skipped
+@check quux_card
+@file tools/quux_card_check.py
+@note A dynamic VHD's block read from its sector bitmap on.  Caught at "a
+@note good set, dynamic VHD": refused.
+@old
+                out += self._pread(sector * SECTOR + self.bitmap + within, take)
+@new
+                out += self._pread(sector * SECTOR + within, take)
+@end
+
+@mutation quux-card-unallocated-block-not-zero
+@check quux_card
+@file tools/quux_card_check.py
+@note An unallocated block read as ones, not zeros.  Caught at "a dynamic VHD
+@note with MCR1's block not allocated": refused at byte 1, not at byte 0 (the
+@note fixture's first byte is 01).
+@old
+                out += bytes(take)
+@new
+                out += b"\x01" * take
+@end
+
+@mutation quux-card-microcode-not-compared
+@check quux_card
+@file tools/quux_card_check.py
+@note The disk read and its verdict dropped.  Caught at "ucadr.mcr the
+@note non-current MCR2's": passed.
+@old
+            problems += compare(Disk(f, size), files.get("ucadr.mcr"), say)
+@new
+            compare(Disk(f, size), files.get("ucadr.mcr"), say)
+@end
