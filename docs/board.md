@@ -3317,6 +3317,15 @@ has since been put in every revision 15 top level.
 **The memory's latency was not measured.** This board's revision 15 has no
 latency probe.
 
+The probe was added to this board's revision 15 since, and measured on 15
+October 2026 on a bitstream at 19 ns built from `f4df742`, its tree clean,
+over 35 runs: idle, list15 and 30 case files, the long session, and bitblt
+and print-scroll. Reads took 17.07 clocks on the mean, 324 ns, the longest
+855 ns; writes 11.29 clocks, 214.5 ns, the longest 589 ns. Each is timed
+from the port taking the address, so the wait for `S_AXI_HP0_FPD` to take a
+read's address is left out. The served Kria KR260 set still boots the
+bitstream of 13 October.
+
 ## QUUX revision 15 on the Arty Z7-20 and the DE25-Nano, 15 October 2026
 
 Both boards booted QUUX revision 15 and ran its board acceptance, each on the
