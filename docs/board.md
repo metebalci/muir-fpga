@@ -3323,8 +3323,23 @@ over 35 runs: idle, list15 and 30 case files, the long session, and bitblt
 and print-scroll. Reads took 17.07 clocks on the mean, 324 ns, the longest
 855 ns; writes 11.29 clocks, 214.5 ns, the longest 589 ns. Each is timed
 from the port taking the address, so the wait for `S_AXI_HP0_FPD` to take a
-read's address is left out. The served Kria KR260 set still boots the
-bitstream of 13 October.
+read's address is left out.
+
+On 15 October 2026 the bitstream built from `f4df742` (stamp `f4df7420`,
+tree clean) ran revision 15's board acceptance on the Kria KR260 and passed
+it. The served Kria KR260 set boots it in place of the 13 October build,
+whose stamp named a modified tree. The run made 45 boots and read the stamp
+from the running fabric at every load. It checked that QoS was written at
+every boot, the tick (59.9980 to 59.9997 per second), the control store over
+1,805 s, four checkpoint round trips byte for byte, and both bands' case
+files against muir's verdicts (49 of 50 on the high band, with
+chaos-transmit-order excepted as before). It also covered the garbage
+collector's long session, a tenured collection, the save with young objects,
+and the disk-save sequence ending in a warm boot. Words 224 and 225 read 0
+and the underrun word was clear. The first run used older copies of six
+case files and two Lisp files, and one of their cases, the young-flip case
+of generational-tuning in its old form, failed once on the disk band; their
+current forms then passed on both bands with muir's verdicts.
 
 ## QUUX revision 15 on the Arty Z7-20 and the DE25-Nano, 15 October 2026
 
