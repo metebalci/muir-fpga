@@ -80,13 +80,24 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 49.** It is
+version is refused by name rather than read wrong. **The version is 54.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir-sim/src/checkpoint.rs` and not an interpretation of it.
 
 So the program is tied to the commit of muir that `muir.commit` pins, and a
 muir that moves the format stops the board's checkpoints loading. That failure
 is loud, which is the right way round: the refusal names both versions.
+
+Version 54 is version 49 with the Chaosnet interface's pending state after its
+turn timer: a frame looped back waiting for its `START^`, the busy receiver's
+decision at a destination word to come, the read register, the reads'
+count-down inside a dropped frame, and the last frame dropped. The program
+writes them as a fresh interface has them, six zero bytes, since the readout
+does not reach the I/O board. **A file the program wrote at 49, 50 or 51,
+before that change, is refused by every muir from it on**, and nothing
+converts it: a board checkpoint resumes in the muir of its own card set.
+Mutants 52 and 53, the six bytes left out and the read register written 1,
+are caught by `build/checkpoint.pass`.
 
 Version 49 is QUUX's revision 12, the fused return (muir's first commit of
 it was version 48, and its second, with the operand address, 49): every
@@ -494,7 +505,8 @@ register named here, which neither machine has.
 
 ## A revision 13 checkpoint
 
-QUUX revision 13's checkpoint is muir's version 50. Every word is 5 bytes,
+QUUX revision 13's checkpoint is muir's version 55, version 50 with the
+Chaosnet interface's six bytes. Every word is 5 bytes,
 `<7:0>` first and the tag last. The dispatch memory has 4,096 entries, level 1
 of the map 8,192 and level 2 4,096. After the geometry come the word's width
 and the fixnum overflow flag, and the cache has 8-word lines. The program
@@ -518,12 +530,11 @@ muir's header still counts it in 64K-word units, sixteen a megaword.
 --revision 13` builds the same machine through muir's own calls. The
 program's file must be muir's byte for byte, and muir's own load and save
 come from the same generator (`--resume-and-save`). Mutants 9 to 31 are
-caught there. Revision 12's file, version 49, is retired with that
-revision.
+caught there. Revision 12's file is retired with that revision.
 
 ## A revision 14 checkpoint
 
-QUUX revision 14's checkpoint is version 50 too, and the revision is in the
+QUUX revision 14's checkpoint is version 55 too, and the revision is in the
 geometry: the map has no level 1, so its level-1 bits are 0 (contract G3
 revision 14, A14.14). After everything revision 13 writes come `LC<40:32>`,
 the memory system's words 220 to 224, and the redirect's copies of the PDL
@@ -542,7 +553,8 @@ are caught by the package's own check.
 
 ## A revision 15 checkpoint
 
-QUUX revision 15's checkpoint is muir's version 51, `Pipeline::save`: the
+QUUX revision 15's checkpoint is muir's version 56, version 51 with the
+Chaosnet interface's six bytes, `Pipeline::save`: the
 machine at revision 15, whose level-1 byte carries the revision with `<7>`
 set and which ends with word 225; then the clock's period in units of 0.5 ns,
 the memory port's timing and cache, and the pipeline's state between two

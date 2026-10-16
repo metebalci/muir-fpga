@@ -371,6 +371,8 @@ module cadr_gp0_split_harness #(
   logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
+  logic        chaos_rx_start, chaos_rx_check_nz, chaos_rx_store;
+  logic [11:0] chaos_rx_stored;
 
   cadr_chaos_cable #(.ID_W(ID_W), .LEN_W(LEN_W)) u_chaos (
       .clk(clk), .rst(rst), .fabric_rst(fabric_rst),
@@ -394,6 +396,8 @@ module cadr_gp0_split_harness #(
       .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
       .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+      .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
       .irq(chaos_irq)
   );
 
@@ -553,6 +557,8 @@ module cadr_gp0_split_harness #(
       .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
       .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+      .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
       .chaos_bits(chaos_bits),
       .intr_request(iob_intr), .intr_vector(iob_vector), .audio(iob_audio),
       .csr_face(iob_csr_face), .mouse_x(iob_mouse_x), .mouse_y(iob_mouse_y),

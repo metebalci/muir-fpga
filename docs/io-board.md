@@ -975,15 +975,18 @@ something a program can be handed.
 `rtl/plumbing/cadr_chaos_cable.sv` holds one frame each way. It takes the
 words on `chaos_tx_valid` after a `chaos_tx_go`, the source address and the
 check word among them, and offers the frame in a window, or lets the machine
-go at once for a frame of 48 bits or fewer, which no receiver takes; it drops
+go at once for a frame of 48 bits or fewer, which no receiver lands; it drops
 a frame on `chaos_tx_clear` or `chaos_reset`, and
 pulses `chaos_tx_done` when the program says it has taken one. Coming back it
 streams the program's words on `chaos_rx_valid` and pulses `chaos_rx_done`
 with the bit count. It holds `chaos_address` from what the program wrote,
 there being no switch on this board. It raises `chaos_tx_abort` with the
 `chaos_tx_done` of a take the program marks aborted, which is the machine's
-own frame to itself meeting its own full buffer. Its own header records the
-two levels it holds low and why: `chaos_cbl_busy` and `chaos_rx_crc`.
+own frame to itself meeting its own full buffer. Its own header records what
+it holds low and why: `chaos_rx_crc`, and the line's facts, `chaos_cbl_busy`,
+`chaos_rx_start`, `chaos_rx_stored`, `chaos_rx_check_nz` and
+`chaos_rx_store`, which the card's receive gate shows only inside a frame,
+and this cable has none (`docs/chaosnet.md`, the receiver's own gate).
 
 `rtl/plumbing/cadr_serial_line.sv` paces both directions and holds what the
 machine transmits until the program takes it. It recomputes `tx_on`, `rx_on`,

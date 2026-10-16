@@ -76,8 +76,12 @@
 // **AND THE TWO FAR ENDS ARE STIMULUS, NOT MODELS.**  The Chaosnet's cable
 // and the 2651's line are the `cadr-chaosnet` and `cadr-serial` programs' on
 // the board, and muir's own interface plays both here: the trace records the
-// instants they act at as `CRX`, `CTD`, `CBL`, `STK`, `SDN` and `SRX` rows
-// and this file replays them at the card's seam.  What the card hands back
+// instants they act at as `CRX`, `CTD`, `CLS`, `CBL`, `CST`, `CLV`, `STK`,
+// `SDN` and `SRX` rows and this file replays them at the card's seam.  The
+// Chaosnet line's are the cable's facts before the card's receive gate --- a
+// frame on the line (`CBL`), its `START^` (`CST`), the bits stored so far
+// and the check over them (`CLV`, held from row to row) --- and the card's
+// own gate is what the faces then hold.  What the card hands back
 // --- the transmit buffer at a read of START, a character on the cable --- is
 // compared and never driven.
 //
@@ -159,7 +163,7 @@ constexpr unsigned kSerialMode = 0764164u, kSerialCommand = 0764166u;
 // How many rows this check's placement has to push one tick.  The two rules
 // are in the header; the number is this file's own and not the trace's, so it
 // is written here and asserted rather than read out of the header.
-constexpr long kPushedRows = 8;
+constexpr long kPushedRows = 10;
 
 // How long a cycle nothing should answer is held in the decode sweep.  The
 // longest answer the card can give is the keyboard-and-mouse group at its
@@ -292,7 +296,10 @@ enum Tag {
   kCyc, kKey, kKboot, kMove, kBtn, kSer, kInit, kFace,
   // The two far ends, which are Linux's on the board: stimulus but for `kCtx`
   // and `kSout`, which are assertions about what the card hands over.
-  kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSre, kSout, kSpl
+  kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSre, kSout, kSpl,
+  // The line's facts, before the card's receive gate: a frame's `START^`, the
+  // bits stored so far with the check over them, and a frame counted lost.
+  kCst, kClv, kCls
 };
 
 // Every row ends with the same face.  Six columns are new to this slice: the
@@ -318,6 +325,9 @@ struct Row {
   int ready;                 // SER
   long seq, len, bits;       // CTX, CRX
   int crc, busy, abort;      // CRX, CTD, CBL
+  int store;                 // CRX: stored and not landed
+  unsigned stored;           // CLV: the bits stored so far, RBCT
+  int nz;                    // CLV: the 9401 over them non-zero
   unsigned data;             // SRX, SOUT
   int plugged;               // SPL
   // the face, in the trace's own order
@@ -381,6 +391,10 @@ struct Dut {
     d->chaos_tx_done = 0;
     d->chaos_tx_abort = 0;
     d->chaos_cbl_busy = 0;
+    d->chaos_rx_start = 0;
+    d->chaos_rx_stored = 0;
+    d->chaos_rx_check_nz = 0;
+    d->chaos_rx_store = 0;
     d->eval();
     // **muir'S t = 0 IS `kPowerOnEdges` EDGES AFTER THE RESET EDGE**, as it is
     // in the whole machine, so the reset edge and one idle edge come before
@@ -555,9 +569,9 @@ int main(int argc, char **argv) {
       if (got != 4 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "CRX")) {
       r.tag = kCrx;
-      got = std::sscanf(p, "%ld %ld %ld %lx %ld %d %d" FACE_FMT, &r.n, &r.ns, &r.seq, &r.bits,
-                        &r.len, &r.crc, &r.busy, FACE_ARGS);
-      if (got != 7 + kFaceCols) got = 0;
+      got = std::sscanf(p, "%ld %ld %ld %lx %ld %d %d %d" FACE_FMT, &r.n, &r.ns, &r.seq, &r.bits,
+                        &r.len, &r.crc, &r.busy, &r.store, FACE_ARGS);
+      if (got != 8 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "CTD")) {
       r.tag = kCtd;
       got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.abort, FACE_ARGS);
@@ -566,6 +580,18 @@ int main(int argc, char **argv) {
       r.tag = kCbl;
       got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.busy, FACE_ARGS);
       if (got != 3 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CST")) {
+      r.tag = kCst;
+      got = std::sscanf(p, "%ld %ld" FACE_FMT, &r.n, &r.ns, FACE_ARGS);
+      if (got != 2 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CLS")) {
+      r.tag = kCls;
+      got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.abort, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CLV")) {
+      r.tag = kClv;
+      got = std::sscanf(p, "%ld %ld %x %d" FACE_FMT, &r.n, &r.ns, &r.stored, &r.nz, FACE_ARGS);
+      if (got != 4 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "STK") || !std::strcmp(tag, "SDN") ||
                !std::strcmp(tag, "SRE")) {
       // `SRE` is the received frame's own end, `Pci::rx_times`' second
@@ -683,7 +709,8 @@ int main(int argc, char **argv) {
     // of two at one instant a tick late.
     const bool mutates = (r.tag == kKey || r.tag == kKboot || r.tag == kInit || r.tag == kSpl);
     const bool from_outside = mutates || r.tag == kCrx || r.tag == kCtd || r.tag == kCbl ||
-                              r.tag == kStk || r.tag == kSdn || r.tag == kSrx;
+                              r.tag == kStk || r.tag == kSdn || r.tag == kSrx ||
+                              r.tag == kCst || r.tag == kClv || r.tag == kCls;
     if (mutates && want == prev_cmp) {
       want = prev_cmp + 1;
       ++pushed;
@@ -748,7 +775,8 @@ int main(int argc, char **argv) {
   for (size_t i = 0; i < rows.size(); ++i) {
     const Tag t = rows[i].tag;
     if (t == kKey || t == kKboot || t == kInit || t == kSpl || t == kCrx || t == kCtd ||
-        t == kCbl || t == kStk || t == kSdn || t == kSrx || t == kSre)
+        t == kCbl || t == kStk || t == kSdn || t == kSrx || t == kSre || t == kCst ||
+        t == kClv || t == kCls)
       strobes.push_back(i);
   }
 
@@ -799,7 +827,9 @@ int main(int argc, char **argv) {
   Encoders enc;
   b.d->chaos_address = (unsigned)want_h("chaos_address");
   int switches = 0;
-  int plugged = 0, cbl_busy = 0;
+  int plugged = 0, cbl_busy = 0, lv_nz = 0;
+  unsigned lv_stored = 0;
+  long csts = 0, clvs = 0, clss = 0, stores = 0, aborts_ahead = 0;
   size_t ci = 0, ri = 0, si = 0, xi = 0;
   // What the card has handed over since the last `CTX` row.
   std::vector<unsigned> tx_seen;
@@ -875,6 +905,8 @@ int main(int argc, char **argv) {
     b.d->ub_init = 0;
     b.d->chaos_rx_done = 0;
     b.d->chaos_rx_lost = 0;
+    b.d->chaos_rx_start = 0;
+    b.d->chaos_rx_store = 0;
     b.d->chaos_tx_done = 0;
     b.d->chaos_tx_abort = 0;
     b.d->ser_tx_take = 0;
@@ -928,7 +960,24 @@ int main(int argc, char **argv) {
           b.d->chaos_rx_done = 1;
           b.d->chaos_rx_bits = (unsigned)r.bits;
           b.d->chaos_rx_crc = r.crc;
+          b.d->chaos_rx_store = r.store;
           cbl_busy = r.busy;
+          stores += r.store;
+          break;
+        case kCst:
+          b.d->chaos_rx_start = 1;
+          ++csts;
+          break;
+        case kClv:
+          lv_stored = r.stored;
+          lv_nz = r.nz;
+          ++clvs;
+          break;
+        case kCls:
+          b.d->chaos_rx_lost = 1;
+          b.d->chaos_tx_abort = r.abort;
+          ++clss;
+          aborts_ahead += r.abort;
           break;
         case kCtd:
           b.d->chaos_tx_done = 1;
@@ -959,6 +1008,8 @@ int main(int argc, char **argv) {
       ++si;
     }
     b.d->chaos_cbl_busy = cbl_busy;
+    b.d->chaos_rx_stored = lv_stored & 07777u;
+    b.d->chaos_rx_check_nz = lv_nz;
     b.d->ser_plugged = plugged;
 
     b.Rise();
@@ -1556,10 +1607,17 @@ int main(int argc, char **argv) {
         want("Receive Done", c.d->chaos_csr >> 15, lands ? 1u : 0u);
         want("CRC Error and Lost Count", c.d->chaos_csr & 057000u, 0u);
         want("the bit count", c.d->chaos_bits, lands ? (unsigned)(N * 16 - 1) : 0u);
-        unsigned off = 0;
-        for (long j = 0; j < N; ++j)
-          if (cycle(kChaosRbuf, 0, 0) != (lands ? word(j) : 0u)) ++off;
-        want(lands ? "words read that are not the frame's" : "buffer reads that are not 0", off, 0u);
+        // A frame landed reads back as its words; with none, a read is the
+        // read register shifted, RBCT 0's bit coming in below (muir's
+        // `read_down`): each the last moved up a bit over the same bit.
+        unsigned off = 0, last = 0;
+        for (long j = 0; j < N; ++j) {
+          const unsigned w = cycle(kChaosRbuf, 0, 0);
+          if (lands ? w != word(j) : (j > 0 && w != (((last << 1) | (last & 1u)) & 0xffffu))) ++off;
+          last = w;
+        }
+        want(lands ? "words read that are not the frame's" : "buffer reads that are not the read register shifted",
+             off, 0u);
         // The next frame lands whole.
         cycle(kChaosCsr, 1, 010u);
         leaving = gone = false;
@@ -1588,6 +1646,68 @@ int main(int argc, char **argv) {
     for (int how = 0; how < 4; ++how)
       std::printf(" %s %ld/%ld/%ld/%ld/%ld/%ld%s", hows[how], where[how][0], where[how][1], where[how][2],
                   where[how][3], where[how][4], where[how][5], how < 3 ? ";" : "\n");
+  }
+
+  // **A FRAME STREAMED INTO A FULL BUFFER IS COUNTED AND DROPPED WHOLE**
+  // (muir's `arrive`: Lost Count steps, a 74LS161 wrapping at sixteen, and
+  // nothing of the frame reaches the buffer).  Not in the trace: muir's
+  // receiver refuses such a frame at its `START^` and never hands it over,
+  // and `cadr_chaos_cable.sv` refuses the commit and says so on
+  // `chaos_rx_lost`.  The card's own rule for a done that finds Receive Done
+  // up is held here: a frame landed, then another streamed whole on top of
+  // it, and the first read back as it landed.
+  {
+    const long N = 12;
+    auto word = [](long base, long j) { return (unsigned)((base ^ (j * 0x1357u)) & 0xffffu); };
+    Dut c;
+    c.d->chaos_address = 03101;
+    c.Idle(4);
+    auto frame = [&](unsigned base) {
+      for (long j = 0; j <= N + 1; ++j) {
+        c.d->chaos_rx_valid = j < N;
+        c.d->chaos_rx_word = j < N ? word(base, j) : 0u;
+        c.d->chaos_rx_bits = N * 16;
+        c.d->chaos_rx_done = j == N + 1;
+        c.Rise();
+        c.Fall();
+      }
+      c.d->chaos_rx_valid = 0;
+      c.d->chaos_rx_done = 0;
+      c.Idle(2);
+    };
+    auto read = [&](unsigned addr) {
+      c.d->ub_msyn = 1;
+      c.d->ub_addr = addr;
+      c.d->ub_write = 0;
+      long waited = 0;
+      while (!c.d->ub_ssyn && waited++ < 600) c.Idle(1);
+      c.Idle(kMsynHoldT);
+      const unsigned got = c.d->ub_rdata;
+      c.d->ub_msyn = 0;
+      c.Idle(2);
+      return got;
+    };
+    int fbad = 0;
+    auto want = [&](const char *what, unsigned long got, unsigned long w) {
+      if (got != w) {
+        std::fprintf(stderr, "FAIL: a frame streamed into a full buffer: %s is 0%lo, wanting 0%lo\n", what, got, w);
+        ++fbad;
+      }
+    };
+    frame(0100000u);
+    want("Receive Done after the first frame", read(kChaosCsr) >> 15, 1u);
+    for (int k = 1; k <= 17; ++k) {
+      frame(0040000u + (unsigned)k);
+      want("Lost Count", (read(kChaosCsr) >> 9) & 017u, (unsigned)(k & 017));
+    }
+    want("the bit count", read(0764146u), (unsigned)(N * 16 - 1));
+    unsigned off = 0;
+    for (long j = 0; j < N; ++j)
+      if (read(kChaosRbuf) != word(0100000u, j)) ++off;
+    want("words read that are not the first frame's", off, 0u);
+    if (fbad) return 1;
+    std::printf("ok: seventeen frames streamed into a full buffer counted, Lost Count wrapping at sixteen,\n"
+                "    and the frame in the buffer read back whole\n");
   }
 
   // ---- what the run saw, against what the generator says it made -----------
@@ -1623,6 +1743,11 @@ int main(int argc, char **argv) {
   same("characters put on the cable", sout_seen, want_h("sout_rows"));
   same("received frames ended", sres, want_h("sre_rows"));
   same("words streamed into the receive buffer", rx_words, want_h("crx_words"));
+  same("frames' START^", csts, want_h("cst_rows"));
+  same("levels of the line", clvs, want_h("clv_rows"));
+  same("frames counted lost", clss, want_h("cls_rows"));
+  same("aborts ahead of their Transmit Done", aborts_ahead, want_h("cls_aborts"));
+  same("frames stored and not landed", stores, want_h("crx_stored"));
   same("answers off the grid at the serial port", serial_slips, want_h("offgrid_serial"));
   same("answers the shift register held", tsr_trace.held, want_h("tsr_held"));
   same("held answers off the grid", tsr_slips, want_h("offgrid_tsr"));

@@ -63,6 +63,11 @@
 //!   word written and the word read. `ssyn` is **the fabric's grid instant**
 //!   and `slip` is how many nanoseconds before it muir's own answer falls;
 //!   see the note on the grid below.
+//! - `CBL`, `CST`, `CLV`, `CTD`, `CLS`, `CRX` and `CTX`, the Chaosnet's far
+//!   end: a frame on the line, its `START^`, the bits stored so far and the
+//!   check over them, all before the card's receive gate; Transmit Done, a
+//!   frame counted lost, a packet landing or bits stored, and the transmit
+//!   buffer handed over (`Gen::far` and the rows' own notes).
 //! - `KEY`, `MOVE`, `BTN` and `SER`, the four things that reach the card
 //!   from outside the machine: a scan code off the keyboard's pair, the
 //!   mouse's motion and switches, and the serial port's ready line.
@@ -175,6 +180,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chaos_state;
+
+use chaos_state::{State, handed, state};
 use muir::busint::{IOB_CHAOS_BUFFER_NS, IoBoardTiming, UNIBUS_STROBE_NS};
 use muir::clock::{self, TimingModel};
 use muir::ioboard::{
@@ -183,10 +191,11 @@ use muir::ioboard::{
     SERIAL_FIRST, SERIAL_LAST, USEC_HIGH, USEC_LOW, answers, csr, mouse, usec_at,
 };
 use muir::chaos::board::Interface as ChaosInterface;
-use muir::chaos::ether::Ether;
+use muir::chaos::ether::{BUSY_ABORT_NS, Ether, RACT_NS};
 use muir::chaos::interface::{self as chaos, csr as ccsr};
-use muir::chaos::packet::check_word;
+use muir::chaos::packet::{check_on, check_word, line as cells_of};
 use muir::chaos::wire::CELL_NS;
+use muir::clock::TimeBase;
 use muir::serial;
 use muir::terminal::keyboard::{self, RETURN, RUBOUT, all_keys_up, up_down};
 use muir::terminal::mouse::MOUSE_STEP_NS;
@@ -327,6 +336,53 @@ struct Gen {
     boot_codes: BTreeSet<u32>,
     /// Of those rows, the ones muir's board answered with a request.
     boots: u64,
+    // --- the Chaosnet line, as the far end says it (`chaos_state.rs`) ----
+    /// The instant the last row's face was sampled at.
+    last_row: u64,
+    /// The far end's own instants are said up to here.
+    far_upto: u64,
+    /// The frame on the line as the rows have put it.
+    on_line: Option<OnLine>,
+    /// The bits stored so far and the check over them, as last said.
+    lv: (usize, bool),
+    /// The cells of the frame the last START made ready.
+    sent: Option<Vec<bool>>,
+    /// A cable is plugged in: the far end's instants are found on the board
+    /// itself, a tick at a time, a copy having no cable.
+    cable: bool,
+    cst_rows: u64,
+    clv_rows: u64,
+    cls_rows: u64,
+    cls_aborts: u64,
+    stored_rows: u64,
+    /// Rows inside a frame muir takes, where the levels are held to its
+    /// face; reads of the buffer and the bit count inside a frame it does
+    /// not take; and frames a clear dropped.
+    taken_rows: u64,
+    down_reads: u64,
+    drops: u64,
+    down_parts: u64,
+    run_bits: u64,
+}
+
+/// The frame on the line, from its first edge to its idle, as the far end
+/// says it: its `START^` if it has one --- under Loop Back the looped
+/// frame's, off a cable the receiver's; a frame into the void, no cable and
+/// no Loop Back, has none --- and its cells when they are this interface's
+/// own.
+struct OnLine {
+    s: u64,
+    start: Option<u64>,
+    started: bool,
+    cells: Option<Vec<bool>>,
+}
+
+/// The far end's events, in the order they are said at one instant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Far {
+    End,
+    Start,
+    Begin(u64, u16),
 }
 
 impl Gen {
@@ -381,6 +437,22 @@ impl Gen {
             boot_rows: 0,
             boot_codes: BTreeSet::new(),
             boots: 0,
+            last_row: 0,
+            far_upto: 0,
+            on_line: None,
+            lv: (0, false),
+            sent: None,
+            cable: false,
+            cst_rows: 0,
+            clv_rows: 0,
+            cls_rows: 0,
+            cls_aborts: 0,
+            stored_rows: 0,
+            taken_rows: 0,
+            down_reads: 0,
+            drops: 0,
+            down_parts: 0,
+            run_bits: 0,
         }
     }
 
@@ -470,10 +542,203 @@ impl Gen {
     /// every row but a cycle those are the same instant; a cycle's row is
     /// about `-UB MSYN` and its face is at `off`, which is a column of it.
     fn row_at(&mut self, tag: &str, ns: u64, head: String) {
+        let now = self.now;
+        self.far(now);
+        self.levels(now);
+        self.row_raw(tag, ns, head);
+    }
+
+    /// A row as it stands, the far end's instants already said.
+    fn row_raw(&mut self, tag: &str, ns: u64, head: String) {
         let n = self.line;
         self.line += 1;
+        self.last_row = self.last_row.max(self.now);
         let face = self.face();
         self.say(format!("{tag} {n} {ns}{head} {face}"));
+    }
+
+    // --- the Chaosnet line, as the far end says it -----------------------
+    //
+    // **THE SEAM CARRIES THE CABLE'S FACTS AND THE CARD KEEPS ITS OWN GATE.**
+    // A frame on the line from its first edge to its idle (`CBL`), its
+    // `START^` (`CST`), and the bits the receiver would have stored so far
+    // with whether the 9401 is non-zero over them (`CLV`), all before any
+    // gate (`golden/src/chaos_state.rs`): the card takes Receive Done at
+    // `START^` into its own `RACT`, takes it down at a clear, and shows the
+    // line through it --- CRC Error the running check, the bit count the
+    // bits stored. They are found on copies of the board, which keep the
+    // turn timer's frames, and said at the first tick at or after each; the
+    // levels wherever a row or a read looks inside a frame and they moved,
+    // and held to muir's `csr()` and `bit_count()` there whenever muir's
+    // receiver takes the frame.
+
+    fn chaos(&self) -> &ChaosInterface {
+        self.b.chaos.as_ref().expect("no Chaosnet interface is plugged in")
+    }
+
+    /// The far end's instants up to `upto`, each said as a row at the first
+    /// tick at or after it, in their order.
+    fn far(&mut self, upto: u64) {
+        if !self.cable {
+            self.far_events(upto);
+            return;
+        }
+        // On a cable the board itself is taken a tick at a time, its frames
+        // being the cable's, which a copy has not.
+        let mut t = grid_at(self.far_upto + 1);
+        while t <= upto {
+            self.b.advance(t);
+            self.far_events(t);
+            t += TICK_NS;
+        }
+        self.far_events(upto);
+    }
+
+    /// The far end's instants up to `upto`, found on a copy taken there or,
+    /// on a cable, on the board itself, which is there.
+    fn far_events(&mut self, upto: u64) {
+        while upto > self.far_upto {
+            let lo = self.far_upto;
+            let st = if self.cable {
+                state(self.chaos())
+            } else {
+                let mut c = self.b.clone();
+                c.advance(upto);
+                state(c.chaos.as_ref().unwrap())
+            };
+            let mut next: Option<(u64, Far)> = None;
+            let mut cand = |at: u64, ev: Far| {
+                if next.is_none_or(|(t, e)| (at, ev) < (t, e)) {
+                    next = Some((at, ev));
+                }
+            };
+            if let Some(l) = &self.on_line {
+                // A frame heard of late off a cable can have its `START^`
+                // behind it already, which is said with it.
+                if let Some(a) = l.start.filter(|_| !l.started).map(|a| a.max(lo + 1)).filter(|&a| a <= upto) {
+                    cand(a, Far::Start);
+                }
+                let idle = match st.frames.iter().find(|f| f.0 == l.s) {
+                    Some(f) => f.2,
+                    None => self.idle_of(l.s, lo, upto),
+                };
+                if idle <= upto {
+                    assert!(idle > lo, "the frame from {} went idle at {idle}, before {lo}", l.s);
+                    cand(idle, Far::End);
+                }
+            }
+            for &(s, source, idle) in &st.frames {
+                let new = self.on_line.as_ref().is_none_or(|l| s > l.s);
+                if new && s <= upto && idle > lo.max(s) {
+                    // Off a cable the interface hears of a frame at the
+                    // cable's next instant it is taken to, which can be a
+                    // tick after the frame's first edge: until then its face
+                    // has no frame on the line, and the frame is said where
+                    // it has.
+                    assert!(s > lo || lo == 0 || self.cable, "a frame from {s} on the line was never said, at {lo}");
+                    cand(if s > lo { s } else { upto }, Far::Begin(s, source));
+                }
+            }
+            let Some((at, ev)) = next else {
+                self.far_upto = upto;
+                break;
+            };
+            self.far_upto = at;
+            self.say_far(at, ev);
+        }
+    }
+
+    /// The largest instant in `[lo, hi]` at which a copy of the board still
+    /// keeps the frame that began at `s`, and its idle there: where it went
+    /// idle, the turn timer having let it go before it was looked at.
+    fn idle_of(&self, s: u64, lo: u64, hi: u64) -> u64 {
+        let has = |y: u64| {
+            let mut c = self.b.clone();
+            c.advance(y);
+            state(c.chaos.as_ref().unwrap()).frames.iter().find(|f| f.0 == s).map(|f| f.2)
+        };
+        let (mut a, mut b) = (lo, hi);
+        let mut best = has(lo).expect("the frame on the line was gone before it was last looked at");
+        while a < b {
+            let m = a + (b - a).div_ceil(2);
+            match has(m) {
+                Some(i) => {
+                    a = m;
+                    best = i;
+                }
+                None => b = m - 1,
+            }
+        }
+        best
+    }
+
+    /// One of the far end's instants, as its row.
+    fn say_far(&mut self, at: u64, ev: Far) {
+        let g = grid_at(at);
+        if g != at {
+            self.far_slips += 1;
+        }
+        let keep = self.now;
+        self.now = g;
+        match ev {
+            Far::Begin(s, source) => {
+                let loop_back = state(self.chaos()).loop_back();
+                let start = (loop_back || self.cable).then_some(s + RACT_NS);
+                let cells = (source == CHAOS_ADDRESS).then(|| self.sent.clone()).flatten();
+                self.on_line = Some(OnLine { s, start, started: false, cells });
+                self.levels(g);
+                self.cbl_rows += 1;
+                self.row_raw("CBL", g, " 1".into());
+            }
+            Far::Start => {
+                self.on_line.as_mut().unwrap().started = true;
+                self.levels(g);
+                self.cst_rows += 1;
+                self.row_raw("CST", g, String::new());
+            }
+            Far::End => {
+                self.on_line = None;
+                self.cbl_rows += 1;
+                self.row_raw("CBL", g, " 0".into());
+            }
+        }
+        self.now = keep.max(g);
+    }
+
+    /// The levels at `x`, said if they moved, with the board taken there:
+    /// and wherever muir takes the frame, held to its face.
+    fn levels(&mut self, x: u64) {
+        let Some(l) = &self.on_line else { return };
+        if x < l.s {
+            return;
+        }
+        let cells = l.cells.clone();
+        self.b.advance(x);
+        let c = self.chaos();
+        let st = state(c);
+        if st.frame_now(x).is_none() {
+            return;
+        }
+        let k = st.stored(c, x, TimeBase::NS);
+        let nz = st.check_nz(c, x, TimeBase::NS, cells.as_deref());
+        if st.taking(c, x) && !st.rdone {
+            assert_eq!(c.bit_count() as usize, k % 4096, "the bit count at {x}, a frame taken");
+            let down = st.down_here(x).is_some_and(|(_, _, check)| check != 0);
+            assert_eq!(c.csr() & ccsr::CRC_ERROR != 0, st.crc || nz || down, "CRC Error at {x}, a frame taken");
+            self.taken_rows += 1;
+        }
+        if (k, nz) != self.lv {
+            self.lv = (k, nz);
+            self.clv_rows += 1;
+            self.row_raw("CLV", x, format!(" {:x} {}", k % 4096, u8::from(nz)));
+        }
+    }
+
+    /// To `t` with the far end's instants up to it said: a row after a run of
+    /// the line the program waited through.
+    fn settle(&mut self, t: u64) {
+        self.far(t);
+        self.at(t.max(self.now));
     }
 
     fn row(&mut self, tag: &str, head: String) {
@@ -550,14 +815,50 @@ impl Gen {
                 // The counter's low half is the count as it stood at
                 // `-MSYN`; everything else is read or written at `-SSYN`.
                 let made = if r == USEC_LOW { msyn } else { ssyn };
+                // The far end's instants before the tick the cycle lands
+                // in, with the faces they had before it; those at that tick
+                // and after carry it.
+                self.far(made - TICK_NS);
                 self.landed = ssyn;
                 self.b.advance(made);
+                if (chaos::CSR..=0o764156).contains(&r) {
+                    let st = state(self.chaos());
+                    let inside = st.frame_now(made).is_some() && !st.rdone;
+                    // **NEVER THE BUFFER WHILE muir's RECEIVER TAKES A
+                    // FRAME**: muir does not model that read
+                    // (`Interface::read_down`), so a row of it would hold the
+                    // card to an artefact.
+                    if r == chaos::READ_BUFFER && !write && inside {
+                        assert!(!st.taking(self.chaos(), made), "the program read the buffer at {made}, a frame taken");
+                        self.down_reads += 1;
+                    }
+                    if r == chaos::BIT_COUNT && !write && inside && !st.taking(self.chaos(), made) {
+                        self.down_reads += 1;
+                    }
+                }
                 if write {
                     *self.writes.entry(r).or_default() += 1;
                     self.b.write(uaddr, wdata, made);
                 } else {
                     *self.reads.entry(r).or_default() += 1;
                     rdata = self.b.read(uaddr, made);
+                    if r == chaos::START {
+                        self.sent = Some(cells_of(&ready_line(&self.b)));
+                    }
+                    // A count-down's word read where the check of every bit
+                    // read and the check of that word alone part: what
+                    // tells a check carried from read to read from one
+                    // begun again at each.
+                    if r == chaos::READ_BUFFER {
+                        let s = state(self.chaos());
+                        if let Some((_, hw, check)) = s.down_here(made)
+                            && hw % 16 == 15
+                            && hw != 0o7777
+                            && (check == 0) != (check_on(0, &[rdata]) == 0)
+                        {
+                            self.down_parts += 1;
+                        }
+                    }
                     match r {
                         USEC_HIGH => {
                             self.usec_high.insert(rdata);
@@ -574,6 +875,9 @@ impl Gen {
                         _ => {}
                     }
                 }
+                // The levels at the tick the cycle lands in, with its face:
+                // the card's at that tick is after the cycle.
+                self.levels(made);
                 (ssyn, slip, ssyn + UNIBUS_STROBE_NS, r)
             }
         };
@@ -661,10 +965,17 @@ impl Gen {
     /// `-UB INIT`.
     fn init(&mut self) {
         let now = self.now;
+        self.far(now);
+        self.levels(now);
         self.b.advance(now);
         self.b.unibus_init();
         self.inits += 1;
         self.row("INIT", String::new());
+        // `-UB INIT` takes Loop Back off with the CSR, and a frame looped
+        // back is over for the receiver at once (muir's `reset_from`).
+        if self.on_line.is_some() && state(self.chaos()).frame_now(now).is_none() {
+            self.say_far(now, Far::End);
+        }
     }
 
     /// The serial port's ready line at the card's priority encoder, moved
@@ -779,16 +1090,58 @@ impl Gen {
 
     /// A packet lands in the receive buffer at this instant: `bits` is what
     /// the bit counter is loaded with, `crc` the check word's verdict, and
-    /// `seq` names the words.  Stimulus.
-    fn crx(&mut self, at: u64, bits: u64, crc: bool, busy: bool, words: &[u16]) {
+    /// `seq` names the words. With `store` the far end hands the bits to be
+    /// stored and not landed: a frame taken and not for this interface, or
+    /// what a clear left of a frame it dropped. A run of 48 bits or fewer is
+    /// handed without it, and the card judges it by its length. Stimulus.
+    fn crx(&mut self, at: u64, bits: u64, crc: bool, store: bool, words: &[u16]) {
+        // The far end's instants before it, said first; the words stream in
+        // on the ticks before the row, where nothing else may be.
+        let g = grid_at(at);
+        self.far(g - TICK_NS);
+        assert!(
+            self.line == 0 || self.last_row + (words.len() as u64 + 1) * TICK_NS < g,
+            "a row at {} inside the stream of {} words landing at {g}",
+            self.last_row,
+            words.len()
+        );
         self.far_at(at);
         let seq = self.crx_rows;
         self.crx_rows += 1;
+        self.stored_rows += u64::from(store);
         self.bufs.push((0, seq, words.to_vec()));
-        self.row(
+        let now = self.now;
+        // The line as it stands at the row, before the far end's instants
+        // there, which come after it: a frame landing goes idle with it.
+        let busy = state(self.chaos()).frame_now(now).is_some();
+        self.row_raw(
             "CRX",
-            format!(" {seq} {bits:x} {} {} {}", words.len(), u8::from(crc), u8::from(busy)),
+            now,
+            format!(" {seq} {bits:x} {} {} {} {}", words.len(), u8::from(crc), u8::from(busy), u8::from(store)),
         );
+        self.far(now);
+        self.levels(now);
+    }
+
+    /// The bits muir's buffer took without Receive Done since `before`, as
+    /// the far end hands them to be stored: at `at`, or after the row before
+    /// it with room for their stream, so that after a drop nothing comes
+    /// between the clear and the end of the stream.
+    fn stored(&mut self, at: u64, before: &State) {
+        // The far end's instants up to it first --- the line going idle as
+        // the frame is stored --- so that the stream has room after them.
+        self.far(grid_at(at));
+        let mut c = self.b.clone();
+        c.advance(at);
+        let st = state(c.chaos.as_ref().unwrap());
+        assert!(!st.rdone && places(&st) != places(before), "nothing was stored to hand over");
+        let words = handed(&st.rcv, st.bits);
+        // Room for the stream after the row before it, and two ticks more:
+        // a mutating row is placed a tick on, and a Reset's `chaos_reset`
+        // is up the tick after it, when the far end takes nothing.
+        let at = at.max(self.last_row + (words.len() as u64 + 5) * TICK_NS);
+        self.crx(at, st.bits, false, true, &words);
+        assert_eq!(handed_now(&self.b), (words, st.bits), "the bits stored moved before they were handed over");
     }
 
     /// Transmit Done off the far end, with or without an abort.  Stimulus.
@@ -798,12 +1151,23 @@ impl Gen {
         self.row("CTD", format!(" {}", u8::from(abort)));
     }
 
-    /// `-CBLBSY`, the cable's own busy line, which `Interface::csr` reads
-    /// out on bit 14 beside the CRC error.  Stimulus, and a level.
-    fn cbl(&mut self, at: u64, busy: bool) {
+    /// A frame the far end counted lost, the buffer full at its `START^`:
+    /// its destination word went by, `BUSY_ABORT_NS` into it, with `RACT`
+    /// off.  `chaos_rx_lost`; and `abort`, a frame of this interface's to its
+    /// own address, whose Transmit Abort the busy receiver sets there,
+    /// Transmit Done `TDONE_AFTER_ABORT_NS` on (muir's `busy_looped`).
+    /// Stimulus.
+    fn cls(&mut self, at: u64) {
         self.far_at(at);
-        self.cbl_rows += 1;
-        self.row("CBL", format!(" {}", u8::from(busy)));
+        self.cls_rows += 1;
+        let now = self.now;
+        // The far end's instants before it said with their own faces first.
+        self.far(now);
+        self.b.advance(now);
+        let s = state(self.chaos());
+        let abort = s.tabort && !s.tdone;
+        self.cls_aborts += u64::from(abort);
+        self.row("CLS", format!(" {}", u8::from(abort)));
     }
 
     /// The 2651's shift register takes the holding register's character:
@@ -921,19 +1285,20 @@ impl Gen {
 /// mutates, and `chaos::board::Interface` copies its registers and not its
 /// cable, which is exactly what a probe wants.  Coarse to 500 ns and then to
 /// the nanosecond, because the predicate is not monotone over a whole run and
-/// a bisection would land on the wrong edge.
-fn when(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard) -> bool) -> u64 {
+/// a bisection would land on the wrong edge.  The predicate is given the
+/// copy and the instant it was taken to.
+fn when_t(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard, u64) -> bool) -> u64 {
     const STEP: u64 = 500;
     let mut t = from;
     while t <= from + limit {
         let mut c = b.clone();
         c.advance(t);
-        if f(&c) {
+        if f(&c, t) {
             let mut u = if t > from + STEP { t - STEP } else { from };
             while u < t {
                 let mut c2 = b.clone();
                 c2.advance(u);
-                if f(&c2) {
+                if f(&c2, u) {
                     return u;
                 }
                 u += 1;
@@ -945,23 +1310,62 @@ fn when(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard) -> bool) -> u64
     panic!("the far end did nothing within {limit} ns of {from}");
 }
 
+fn when(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard) -> bool) -> u64 {
+    when_t(b, from, limit, &|c, _| f(c))
+}
+
+fn st(b: &IoBoard) -> State {
+    state(b.chaos.as_ref().expect("no Chaosnet interface is plugged in"))
+}
+
+/// The incoming buffer by its places, `RBCT / 16`, rather than in the order
+/// a frame in it is read: what a frame stored over it changes. Never
+/// written, all ones.
+fn places(s: &State) -> Vec<u16> {
+    if s.rcv.is_empty() {
+        return vec![0o177777; 256];
+    }
+    let top = (s.bits as usize + 4095) % 4096 / 16;
+    (0..256).map(|p| s.rcv[(top + 256 - p) % 256]).collect()
+}
+
+/// **The next frame the turn timer puts on the line from `from`**, found on
+/// copies: its first edge and the idle it was put there with. The turn
+/// timer keeps a frame from the terminal count that launches it, its first
+/// edge `TURN_START_NS` on.
+fn next_frame(b: &IoBoard, from: u64) -> (u64, u64) {
+    let t = when(b, from, 2_000_000, &|c| st(c).frames.iter().any(|f| f.0 >= from));
+    let mut c = b.clone();
+    c.advance(t);
+    let s = st(&c);
+    let f = s.frames.iter().find(|f| f.0 >= from).unwrap();
+    (f.0, f.2)
+}
+
+/// When the line goes idle after the frame that began at `s`: the frame
+/// gone from the turn timer's reckoning, found on copies.
+fn idle_after(b: &IoBoard, s: u64) -> u64 {
+    when_t(b, s, 2_000_000, &|c, t| st(c).frame_now(t).is_none_or(|f| f.0 != s))
+}
+
 /// **An empty START's frame as the far end times it** (muir's
 /// `an_empty_start_lowers_transmit_done_until_its_frame_ends`, held to the
-/// netlist board): the cable busy from the frame's first edge, Transmit
-/// Done back `TDONE_BEFORE_END_NS` before its nominal end, the cable idle
-/// after it.  `t` is the instant START was read.
-fn empty_frame(g: &mut Gen, t: u64) {
-    let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
-    g.cbl(busy, true);
-    let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+/// netlist board): on the line from its first edge, Transmit Done back
+/// `TDONE_BEFORE_END_NS` before its nominal end, the line idle after it.
+/// `t` is the instant START was read. Under Loop Back its 32 bits are a run
+/// no receiver lands, which leaves them in the buffer.
+fn empty_frame(g: &mut Gen, t: u64) -> u64 {
+    let (s, _) = next_frame(&g.b, t);
+    let td = when(&g.b, s, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
     g.ctd(td, false);
-    let idle = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
-    g.cbl(idle, false);
+    let idle = idle_after(&g.b, s);
+    g.settle(grid_before(grid_at(idle)).max(g.now));
     assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "an empty frame landed as a packet");
+    idle
 }
 
 /// To the first microsecond from now at which a START would put its frame
-/// on the cable no sooner than `gap` after its answer: found on copies, as
+/// on the line no sooner than `gap` after its answer: found on copies, as
 /// [`when`] finds the far end's instants.
 fn quiet_turn(g: &mut Gen, gap: u64) {
     for _ in 0..1_000 {
@@ -970,7 +1374,7 @@ fn quiet_turn(g: &mut Gen, gap: u64) {
         let a = io.answer_cycle(chaos::START, false, g.now);
         b.advance(a);
         b.read(chaos::START, a);
-        let busy = when(&b, a, 2_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+        let (busy, _) = next_frame(&b, a);
         if busy >= a + gap {
             return;
         }
@@ -993,114 +1397,26 @@ fn read_out(b: &IoBoard, at: u64, n: usize) -> Vec<u16> {
     (0..n).map(|_| c.read(chaos::READ_BUFFER, at)).collect()
 }
 
-/// What the interface's checkpoint says of its two buffers
-/// (`Interface::save`, in the order `Interface::load` reads it): the
-/// incoming buffer whole in the order it is read, or empty while never
-/// written; the bits the receiver took for it; and the frame START made
-/// ready, as the transmit buffer plays it out --- the words, the source and
-/// the check word, or what a buffer written past its end leaves.
-struct Bufs {
-    crc: bool,
-    rcv: Vec<u16>,
-    bits: u64,
-    ready: Option<Vec<u16>>,
-    /// The frames the turn timer saw start on the cable: first edge, end.
-    frames: Vec<(u64, u64)>,
-}
-
-impl Bufs {
-    /// Whether the cable is busy at `t` as the interface's `csr()` reckons
-    /// it: from a frame's first edge to `CBLBSY_OFF_NS` past its end.
-    fn busy(&self, t: u64) -> bool {
-        self.frames.iter().any(|&(s, e)| s <= t && t < e + muir::chaos::board::CBLBSY_OFF_NS)
-    }
-}
-
-fn buffers(b: &IoBoard) -> Bufs {
-    let c = b.chaos.as_ref().expect("no Chaosnet interface is plugged in");
-    let mut w = muir::checkpoint::Writer::new();
-    c.save(&mut w);
-    let bytes = w.finish();
-    let mut r = muir::checkpoint::Reader::new(&bytes);
-    let parse = |r: &mut muir::checkpoint::Reader| -> std::io::Result<Bufs> {
-        r.u16()?;
-        r.u16()?;
-        for _ in 0..3 {
-            r.bool()?;
-        }
-        let crc = r.bool()?;
-        r.u8()?;
-        r.u16s()?;
-        let rcv = r.u16s()?;
-        r.u64()?;
-        let bits = r.u64()?;
-        r.opt(muir::checkpoint::Reader::u64)?;
-        for _ in 0..r.u64()? {
-            r.u64()?;
-            r.u16s()?;
-            r.u16()?;
-            r.u16()?;
-            r.bool()?;
-            r.u64()?;
-        }
-        r.u64()?;
-        r.u64()?;
-        r.bool()?;
-        r.u8()?;
-        let mut frames = Vec::new();
-        for _ in 0..r.u64()? {
-            let s = r.u64()?;
-            r.u16()?;
-            frames.push((s, r.u64()?));
-        }
-        // `Turn::save`: the words written when the frame is a frame of
-        // them, its source and check word to be made again; otherwise the
-        // line itself and 512 words more.
-        let ready = if r.bool()? {
-            r.u64()?;
-            let mut v = r.u16s()?;
-            if v.len() >= 512 {
-                v.truncate(v.len() - 512);
-            } else {
-                v.push(CHAOS_ADDRESS);
-                v.push(check_word(&v));
-            }
-            Some(v)
-        } else {
-            None
-        };
-        Ok(Bufs { crc, rcv, bits, ready, frames })
-    };
-    parse(&mut r).expect("the Chaosnet interface's checkpoint, as Interface::load reads it")
-}
-
 /// The frame the last START made ready: what the card must hand the far
-/// end, the source and the check word in it.
+/// end, the source and the check word in it (`Turn::save`: the words written
+/// when the frame is a frame of them, its source and check word to be made
+/// again; otherwise the line itself and 512 words more).
 fn ready_line(b: &IoBoard) -> Vec<u16> {
-    buffers(b).ready.expect("START made a frame ready")
+    let mut v = st(b).ready.expect("START made a frame ready");
+    if v.len() >= 512 {
+        v.truncate(v.len() - 512);
+    } else {
+        v.push(CHAOS_ADDRESS);
+        v.push(check_word(&v));
+    }
+    v
 }
 
-/// **THE FRAME AS THE FAR END HANDS IT TO THE CARD** (`quux15_chaos.rs`'s
-/// `handed`): the buffer muir keeps after the frame landed, in the order it
-/// is read, cut to the frame's `ceil(bits / 16)` words.  The first word,
-/// partial when the bits are not whole words, comes with zeros above its
-/// bits; past the 256th the frame's bits are gone from the buffer, so the
-/// 257th carries only the bits above a partial first word, which share its
-/// place, and every word after it is a stand-in the card must drop.
-fn handed(b: &IoBoard) -> (Vec<u16>, u64) {
-    let Bufs { rcv, bits, .. } = buffers(b);
-    assert_eq!(rcv.len(), 256, "a frame landed and the buffer is not whole");
-    let stand_in = |k: usize| 0o155000u16 ^ (k as u16).wrapping_mul(0o4321);
-    let low = u16::MAX >> ((16 - bits % 16) % 16);
-    let words = (0..bits.div_ceil(16) as usize)
-        .map(|k| match k {
-            0 => rcv[0] & low,
-            1..=255 => rcv[k],
-            256 => (rcv[0] & !low) | (stand_in(k) & low),
-            _ => stand_in(k),
-        })
-        .collect();
-    (words, bits)
+/// The frame in the buffer as the far end hands it to the card
+/// (`chaos_state::handed`), and its bits.
+fn handed_now(b: &IoBoard) -> (Vec<u16>, u64) {
+    let s = st(b);
+    (handed(&s.rcv, s.bits), s.bits)
 }
 
 /// **START READ NOW UNDER LOOP BACK, AND WHAT THE FAR END DOES WITH IT.**
@@ -1108,9 +1424,9 @@ fn handed(b: &IoBoard) -> (Vec<u16>, u64) {
 /// out; the cable's instants for it, or for a frame of nothing only
 /// Transmit Done; and what comes back.  A frame of more than 48 bits lands
 /// as a `CRX` row, its words as the far end hands them; a run of 48 bits or
-/// fewer lands nowhere (muir's `arrive`), and is handed to the card anyway,
-/// a little after the cable goes idle, as a stimulus it must not take.
-/// The bits that landed, if any did.
+/// fewer lands nowhere (muir's `arrive`) and leaves its bits in the buffer,
+/// handed to the card as the line goes idle, which it must store and not
+/// land.  The bits that landed, if any did.
 fn loop_start(g: &mut Gen) -> Option<u64> {
     let t = g.now;
     assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
@@ -1118,19 +1434,20 @@ fn loop_start(g: &mut Gen) -> Option<u64> {
     g.ctx(&line);
     if line.is_empty() {
         // Nothing goes: Transmit Done `EMPTY_TDONE_NS` after the turn, the
-        // cable never busy.
+        // line never busy.
         let td = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
         g.ctd(td, false);
-        assert_eq!(cs(&g.b) & (ccsr::CRC_ERROR | ccsr::RECEIVE_DONE), 0, "a frame of nothing was on the cable");
+        assert_eq!(cs(&g.b) & (ccsr::CRC_ERROR | ccsr::RECEIVE_DONE), 0, "a frame of nothing was on the line");
+        assert!(st(&g.b).frames.iter().all(|f| f.0 < t), "a frame of nothing went on the line");
         return None;
     }
-    let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
-    g.cbl(busy, true);
-    let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    let (s, _) = next_frame(&g.b, t);
+    let td = when(&g.b, s, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
     g.ctd(td, false);
     let bits = 16 * line.len() as u64;
+    let land = idle_after(&g.b, s);
     if bits > 48 {
-        let land = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
+        assert_eq!(land, when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0), "the frame landed off its idle");
         let mut c = g.b.clone();
         c.advance(land);
         let crc = cs(&c) & ccsr::CRC_ERROR != 0;
@@ -1139,22 +1456,27 @@ fn loop_start(g: &mut Gen) -> Option<u64> {
         g.crx(land, bits, crc, false, &words);
         Some(bits)
     } else {
-        let idle = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
-        g.cbl(idle, false);
-        hand_back_run(g, &line);
+        hand_back_run(g, land, &line);
         None
     }
 }
 
-/// A run of 48 bits or fewer the card's own frame made, handed to it a
-/// little after the cable went idle: taken by no receiver, so nothing on
-/// the card moves, and muir's interface did not move either.
-fn hand_back_run(g: &mut Gen, line: &[u16]) {
+/// A run of 48 bits or fewer the card's own frame made, handed to it as the
+/// line goes idle at `land`: no receiver lands it, so Receive Done, Lost
+/// Count and CRC Error stay where they were; with Receive Done down its bits
+/// go into the buffer as they came, as muir's do.
+fn hand_back_run(g: &mut Gen, land: u64, line: &[u16]) {
     assert!(line.len() <= 3);
     let before = cs(&g.b);
-    let at = g.now + 2_000;
-    g.crx(at, 16 * line.len() as u64, false, false, line);
-    assert_eq!(cs(&g.b), before, "a run of {} bits moved the interface", 16 * line.len());
+    let was = st(&g.b);
+    g.settle(grid_before(grid_at(land)).max(g.now));
+    g.crx(land, 16 * line.len() as u64, false, false, line);
+    let now = st(&g.b);
+    assert_eq!(cs(&g.b) & !ccsr::CRC_ERROR, before & !ccsr::CRC_ERROR, "a run of {} bits moved the interface", 16 * line.len());
+    if !now.rdone {
+        assert_eq!(handed(&now.rcv, now.bits), line, "the run's bits are not what the buffer took");
+        assert!(was.rdone || now.bits == 16 * line.len() as u64);
+    }
 }
 
 /// The buffer read `reads` times, each read with the bit count before it
@@ -1169,6 +1491,18 @@ fn read_round(g: &mut Gen, reads: usize) {
         let v = g.read(chaos::CSR);
         assert_eq!(v & ccsr::CRC_ERROR != 0, check_word(&words) != 0, "CRC Error after read {k}");
     }
+}
+
+/// A read of the buffer with Receive Done down and the line idle: the read
+/// register shifted once, the buffer's bit at `RBCT` 0 coming in at the
+/// bottom (muir's `Interface::read_down`).
+fn idle_read(g: &mut Gen) -> u16 {
+    let s = st(&g.b);
+    assert!(!s.rdone, "an idle read with a packet in the buffer");
+    let want = s.rd << 1 | u16::from(s.ram_bit(0));
+    let v = g.read(chaos::READ_BUFFER);
+    assert_eq!(v, want, "a read with Receive Done down, the line idle");
+    v
 }
 
 /// The first instant in `[from, from + limit]` at which a monotone predicate
@@ -1818,8 +2152,8 @@ fn main() {
     // **WHAT IS CHECKED HERE IS THE REGISTER FACE AND NOT THE PROTOCOL.**
     // The cable, the turn timer and the receiver's verdict on a frame are
     // the `cadr-chaosnet` program's; under Loop Back muir's own interface
-    // plays that far end and its instants are recorded as `CBL`, `CTD` and
-    // `CRX` rows for the fabric's seam.  Everything the software reads ---
+    // plays that far end and its instants are recorded as `CBL`, `CST`,
+    // `CLV`, `CTD`, `CLS` and `CRX` rows for the fabric's seam.  Everything the software reads ---
     // the CSR's ten made-up bits, the bit counter's arithmetic, the read
     // buffer's pointer, the lost count, the two buffers going round, the
     // check word the card makes and the check of the read-out --- is the
@@ -1831,7 +2165,9 @@ fn main() {
     // NOT `764152`, which is START and would launch the empty buffer.
     assert_eq!(g.read(chaos::CSR), ccsr::TRANSMIT_DONE, "the Chaosnet CSR at power-on");
     assert_eq!(g.read(chaos::MY_ADDRESS), CHAOS_ADDRESS, "the address switches at LMMYNM");
-    assert_eq!(g.read(chaos::READ_BUFFER), 0, "the read buffer with no packet in it");
+    // A read of the buffer with no packet shifts the read register: the
+    // buffer's bit at `RBCT` 0, never written, is 1 (muir's `read_down`).
+    assert_eq!(g.read(chaos::READ_BUFFER), 1, "the read buffer with no packet in it");
     assert_eq!(g.read(chaos::BIT_COUNT), 0, "the bit count with no packet in it");
     // The aliases `A3` does not separate: `764150` is the CSR again and
     // `764156` the bit count again.
@@ -1912,23 +2248,36 @@ fn main() {
     assert_eq!(&line[..packet.len()], &packet[..], "the frame is not the words written");
     assert_eq!(line[packet.len()..], [CHAOS_ADDRESS, check_word(&line[..=packet.len()])], "the trailer");
     g.ctx(&line);
-    let busy_on = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
-    let tdone = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
-    let landed = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
+    let (busy_on, idle) = next_frame(&g.b, t0);
+    let tdone = when(&g.b, busy_on, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    let landed = when(&g.b, busy_on, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
     assert!(busy_on < tdone && tdone < landed, "the far end's three instants are out of order");
-    // The cable goes busy: bit 14 is the CRC error OR `-CBLBSY`, which is
-    // one net on the board and two things to the software.  Read the CSR
-    // while it stands, so that the seam's own input is live here.
-    g.cbl(busy_on, true);
-    let v = g.read(chaos::CSR);
-    assert_eq!(v & ccsr::CRC_ERROR, ccsr::CRC_ERROR, "bit 14 is down while the cable is busy");
-    assert_eq!(v & ccsr::RECEIVE_DONE, 0, "the packet landed before the cable was idle");
+    assert_eq!(landed, idle, "Receive Done is not the line going idle");
+    // **CRC ERROR AND THE BIT COUNT WHILE THE FRAME COMES IN** (muir's
+    // `40b86d1` and `4647f6b`, measured on the netlist board): CRC Error is
+    // the receive check register, the 9401 at LMRBUF 0C07, over the bits
+    // stored so far, and the bit count is `RBCT`, those bits, stepping
+    // `RACT_NS` after each cell's opening edge. Read at cells spread across
+    // the frame and at phases across a cell, from before `START^` on; never
+    // the buffer, which muir does not model while its receiver takes a
+    // frame.
+    let mut crc_both = [0u32; 2];
+    let mut counts = BTreeSet::new();
+    for k in 0..8u64 {
+        g.at(grid_at(busy_on + 3_300 * k + 40 * k).max(g.now));
+        let v = g.read(chaos::CSR);
+        assert_eq!(v & ccsr::RECEIVE_DONE, 0, "the packet landed before the line was idle");
+        crc_both[usize::from(v & ccsr::CRC_ERROR != 0)] += 1;
+        counts.insert(g.read(chaos::BIT_COUNT));
+    }
+    assert!(crc_both[0] > 0 && crc_both[1] > 0, "CRC Error inside the frame never moved: {crc_both:?}");
+    assert!(counts.len() >= 6, "the bit count inside the frame: {counts:?}");
     g.ctd(tdone, false);
     g.look();
     assert_eq!(g.b.interrupt_request(g.now), Some(0o270), "Transmit Done asked for nothing");
-    // The packet lands, and `RDONE` rises with `-CBLBSY` lifting: muir's
-    // `land` is `end + CBLBSY_OFF_NS`, so the two are one instant by
-    // construction and the row carries the cable's level.
+    // The packet lands, and `RDONE` rises with the line going idle: the
+    // busy one-shot's fourth `FCLK^` rise after the last edge, 250 or 375
+    // ns after the frame's nominal end by its last bit (muir's `2b1b0b4`).
     let words = read_out(&g.b, landed, packet.len() + 2);
     let bits = ((packet.len() + 2) * 16) as u64;
     g.crx(landed, bits, false, false, &words);
@@ -1949,13 +2298,20 @@ fn main() {
         assert_eq!(g.read(0o764156), want_count, "the bit count after word {k}");
     }
 
-    // --- a second packet on a buffer nobody emptied: the lost count -----
+    // --- frames on a buffer nobody emptied: the lost count ---------------
     //
-    // Receive Done still stands, so the next frame is counted lost and
-    // dropped whole.  Four bits of it, at `0o17000`.
+    // Receive Done still stands, so at each frame's `START^` `RACT` takes it
+    // and stays off: nothing of the frame is stored, and as its destination
+    // word goes by, `BUSY_ABORT_NS` in, the busy receiver's gates find
+    // `-RACT` up (muir's `4647f6b`, `busy_looped`, measured on the netlist
+    // board under Loop Back). Lost Count steps for `DEST MATCH` --- this
+    // address, zero, or Spy --- and a frame to this address by name is
+    // aborted, Transmit Done `TDONE_AFTER_ABORT_NS` on with Transmit Abort:
+    // three to this interface, a broadcast counted and not aborted, and
+    // another station's neither.
     g.wait(2_000);
-    for k in 0..3u16 {
-        let one: Vec<u16> = vec![0o070707 ^ u16::from(k), CHAOS_ADDRESS];
+    for (k, dest) in [CHAOS_ADDRESS, CHAOS_ADDRESS, CHAOS_ADDRESS, 0, CHAOS_PEER].into_iter().enumerate() {
+        let one: Vec<u16> = vec![0o070707 ^ k as u16, dest];
         let t = g.now;
         for w in &one {
             g.write(chaos::WRITE_BUFFER, *w);
@@ -1963,24 +2319,28 @@ fn main() {
         assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
         let line = ready_line(&g.b);
         g.ctx(&line);
-        let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
-        g.cbl(busy, true);
-        let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
-        g.ctd(td, false);
-        // The frame lands and is dropped; `RDONE` still rises with the
-        // cable going idle, so the row is where the busy level falls.
-        let land = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
-        let lost_words = read_out(&g.b, land, one.len() + 2);
-        g.crx(land, ((one.len() + 2) * 16) as u64, false, false, &lost_words);
+        let (s, _) = next_frame(&g.b, t);
+        let lost_before = (cs(&g.b) & ccsr::LOST_COUNT) >> 9;
+        let counted = dest != CHAOS_PEER;
+        if counted {
+            let lost = when(&g.b, s, 1_000_000, &|b| (cs(b) & ccsr::LOST_COUNT) >> 9 != lost_before);
+            assert_eq!(lost, s + BUSY_ABORT_NS, "the busy receiver counted off the destination word");
+            g.cls(lost);
+        }
+        let td = when(&g.b, s, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+        let mut c = g.b.clone();
+        c.advance(td);
+        let abort = cs(&c) & ccsr::TRANSMIT_ABORT != 0;
+        assert_eq!(abort, dest == CHAOS_ADDRESS, "Transmit Abort for a frame to {dest:o}");
+        g.ctd(td, abort);
+        let idle = idle_after(&g.b, s);
+        g.settle(grid_at(idle));
         let v = g.read(chaos::CSR);
-        assert_eq!(
-            (v & ccsr::LOST_COUNT) >> 9,
-            k + 1,
-            "the lost count did not go up on a frame the buffer had no room for"
-        );
+        let want = lost_before + u16::from(counted);
+        assert_eq!((v & ccsr::LOST_COUNT) >> 9, want, "the lost count for a frame to {dest:o} the buffer had no room for");
         assert_eq!(v & ccsr::RECEIVE_DONE, ccsr::RECEIVE_DONE);
     }
-    // The first packet is still what the buffer holds: a dropped frame does
+    // The first packet is still what the buffer holds: a lost frame does
     // not disturb it.  The pointer is at the end, so the count is `7777`.
     assert_eq!(g.read(chaos::BIT_COUNT), 0o7777, "a lost frame moved the buffer's pointer");
 
@@ -2038,6 +2398,24 @@ fn main() {
     assert_eq!(g.b.interrupt_request(g.now), Some(0o270),
                "Receive Done with its own enable asked for nothing");
 
+    // **LOST COUNT STAYS THROUGH A RESET AND `-UB INIT`** (muir's `4647f6b`,
+    // `a_reset_leaves_lost_count_where_it_was_on_both_alike`): its 74LS161
+    // at LMMYNM 0F04 clears on Clear Receiver's `-11.SAYS.GO` alone, and
+    // `-INIT` reaches only `-CLR RCV BUSY` and Transmit Done. A Reset and
+    // then `-UB INIT` with four frames counted: Receive Done and the
+    // enables go and the count stays; Clear Receiver below takes it away.
+    let lost = (g.read(chaos::CSR) & ccsr::LOST_COUNT) >> 9;
+    assert_eq!(lost, 4, "the frames counted before the Reset");
+    g.write(chaos::CSR, ccsr::RESET);
+    let v = g.read(chaos::CSR);
+    assert_eq!((v & ccsr::LOST_COUNT) >> 9, lost, "a Reset took the lost count");
+    assert_eq!(v & (ccsr::RECEIVE_DONE | C_WRITABLE), 0, "a Reset left Receive Done or an enable");
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::RECEIVE_INT_ENABLE);
+    g.init();
+    let v = g.read(chaos::CSR);
+    assert_eq!((v & ccsr::LOST_COUNT) >> 9, lost, "-UB INIT took the lost count");
+    assert_eq!(v & C_WRITABLE, 0, "-UB INIT left an enable");
+
     // Clear Receiver takes the packet, the lost count and the CRC verdict
     // away, and leaves the five writable bits where the same word puts them.
     g.write(chaos::CSR, ccsr::CLEAR_RECEIVER | ccsr::SPY | ccsr::LOOP_BACK);
@@ -2046,7 +2424,14 @@ fn main() {
     assert_eq!(v & ccsr::LOST_COUNT, 0, "Clear Receiver left the lost count");
     assert_eq!(v & C_WRITABLE, ccsr::SPY | ccsr::LOOP_BACK, "Clear Receiver took the enables too");
     assert_eq!(g.read(chaos::BIT_COUNT), 0, "the bit count after Clear Receiver");
-    assert_eq!(g.read(chaos::READ_BUFFER), 0, "the buffer after Clear Receiver");
+    // **A READ OF THE BUFFER WITH RECEIVE DONE DOWN SHIFTS THE READ
+    // REGISTER** (muir's `4647f6b`, `read_down`): with the line idle `RRESET`
+    // holds `RBCT` at 0, so each read is the last word read moved up a bit
+    // with the buffer's bit at `RBCT` 0 below it --- the packet's check
+    // word's lowest bit here --- and the card's own register, not 0.
+    for _ in 0..3 {
+        idle_read(&mut g);
+    }
 
     // --- the buffer's own size, which is 256 words, and goes round -------
     //
@@ -2082,16 +2467,18 @@ fn main() {
 
     // **FRAMES WRITTEN PAST THE BUFFER'S END, SENT**, under Loop Back, each
     // read round the buffer as muir reads the netlist board: 254 words send
-    // nothing at all, 255 to 257 send 16 to 48 bits that no receiver takes,
-    // and 258 and 300 land, 64 and 736 bits of what the wrap left, with the
-    // check of every word written, which the read-out then fails.
+    // nothing at all, 255 to 257 send 16 to 48 bits that no receiver lands
+    // and that leave their bits in the buffer, and 258 and 300 land, 64 and
+    // 736 bits of what the wrap left, with the check of every word written,
+    // which the read-out then fails; reading round shows the runs before
+    // them.
     for n in [254usize, 255, 256, 257, 258, 300] {
         g.wait(2_000);
         g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
-        // A read of the buffer with no packet takes nothing and moves
-        // nothing (`READ_BUFFER` with Receive Done down), so the frame that
-        // lands next reads from its first word.
-        assert_eq!(g.read(chaos::READ_BUFFER), 0, "the buffer with no packet");
+        // A read of the buffer with no packet moves no pointer (the read
+        // register shifts), so the frame that lands next reads from its
+        // first word.
+        idle_read(&mut g);
         for k in 0..n {
             g.write(chaos::WRITE_BUFFER, if k + 1 == n { CHAOS_ADDRESS } else { 0o100000 | k as u16 });
         }
@@ -2108,7 +2495,7 @@ fn main() {
     // (MIT's TRESET, the 74S00s at LMTBFC 0C15 clearing the 74S74 at LMMODU
     // 0D08).  The frame still goes, the source and its check word, and
     // Transmit Done comes back `TDONE_BEFORE_END_NS` before its nominal
-    // end; 32 bits is no packet, so nothing comes back.
+    // end; 32 bits is no packet, so nothing lands, and its bits stay.
     g.wait(2_000);
     g.write(chaos::CSR, ccsr::LOOP_BACK);
     let t = g.now;
@@ -2117,10 +2504,11 @@ fn main() {
     let line = ready_line(&g.b);
     assert_eq!(line, [CHAOS_ADDRESS, check_word(&[CHAOS_ADDRESS])], "an empty START's frame");
     g.ctx(&line);
-    empty_frame(&mut g, t);
-    hand_back_run(&mut g, &line);
+    let idle = empty_frame(&mut g, t);
+    hand_back_run(&mut g, idle, &line);
     g.wait(400_000);
     assert_eq!(g.read(chaos::CSR) & ccsr::RECEIVE_DONE, 0, "an empty buffer arrived as a packet");
+    idle_read(&mut g);
 
     // --- START again with nothing written: the first START took the buffer
     //
@@ -2142,8 +2530,7 @@ fn main() {
     assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
     let line = ready_line(&g.b);
     g.ctx(&line);
-    let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
-    g.cbl(busy, true);
+    let (busy, _) = next_frame(&g.b, t);
     let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
     g.ctd(td, false);
     let land = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
@@ -2162,11 +2549,50 @@ fn main() {
     let line = ready_line(&g.b);
     assert_eq!(line.len(), 2, "a second START sent the first packet again");
     g.ctx(&line);
-    empty_frame(&mut g, t);
-    hand_back_run(&mut g, &line);
+    let idle = empty_frame(&mut g, t);
+    hand_back_run(&mut g, idle, &line);
     g.wait(400_000);
     let v = g.read(chaos::CSR);
     assert_eq!(v & ccsr::RECEIVE_DONE, 0, "a second START sent the first packet again");
+
+    // **A RUN OF 48 BITS OR FEWER LEAVES ITS BITS**, and the idle read shows
+    // the one at RBCT 0. 255 words written send 16 bits, the check word of
+    // all of them and the source alone, which goes in at the run's done, over
+    // what the place held: a packet landed first whose own check word's
+    // lowest bit is the other, then the receiver cleared, the run stored over
+    // it, and an idle read either side.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER | ccsr::CLEAR_TRANSMITTER);
+    let words255: Vec<u16> = (0..255u16).map(|k| 0o60000 ^ k.wrapping_mul(0o1453)).collect();
+    let run_word = check_word(&[&words255[..], &[CHAOS_ADDRESS]].concat());
+    let p = (0..64u16)
+        .map(|k| vec![0o1000 + k, CHAOS_ADDRESS])
+        .find(|p| check_word(&[&p[..], &[CHAOS_ADDRESS]].concat()) & 1 != run_word & 1)
+        .expect("a packet whose check word's lowest bit is not the run's");
+    for w in &p {
+        g.write(chaos::WRITE_BUFFER, *w);
+    }
+    assert!(loop_start(&mut g).is_some(), "the packet under the run did not land");
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    let below = idle_read(&mut g);
+    g.wait(2_000);
+    for w in &words255 {
+        g.write(chaos::WRITE_BUFFER, *w);
+    }
+    let t = g.now;
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    let line = ready_line(&g.b);
+    assert_eq!(line, [run_word], "255 words written send the check word alone");
+    g.ctx(&line);
+    let (s, _) = next_frame(&g.b, t);
+    let td = when(&g.b, s, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    let idle = idle_after(&g.b, s);
+    hand_back_run(&mut g, idle, &line);
+    g.wait(2_000);
+    let above = idle_read(&mut g);
+    assert_ne!(above & 1, below & 1, "the run's bit at RBCT 0 is the packet's");
+    g.run_bits += 1;
 
 
     // --- `-UB INIT` reaches the interface -------------------------------
@@ -2182,6 +2608,207 @@ fn main() {
     assert_eq!(v & C_WRITABLE, 0, "-UB INIT left a Chaosnet enable up");
     assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "-UB INIT left Transmit Done down");
     assert_eq!(v & ccsr::RECEIVE_DONE, 0);
+
+    // --- FRAMES THE RECEIVER TAKES AND DOES NOT LAND, AND CLEARS INSIDE ONE
+    //
+    // muir's `b338042` and `4647f6b`, measured on the netlist board: the
+    // receiver stores every frame it takes from `RBCT` 0 as it comes, and
+    // the destination word decides only whether it lands. A frame for
+    // another station leaves its bits in the buffer, and so does one a
+    // Clear Receiver, a Reset or `-UB INIT` drops; the far end hands the
+    // card those bits to store and not land, and after a drop right after
+    // the clear, with no row between. Inside a frame the receiver is not
+    // taking --- refused at `START^` or cleared off it --- `RRESET` is not
+    // held, and reads of the buffer count `RBCT` down from 0, the bit count
+    // showing it and CRC Error the check of the bits read. Each is read
+    // round afterwards over a frame landed short, which shows what the
+    // buffer kept.
+    let numbered = |n: usize, dest: u16| -> Vec<u16> {
+        let mut v: Vec<u16> = (0..n - 1).map(|k| 0o140000 ^ (k as u16).wrapping_mul(0o3517)).collect();
+        v.push(dest);
+        v
+    };
+    // Sends `words` and returns the frame's first edge, its line handed.
+    fn send(g: &mut Gen, words: &[u16]) -> u64 {
+        let t = g.now;
+        for w in words {
+            g.write(chaos::WRITE_BUFFER, *w);
+        }
+        assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+        let line = ready_line(&g.b);
+        g.ctx(&line);
+        next_frame(&g.b, t).0
+    }
+    // Reads inside the frame on the line, the bit count, the buffer if the
+    // receiver is not taking it, and the CSR, `n` times a few cells apart.
+    fn inside(g: &mut Gen, n: usize) {
+        for k in 0..n {
+            g.wait(900 + 130 * k as u64);
+            g.read(chaos::BIT_COUNT);
+            let s = st(&g.b);
+            let now = g.now;
+            if !s.taking(g.chaos(), now) && !s.rdone {
+                g.read(chaos::READ_BUFFER);
+            }
+            g.read(chaos::CSR);
+        }
+    }
+    // A short frame to this interface landed over what the buffer holds,
+    // read round, and the receiver cleared.
+    fn land_short(g: &mut Gen) {
+        g.wait(2_000);
+        let landed = loop_start(g);
+        assert!(landed.is_some(), "a short frame did not land");
+        read_round(g, 262);
+        g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    }
+    // (a) A frame for another station, taken, stored, and not landed.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    let s = send(&mut g, &numbered(20, CHAOS_PEER));
+    g.at(grid_at(s + 5_000));
+    inside(&mut g, 4);
+    let td = when(&g.b, g.now, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    let idle = idle_after(&g.b, s);
+    let before = st(&g.b);
+    g.stored(idle, &before);
+    assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "a frame for another station landed");
+    for _ in 0..3 {
+        idle_read(&mut g);
+    }
+    for w in [0o12345u16, 0o54321, CHAOS_ADDRESS] {
+        g.write(chaos::WRITE_BUFFER, w);
+    }
+    land_short(&mut g);
+    // (b) A Clear Receiver inside a frame taken, after its destination word:
+    // dropped, the bits stored so far kept, and reads counting down through
+    // the rest of it.
+    g.wait(2_000);
+    let s = send(&mut g, &numbered(40, CHAOS_ADDRESS));
+    g.at(grid_at(s + BUSY_ABORT_NS + 20_000));
+    inside(&mut g, 2);
+    let before = st(&g.b);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    let d = st(&g.b).dropped.expect("the Clear Receiver dropped nothing");
+    assert!(d.1 > 64, "the drop kept {} bits", d.1);
+    g.drops += 1;
+    let at = g.now;
+    g.stored(at, &before);
+    inside(&mut g, 6);
+    let td = when(&g.b, g.now, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    g.settle(grid_at(idle_after(&g.b, s)));
+    assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "a frame cleared off landed");
+    idle_read(&mut g);
+    for w in [0o23456u16, 0o65432, 0o1, CHAOS_ADDRESS] {
+        g.write(chaos::WRITE_BUFFER, w);
+    }
+    land_short(&mut g);
+    // (c) A Clear Receiver before the destination word: dropped, and as the
+    // word goes by the busy receiver counts the frame and aborts it, being
+    // this interface's own address.
+    g.wait(2_000);
+    let s = send(&mut g, &numbered(40, CHAOS_ADDRESS));
+    g.at(grid_at(s + 4_000));
+    inside(&mut g, 1);
+    let before = st(&g.b);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    assert!(st(&g.b).dropped != before.dropped, "the Clear Receiver dropped nothing");
+    g.drops += 1;
+    let at = g.now;
+    g.stored(at, &before);
+    let lost = when(&g.b, g.now, 1_000_000, &|b| cs(b) & ccsr::LOST_COUNT != 0);
+    assert_eq!(lost, s + BUSY_ABORT_NS, "the busy receiver counted off the destination word");
+    g.cls(lost);
+    let td = when(&g.b, lost, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    assert!(cs(&{ let mut c = g.b.clone(); c.advance(td); c }) & ccsr::TRANSMIT_ABORT != 0, "no abort");
+    g.ctd(td, true);
+    inside(&mut g, 2);
+    g.settle(grid_at(idle_after(&g.b, s)));
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    // A frame of zeros for another station, stored, for (d)'s reads to
+    // count down through: where the check of the bits read and the check of
+    // one word alone part.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    let mut zeros = vec![0u16; 252];
+    zeros.push(CHAOS_PEER);
+    let s = send(&mut g, &zeros);
+    let td = when(&g.b, s, 2_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    let idle = idle_after(&g.b, s);
+    let before = st(&g.b);
+    g.stored(idle, &before);
+    // (d) A frame refused at its `START^`, Receive Done up, the receiver
+    // then cleared inside it: never taken, so nothing stored and reads
+    // counting down from 0; counted and aborted at its destination word.
+    g.wait(2_000);
+    for w in [0o34567u16, 0o76543, CHAOS_ADDRESS] {
+        g.write(chaos::WRITE_BUFFER, w);
+    }
+    assert!(loop_start(&mut g).is_some(), "the packet to refuse on did not land");
+    g.wait(2_000);
+    let s = send(&mut g, &numbered(40, CHAOS_ADDRESS));
+    g.at(grid_at(s + 3_000));
+    inside(&mut g, 1);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    inside(&mut g, 2);
+    let lost = when(&g.b, g.now, 1_000_000, &|b| cs(b) & ccsr::LOST_COUNT != 0);
+    assert_eq!(lost, s + BUSY_ABORT_NS, "the busy receiver counted off the destination word");
+    g.cls(lost);
+    let td = when(&g.b, lost, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, true);
+    inside(&mut g, 5);
+    g.settle(grid_at(idle_after(&g.b, s)));
+    idle_read(&mut g);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    // (d') The same for a frame for another station, which no busy receiver
+    // counts and which goes on to its end: the reads count down through the
+    // stored zeros.
+    g.wait(2_000);
+    for w in [0o35670u16, 0o76541, CHAOS_ADDRESS] {
+        g.write(chaos::WRITE_BUFFER, w);
+    }
+    assert!(loop_start(&mut g).is_some(), "the packet to refuse on did not land");
+    g.wait(2_000);
+    let s = send(&mut g, &numbered(40, CHAOS_PEER));
+    g.at(grid_at(s + 3_000));
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    inside(&mut g, 10);
+    let td = when(&g.b, g.now, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    g.ctd(td, false);
+    g.settle(grid_at(idle_after(&g.b, s)));
+    idle_read(&mut g);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+    // (e) A Reset inside a frame taken, and (f) `-UB INIT`: each drops it as
+    // a Clear Receiver does, and takes Loop Back off with the CSR, so the
+    // frame looped back is over for the receiver at once.
+    for by_init in [false, true] {
+        g.wait(2_000);
+        let s = send(&mut g, &numbered(40, CHAOS_PEER));
+        g.at(grid_at(s + 6_000));
+        inside(&mut g, 2);
+        let before = st(&g.b);
+        if by_init {
+            g.init();
+        } else {
+            g.write(chaos::CSR, ccsr::RESET);
+        }
+        assert!(st(&g.b).dropped != before.dropped, "the reset dropped nothing");
+        assert!(st(&g.b).frame_now(g.now).is_none(), "the frame went on past the reset");
+        g.drops += 1;
+        let at = g.now;
+        g.stored(at, &before);
+        g.wait(2_000);
+        idle_read(&mut g);
+        g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_RECEIVER);
+        for w in [0o45670u16 ^ u16::from(by_init), 0o7, CHAOS_ADDRESS] {
+            g.write(chaos::WRITE_BUFFER, w);
+        }
+        land_short(&mut g);
+    }
+    g.write(chaos::CSR, ccsr::CLEAR_RECEIVER);
 
     // ------------------------------------------------------------------
     // THE SERIAL PORT, `0o764160`-`0o764176`: the Signetics 2651 at IOBSER
@@ -2730,7 +3357,7 @@ fn main() {
             b.advance(a);
             b.read(chaos::START, a);
             let behind = io.answer_cycle(chaos::WRITE_BUFFER, true, a + UNIBUS_STROBE_NS);
-            let busy = when(&b, a, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+            let (busy, _) = next_frame(&b, a);
             if busy > behind + 8_000 {
                 break;
             }
@@ -2748,7 +3375,7 @@ fn main() {
         let line = ready_line(&g.b);
         assert_eq!(&line[..words.len()], &words[..], "the frame is not the words written before START");
         g.ctx(&line);
-        empty_frame(&mut g, t);
+        let _ = empty_frame(&mut g, t);
         g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER);
     }
     g.wait(8_000);
@@ -2768,6 +3395,12 @@ fn main() {
     // cable's busy line has no row to make.
     g.write(chaos::CSR, ccsr::CLEAR_RECEIVER);
     g.b.chaos.as_mut().expect("the interface").plug(Ether::new());
+    // From here the far end's instants are found on the board itself, a
+    // tick at a time: a copy has no cable.
+    g.cable = true;
+    fn cable(g: &mut Gen) -> &mut Ether {
+        g.b.chaos.as_mut().and_then(|c| c.ether_mut()).expect("the cable")
+    }
     let numbered = |n: usize| -> Vec<u16> {
         let mut v: Vec<u16> = (0..n - 1).map(|k| 0o100000 | k as u16).collect();
         v.push(CHAOS_ADDRESS);
@@ -2791,40 +3424,39 @@ fn main() {
         g.write(chaos::CSR, ccsr::CLEAR_RECEIVER);
         g.wait(2_000);
         let t = g.now;
-        fn cable(g: &mut Gen) -> &mut Ether {
-            g.b.chaos.as_mut().and_then(|c| c.ether_mut()).expect("the cable")
-        }
         cable(&mut g).send_now(t, CHAOS_PEER, words);
-        if let Some(cells) = over {
-            g.b.advance(t + cells * CELL_NS);
-            cable(&mut g).send_now(t + cells * CELL_NS, 0o3061, other.clone());
-        }
         // **THE BOARD ITSELF IS TAKEN ON A TICK AT A TIME**, not a copy as
         // [`when`] probes: a copy of the interface has no cable.  Nothing
-        // else happens on the board meanwhile, and no row is made until the
-        // frame lands, so the trace sees the cable only at the landing.
-        let mut land = grid_at(g.now.max(t + over.map_or(0, |c| c * CELL_NS)));
+        // else happens on the board meanwhile, and the far end's instants
+        // are said at the tick each falls in.
+        let mut land = g.now;
         loop {
+            land += TICK_NS;
+            if let Some(cells) = over
+                && land == grid_at(t + cells * CELL_NS)
+            {
+                g.b.advance(t + cells * CELL_NS);
+                cable(&mut g).send_now(t + cells * CELL_NS, 0o3061, other.clone());
+            }
             g.b.advance(land);
             if cs(&g.b) & ccsr::RECEIVE_DONE != 0 {
                 break;
             }
-            land += TICK_NS;
+            g.far(land);
             assert!(land < t + 3_000_000, "the frame from another station never landed");
         }
-        let at = buffers(&g.b);
-        let (h, bits) = handed(&g.b);
-        g.crx(land, bits, at.crc, at.busy(land), &h);
-        // The cable still busy with the frame put over it: its level falls
-        // where the interface's reckoning says, a row of its own.
-        if at.busy(land) {
-            let mut idle = land;
-            while buffers(&g.b).busy(idle) {
-                idle += TICK_NS;
-                g.b.advance(idle);
-            }
-            g.cbl(idle, false);
+        let at = st(&g.b);
+        let (h, bits) = handed_now(&g.b);
+        g.crx(land, bits, at.crc, false, &h);
+        // The line still busy with the frame put over it: it goes idle where
+        // the interface's reckoning says, a row of its own.
+        let mut idle = land;
+        while st(&g.b).frame_now(idle).is_some() {
+            idle += TICK_NS;
+            g.b.advance(idle);
+            g.far(idle);
         }
+        g.at(idle);
         long_frames += u32::from(bits > 4_096);
         partial += u32::from(bits % 16 != 0);
         if read {
@@ -2832,6 +3464,38 @@ fn main() {
         }
     }
     assert_eq!((long_frames, partial), (3, 2), "frames past 4,096 bits, and partial ones");
+    // **A RESET INSIDE A FRAME OFF THE CABLE** (muir's `b338042`): a frame
+    // from another station to this interface, taken, and a Reset written
+    // after its destination word.  The receiver is dropped off it --- `RRESET`
+    // takes `RACT` down, and only `START^` sets it --- the bits stored so far
+    // stay and are handed over to be stored, and the frame goes on on the
+    // cable with the reads counting down through it, the bit count showing
+    // `RBCT` and CRC Error the check of the bits read; Lost Count stays.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::CLEAR_RECEIVER);
+    g.wait(2_000);
+    let t = g.now;
+    cable(&mut g).send_now(t, CHAOS_PEER, numbered(60));
+    g.at(grid_at(t + BUSY_ABORT_NS + 15_000));
+    inside(&mut g, 2);
+    let before = st(&g.b);
+    g.write(chaos::CSR, ccsr::RESET);
+    assert!(st(&g.b).dropped != before.dropped, "the Reset dropped nothing off the cable");
+    let now = g.now;
+    assert!(st(&g.b).frame_now(now).is_some(), "the frame off the cable ended with the Reset");
+    g.drops += 1;
+    let at = g.now;
+    g.stored(at, &before);
+    inside(&mut g, 6);
+    let mut idle = g.now;
+    while st(&g.b).frame_now(idle).is_some() {
+        idle += TICK_NS;
+        g.b.advance(idle);
+        g.far(idle);
+    }
+    g.at(idle);
+    assert_eq!(cs(&g.b) & ccsr::RECEIVE_DONE, 0, "a frame dropped by a Reset landed");
+    idle_read(&mut g);
     g.write(chaos::CSR, ccsr::CLEAR_RECEIVER);
 
     // ------------------------------------------------------------------
@@ -2879,7 +3543,7 @@ fn main() {
     assert!(g.audio_both[0] > 0 && g.audio_both[1] > 0, "AUDIO never moved");
     assert!(g.unanswered >= 9, "too few cycles nothing answered");
     assert!(g.slips > 0, "no read landed off the grid, which the low half always does");
-    assert_eq!(g.inits, 5, "the program made a different number of -UB INIT pulses");
+    assert_eq!(g.inits, 7, "the program made a different number of -UB INIT pulses");
     // The two groups this slice added, and what they were asked to do.
     for r in [chaos::CSR, chaos::MY_ADDRESS, chaos::READ_BUFFER, chaos::BIT_COUNT, chaos::START] {
         assert!(g.reads.contains_key(&r), "the Chaosnet register {r:o} was never read");
@@ -2899,6 +3563,14 @@ fn main() {
     }
     assert!(g.ctx_rows >= 5, "too few transmit buffers handed over: {}", g.ctx_rows);
     assert!(g.crx_rows >= 4, "too few packets landed: {}", g.crx_rows);
+    // What the line's three and the far end's new rows reached: frames on
+    // the line and their `START^`s, levels said, rows held to muir's face
+    // inside a frame it takes, reads counting down inside one it does not,
+    // frames counted lost, bits stored and not landed, and drops.
+    assert!(g.cbl_rows >= 20 && g.cst_rows >= 10 && g.clv_rows >= 50, "the line: {} {} {}", g.cbl_rows, g.cst_rows, g.clv_rows);
+    assert!(g.taken_rows >= 20 && g.down_reads >= 10, "inside frames: {} taken, {} counting down", g.taken_rows, g.down_reads);
+    assert!(g.cls_rows >= 5 && g.stored_rows >= 5 && g.drops >= 4, "lost {}, stored {}, drops {}", g.cls_rows, g.stored_rows, g.drops);
+    assert!(g.down_parts >= 1 && g.run_bits >= 1, "count-down checks parting {}, runs' bits shown {}", g.down_parts, g.run_bits);
     assert!(g.stk_rows >= 4 && g.sdn_rows >= 4, "the 2651 sent too little");
     assert!(g.srx_rows >= 3, "the 2651 received too little");
     // One a mode: a card that echoed in one and not the other would pass a
@@ -2945,10 +3617,20 @@ fn main() {
     println!("# CBUF     dir seq k word            dir 0 a packet landing, 1 a buffer handed over");
     println!("# CTX      n ns seq len <face>       the transmit buffer the card handed over");
     println!("#     since the last such row: an ASSERTION, the words having come over the bus");
-    println!("# CRX      n ns seq bits len crc busy <face>  a packet lands in the receive buffer");
-    println!("#     stimulus; -CBLBSY lifts with RDONE, so the row is the cable going idle too");
+    println!("# CRX      n ns seq bits len crc busy store <face>  a packet lands in the receive buffer");
+    println!("#     stimulus, its words streamed in on the ticks before; busy the line after it;");
+    println!("#     store 1 the bits stored and not landed: a frame taken and not for this");
+    println!("#     interface, or what a clear left of a frame it dropped.  A run of 48 bits or");
+    println!("#     fewer lands nowhere, judged by its length");
     println!("# CTD      n ns abort <face>         Transmit Done off the far end");
-    println!("# CBL      n ns busy <face>          -CBLBSY, which bit 14 reads out");
+    println!("# CLS      n ns abort <face>         a frame counted lost, the buffer full at its START^,");
+    println!("#     abort 1 a frame of this interface's to its own address, aborted there, its");
+    println!("#     Transmit Done after");
+    println!("# CBL      n ns busy <face>          a frame on the line, from its first edge to its idle");
+    println!("# CST      n ns <face>               its START^, where the receive gate takes Receive Done");
+    println!("# CLV      n ns stored nz <face>     the bits the receiver would have stored of it so far,");
+    println!("#     RBCT in twelve bits,");
+    println!("#     and whether the 9401 is non-zero over them, gate or no gate, from here");
     println!("# STK      n ns <face>               the shift register takes the holding register");
     println!("# SDN      n ns <face>               the shift register finishes its frame");
     println!("# SRX      n ns data <face>          a character reaches the receive path");
@@ -3006,6 +3688,16 @@ fn main() {
     println!("# crx_rows {}", g.crx_rows);
     println!("# ctd_rows {}", g.ctd_rows);
     println!("# cbl_rows {}", g.cbl_rows);
+    println!("# cst_rows {}", g.cst_rows);
+    println!("# clv_rows {}", g.clv_rows);
+    println!("# cls_rows {}", g.cls_rows);
+    println!("# cls_aborts {}", g.cls_aborts);
+    println!("# crx_stored {}", g.stored_rows);
+    println!("# taken_rows {}", g.taken_rows);
+    println!("# down_reads {}", g.down_reads);
+    println!("# drops {}", g.drops);
+    println!("# down_parts {}", g.down_parts);
+    println!("# run_bits {}", g.run_bits);
     println!("# stk_rows {}", g.stk_rows);
     println!("# sdn_rows {}", g.sdn_rows);
     println!("# srx_rows {}", g.srx_rows);

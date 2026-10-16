@@ -116,6 +116,10 @@ struct Mach {
     d->chaos_tx_done = 0;
     d->chaos_tx_abort = 0;
     d->chaos_cbl_busy = 0;
+    d->chaos_rx_start = 0;
+    d->chaos_rx_stored = 0;
+    d->chaos_rx_check_nz = 0;
+    d->chaos_rx_store = 0;
     d->drive_present = 0;
     d->drive_read_only = 0;
     d->store_deny = 0;

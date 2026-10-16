@@ -266,6 +266,9 @@ module quux15_core #(
     input  var logic        chaos_tx_done,
     input  var logic        chaos_tx_abort,
     input  var logic        chaos_cbl_busy,
+    input  var logic        chaos_rx_start,
+    input  var logic [11:0] chaos_rx_stored,
+    input  var logic        chaos_rx_store,
     output var logic [11:0] chaos_bits,
     // The master's declared constants inside r and w (A15b.5), which
     // the testbench's responder subtracts from the port's clocks.
@@ -1673,7 +1676,8 @@ module quux15_core #(
       .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
       .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
-      .chaos_cbl_busy(chaos_cbl_busy), .chaos_bits(chaos_bits),
+      .chaos_cbl_busy(chaos_cbl_busy), .chaos_rx_start(chaos_rx_start),
+      .chaos_rx_stored(chaos_rx_stored), .chaos_rx_store(chaos_rx_store), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev), .bow(bow));
 

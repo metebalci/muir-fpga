@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
   }
   auto *dut = new Vquux15_chaos;
   bool busy = false;
+  unsigned stored = 0;
   auto idle = [&]() {
     dut->dev_reset = 0;
     dut->rd = 0;
@@ -61,6 +62,9 @@ int main(int argc, char **argv) {
     dut->chaos_tx_done = 0;
     dut->chaos_tx_abort = 1;
     dut->chaos_cbl_busy = busy;
+    dut->chaos_rx_start = 0;
+    dut->chaos_rx_stored = stored & 07777u;
+    dut->chaos_rx_store = 0;
   };
   // The frame the module is sending: its length at START and its words.
   long tx_len = -1;
@@ -94,7 +98,7 @@ int main(int argc, char **argv) {
   tick();
   char line[8192];
   long rows = 0, bad = 0, reads = 0, writes = 0, frames = 0, losts = 0, dones = 0, sends = 0, resets = 0;
-  long irq_up = 0, busy_rows = 0;
+  long irq_up = 0, busy_rows = 0, starts = 0, levels = 0, stores = 0;
   auto fail = [&](const char *what, uint64_t got, uint64_t want) {
     if (bad < 20)
       std::fprintf(stderr, "row %ld: %s is %" PRIx64 ", muir has %" PRIx64 "\n", rows, what, got, want);
@@ -146,6 +150,32 @@ int main(int argc, char **argv) {
       tick();
       ++resets;
       irq_check(v[0]);
+    } else if (op == "k" && v.size() >= 3 && v.size() == 3 + v[1]) {
+      // A frame's bits stored and not landed: streamed as a frame is, the
+      // done with `chaos_rx_store`.
+      for (unsigned j = 0; j < v[1]; ++j) {
+        idle();
+        dut->chaos_rx_valid = 1;
+        dut->chaos_rx_word = v[2 + j];
+        dut->chaos_rx_bits = v[0];
+        tick();
+      }
+      idle();
+      dut->chaos_rx_done = 1;
+      dut->chaos_rx_bits = v[0];
+      dut->chaos_rx_store = 1;
+      tick();
+      ++stores;
+      irq_check(v.back());
+    } else if (op == "a" && v.empty()) {
+      dut->chaos_rx_start = 1;
+      tick();
+      ++starts;
+    } else if (op == "c" && v.size() == 1) {
+      stored = v[0];
+      idle();
+      tick();
+      ++levels;
     } else if (op == "f" && v.size() >= 4 && v.size() == 4 + v[2]) {
       // The frame's length is on `chaos_rx_bits` from its first word to its
       // done, as `cadr_chaos_cable.sv` holds it: the card places each word
@@ -293,10 +323,16 @@ int main(int argc, char **argv) {
         if (csr & 0177000u) dfail("the CSR's Receive Done, CRC Error and Lost Count after a drop", csr, csr & ~0177000u);
         const unsigned bits = rd1(3);
         if (bits != 0u) dfail("the bit count after a drop", bits, 0);
-        unsigned nonzero = 0;
-        for (unsigned j = 0; j < N; ++j)
-          if (rd1(2) != 0u) ++nonzero;
-        if (nonzero) dfail("buffer reads that were not 0 after a drop", nonzero, 0);
+        // With Receive Done down and the line idle a read is the read
+        // register shifted, RBCT 0's bit coming in below (muir's
+        // `read_down`): each read the last moved up a bit over the same bit.
+        unsigned unshifted = 0, last = rd1(2);
+        for (unsigned j = 1; j < N; ++j) {
+          const unsigned w = rd1(2);
+          if (w != (((last << 1) | (last & 1u)) & 0xffffu)) ++unshifted;
+          last = w;
+        }
+        if (unshifted) dfail("buffer reads after a drop that were not the read register shifted", unshifted, 0);
         // The next frame lands whole.
         stream(~0u, 0);
         const unsigned next = rd1(0);
@@ -318,7 +354,7 @@ int main(int argc, char **argv) {
   if (stray) fail("words sent with no START", stray, 0);
   if (unread) fail("clocks with Receive Done down and the pointer not 0 or a read taken", unread, 0);
   if (!bad && (reads == 0 || frames == 0 || losts == 0 || dones == 0 || sends == 0 || resets == 0 ||
-               irq_up == 0 || busy_rows == 0)) {
+               irq_up == 0 || busy_rows == 0 || starts == 0 || levels == 0 || stores == 0)) {
     std::fprintf(stderr, "FAIL: the script reached too little: %ld reads, %ld frames in, %ld lost, %ld Transmit "
                  "Dones, %ld STARTs, %ld RESET-DEVICES, %ld rows interrupting, %ld busy\n",
                  reads, frames, losts, dones, sends, resets, irq_up, busy_rows);

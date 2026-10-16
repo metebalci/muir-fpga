@@ -145,6 +145,9 @@ module quux15_devices #(
     input  var logic        chaos_tx_done,
     input  var logic        chaos_tx_abort,
     input  var logic        chaos_cbl_busy,
+    input  var logic        chaos_rx_start,
+    input  var logic [11:0] chaos_rx_stored,
+    input  var logic        chaos_rx_store,
     output var logic [11:0] chaos_bits,
 
     // Source 15, the microseconds since power-on, at this clock's instant.
@@ -618,7 +621,8 @@ module quux15_devices #(
       .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
       .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
-      .chaos_cbl_busy(chaos_cbl_busy), .chaos_bits(chaos_bits));
+      .chaos_cbl_busy(chaos_cbl_busy), .chaos_rx_start(chaos_rx_start),
+      .chaos_rx_stored(chaos_rx_stored), .chaos_rx_store(chaos_rx_store), .chaos_bits(chaos_bits));
 
   // ================================================================ word 100
 

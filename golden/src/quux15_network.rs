@@ -59,7 +59,13 @@
 //! words in the clocks before that:
 //!
 //!   # chaos-address <address>                 the switches
-//!   # chaos-busy <clock> <level>              the cable busy from that row
+//!   # chaos-busy <clock> <level>              a frame on the line, from its
+//!                                             first edge to its idle, from
+//!                                             that row
+//!   # chaos-start <clock>                     the frame's `START^`
+//!   # chaos-stored <clock> <bits>             the bits the receiver would
+//!                                             have stored of it so far,
+//!                                             from that row
 //!   # chaos-rx <clock> <bits> <crc> <n> <words>  a frame in the buffer, its
 //!                                             words as the far end hands
 //!                                             them (`quux15_chaos.rs`'s
@@ -71,14 +77,17 @@
 //!                                             the source and the check
 //!                                             word with it
 //!
-//! The busy level is bit 14 of muir's CSR, which its model raises while a
-//! frame is on the cable, less CRC Error; every frame here lands with a
-//! good check word, and CRC Error after is the check of the words read,
-//! which the interface makes itself.  `micro` is not run: what a run ends with
+//! The line's three are the cable's facts and not muir's face, read off
+//! its turn timer's frames and its cable (`golden/src/chaos_state.rs`):
+//! the card keeps its own receive gate from them, as the netlist board's
+//! `RACT` is, and shows them through it --- bit 14 the line taken, the bit
+//! count the bits stored. Every frame here lands with a good check word,
+//! and CRC Error after is the check of the words read, which the interface
+//! makes itself.  `micro` is not run: what a run ends with
 //! depends on the cable's instants, which `micro` keeps otherwise.
 
 use muir::chaos::board::Interface;
-use muir::chaos::ether::{BUSY_ABORT_NS, Ether};
+use muir::chaos::ether::{BUSY_ABORT_NS, Ether, RACT_NS};
 use muir::chaos::packet::check_word;
 use muir::engine::Engine;
 use muir::isa::asm::{
@@ -152,7 +161,6 @@ struct Seen {
     tabort: bool,
     crc: bool,
     lost: u8,
-    busy: bool,
     rcv: Vec<u16>,
     bits: u64,
     ready: Option<Vec<u16>>,
@@ -211,11 +219,9 @@ fn seen(i: &Interface) -> Seen {
         } else {
             None
         };
-        Ok(Seen { rdone, tdone, tabort, crc, lost, busy: false, rcv, bits, ready })
+        Ok(Seen { rdone, tdone, tabort, crc, lost, rcv, bits, ready })
     };
-    let mut s = parse(&mut r).expect("the Chaosnet interface's checkpoint, as Interface::load reads it");
-    s.busy = i.csr() & 0o40000 != 0 && !s.crc;
-    s
+    parse(&mut r).expect("the Chaosnet interface's checkpoint, as Interface::load reads it")
 }
 
 fn interface(e: &Pipeline) -> &Interface {
@@ -273,7 +279,13 @@ pub struct Net {
     period: u64,
     last: Seen,
     pre: Seen,
-    busy: bool,
+    /// The line as the lines so far have put it: the frame on it, by its
+    /// first edge, whether its `START^` has been said and the receive gate
+    /// as `START^` set it, and the bits stored so far as last said.
+    busy: Option<u64>,
+    started: bool,
+    ract: bool,
+    stored: usize,
     events: usize,
     /// Clocks a write of the CSR or of RESET-DEVICES was taken in.
     writes: Vec<u64>,
@@ -364,7 +376,10 @@ impl Net {
             period,
             last: Seen { tdone: true, ..Seen::default() },
             pre: Seen::default(),
-            busy: false,
+            busy: None,
+            started: false,
+            ract: true,
+            stored: 0,
             events: 0,
             writes: Vec::new(),
             rx: Vec::new(),
@@ -429,10 +444,7 @@ impl Net {
         let s = seen(interface(e));
         let last = self.last.clone();
         self.events(k, &last, &s)?;
-        if s.busy != self.busy {
-            self.busy = s.busy;
-            self.lines.push(format!("# chaos-busy {k:x} {:x}", s.busy as u8));
-        }
+        self.line(e, k, &s);
         self.pre = s;
         for (f, i, _, made) in self.frames.iter_mut() {
             if *i == k {
@@ -441,6 +453,55 @@ impl Net {
             }
         }
         Ok(())
+    }
+
+    /// **The line at clock `k`, the cable's facts before the receiver's
+    /// gate** (`golden/src/chaos_state.rs`): a frame on it from its first
+    /// edge to its idle, its `START^`, where the card's receive gate takes
+    /// Receive Done, and the bits the receiver would have stored of it so
+    /// far. The card shows them through its own gate; muir's `csr()` and
+    /// `bit_count()` show them through muir's, which is asserted to let
+    /// through no less than the card's: muir taking the frame, the card's
+    /// gate is open. (A clear inside a frame closes both, which the far end
+    /// does not see.)
+    fn line(&mut self, e: &Pipeline, k: u64, s: &Seen) {
+        let i = interface(e);
+        let time = muir::clock::TimeBase::half_ns(self.period);
+        let at = k * self.period;
+        let st = super::chaos_state::state(i);
+        let now = st.frame_now(at);
+        if self.busy.is_some() && self.busy != now.map(|f| f.0) {
+            self.lines.push(format!("# chaos-busy {k:x} 0"));
+            self.busy = None;
+        }
+        let Some((first, _)) = now else { return };
+        if self.busy.is_none() {
+            self.lines.push(format!("# chaos-busy {k:x} 1"));
+            self.busy = Some(first);
+            self.started = false;
+            self.stored = 0;
+        }
+        let start = if st.loop_back() {
+            Some(time.after(first, time.ns(RACT_NS)))
+        } else {
+            i.ether().map(|_| first + time.ns(RACT_NS))
+        };
+        if !self.started && start.is_some_and(|u| u <= at) {
+            self.lines.push(format!("# chaos-start {k:x}"));
+            self.started = true;
+            self.ract = !s.rdone;
+        }
+        let n = st.stored(i, at, time);
+        if n != self.stored {
+            self.lines.push(format!("# chaos-stored {k:x} {:x}", n % 4096));
+            self.stored = n;
+        }
+        if st.taking(i, at) {
+            assert!(!self.started || self.ract, "clock {k}: muir takes the frame and the card's gate is shut");
+            if !st.rdone {
+                assert_eq!(i.bit_count() as usize, n % 4096, "clock {k}: the bit count while a frame is taken");
+            }
+        }
     }
 
     /// After a clock of `e`'s: a register read's look ahead, a write's
@@ -476,6 +537,16 @@ impl Net {
         let s = seen(interface(e));
         let pre = self.pre.clone();
         let start = reads.contains(&(PAGE_BUS | 0o145));
+        // **NEVER THE BUFFER WHILE muir's RECEIVER TAKES A FRAME**: muir does
+        // not model that read (`Interface::read_down`), so a run making one
+        // would hold the core to an artefact.
+        if reads.contains(&(PAGE_BUS | 0o142)) && !pre.rdone {
+            let i = interface(e);
+            let st = super::chaos_state::state(i);
+            if st.taking(i, k * self.period) {
+                return Err(format!("clock {k}: a read of the buffer while muir's receiver takes a frame"));
+            }
+        }
         if read {
             // A read of START takes Transmit Done down itself (MIT's
             // TRESET), after the cable's events up to the read's instant:

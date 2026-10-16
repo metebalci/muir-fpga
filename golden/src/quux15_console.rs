@@ -41,7 +41,7 @@
 //! ```
 //!
 //! `<bytes>` are the end of muir's own checkpoint of the halted pipeline
-//! (`Pipeline::save`, revision 15's version 51): what `save_15` writes after
+//! (`Pipeline::save`, revision 15's version 56): what `save_15` writes after
 //! the machine, the period and the port, the state between two microcycles
 //! the halt leaves (A15b.13). The testbench reads the same fields from the
 //! core and writes them in muir's order, and the two must be the same bytes.

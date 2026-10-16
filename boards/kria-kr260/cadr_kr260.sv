@@ -299,6 +299,8 @@ module cadr_kr260 #(
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic [12:0] chaos_rx_bits;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
+  logic        chaos_rx_start, chaos_rx_check_nz, chaos_rx_store;
+  logic [11:0] chaos_rx_stored;
   logic [2:0]  ub_ssyn_by;
   logic        ser_reset, iob_intr, audio, clock_ready;
   logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_tx_data, ser_status;
@@ -439,6 +441,8 @@ module cadr_kr260 #(
       .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
       .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
+        .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+        .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
       .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
@@ -1042,6 +1046,8 @@ module cadr_kr260 #(
         .chaos_rx_lost(chaos_rx_lost),
         .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
         .chaos_cbl_busy(chaos_cbl_busy),
+        .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+        .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
         .irq(chaos_irq)
     );
 
@@ -1670,6 +1676,10 @@ module cadr_kr260 #(
     assign chaos_tx_done  = 1'b0;
     assign chaos_tx_abort = 1'b0;
     assign chaos_cbl_busy = 1'b0;
+    assign chaos_rx_start    = 1'b0;
+    assign chaos_rx_stored   = 12'd0;
+    assign chaos_rx_check_nz = 1'b0;
+    assign chaos_rx_store    = 1'b0;
     // All ones on the mouse: a cable with nothing moving on it.
     assign kbd_strobe     = 1'b0;
     assign kbd_code       = 24'd0;

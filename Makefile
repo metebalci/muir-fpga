@@ -865,7 +865,7 @@ $(BUILD)/color_tv.pass: $(BUILD)/obj_color_tv/Vcadr_memory_path $(BUILD)/color_t
 .PHONY: iob-golden
 iob-golden: $(BUILD)/iob.golden
 
-$(BUILD)/iob.golden: golden/src/iob.rs golden/Cargo.toml | $(BUILD)
+$(BUILD)/iob.golden: golden/src/iob.rs golden/src/chaos_state.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin iob > $@
 
 # Slice two: the card itself, one module and one testbench at the Unibus seam,
@@ -1418,7 +1418,7 @@ $(BUILD)/quux15_input_module.quux.pass: $(BUILD)/obj_quux15_input/Vquux15_input 
 # it lands, a write's at its own, the far end's events a clock before the
 # registers show them.  The same module on the core, clock for clock, is the
 # `network` group (`quux15_network.quux.pass`).
-$(BUILD)/quux15_chaos.quux.golden: golden/src/quux15_chaos.rs golden/Cargo.toml | $(BUILD)
+$(BUILD)/quux15_chaos.quux.golden: golden/src/quux15_chaos.rs golden/src/chaos_state.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin quux15_chaos > $@
 
 $(BUILD)/obj_quux15_chaos/Vquux15_chaos: rtl/machine/quux15_chaos.sv tb/quux15_chaos_tb.cpp | $(BUILD)
@@ -1631,7 +1631,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
                  golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs golden/src/quux15_regread.rs \
-                 golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
+                 golden/src/trace15.rs golden/src/chaos_state.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
 # which its trace names (the checkpoints group).
@@ -5470,7 +5470,20 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # words drawn at 21 bits again it hashes to the digest before, 8a1894f2...c763;
 # muir loads it, saves it back byte for byte and resumes at the same
 # microcycle.
-CHECKPOINT_SHA  := 2fc55173a198d0444d6856e184763b6c1a354ac0cc5c5cf91a1fa783035593f1
+#
+# **AND WHEN IT WENT 49 TO 54.**  muir appended the Chaosnet interface's
+# pending state after its turn timer's `polled`: a looped frame's `START^` to
+# come, the busy receiver's decision at a destination word, the read
+# register, the reads' count-down inside a dropped frame and the last frame
+# dropped, all written as a fresh interface holds them, two options absent,
+# the register 0 and two options absent.  The body grows by six bytes,
+# 636,531 to 636,537, every one zero, so the packed file stays 561,567
+# bytes; muir loads the file, saves it back byte for byte and resumes at the
+# same microcycle, and refuses 49.  Mutants 52 and 53, the six
+# bytes left out and the read register written 1, are caught on the legs
+# 1 to 8 are (`CHECKPOINT_CADR_MUTANTS`).
+CHECKPOINT_SHA  := ac0db32e0b4b476cd9ab9687cc5fb9cfb9c253ef666166d80fa42f746736d815
+CHECKPOINT_CADR_MUTANTS := 1 2 3 4 5 6 7 8 52 53
 # **THE RUN STATE BEFORE THE HALT, AND ITS THREE MUTANTS, 32 TO 34.**  A
 # machine the program found running and halted for the read is written with
 # RUN and SRUN set, as they stood, so that muir resumes it running; one found
@@ -5562,7 +5575,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	 echo "checkpoint: muir loaded $$(stat -c%s $$W/out.chk) bytes and saved them back identically,"; \
 	 echo "checkpoint: resumed $$(grep '^resumed' $$W/muir.log | sed 's/^resumed: [^ ]* //'),"; \
 	 echo "checkpoint: and the file is the one the digest was recorded for."; \
-	 for m in 1 2 3 4 5 6 7 8; do \
+	 for m in $(CHECKPOINT_CADR_MUTANTS); do \
 	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
 	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
@@ -5631,23 +5644,25 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # window, and writes it with `cadr-checkpoint`'s code (`checkpoint_test.c`'s
 # `fill_quux`).  A field in the wrong place, crossed, of the wrong value or
 # converted wrongly from a counter to muir's instant makes the two differ.
-# The machine is revision 13's, version 50 (contract G2 appendix A1.13), at
+# The machine is revision 13's, version 55 (contract G2 appendix A1.13), at
 # its widths and sizes, `quux_checkpoint --revision 13`; then muir loads the
 # program's file and saves it back byte for byte through the same generator,
 # `--resume-and-save`, and its report names the microcycles and the
-# nanoseconds the model was given.  Revision 12's file, version 49, is
-# retired with that revision.
+# nanoseconds the model was given.  Revision 12's file is retired with that
+# revision.
 #
 # What the reference cannot hold: the `Rtl` engine's own registers, which
 # muir keeps private, so both sides have them as a fresh engine does.  They
 # are the CADR's code, which `build/checkpoint.pass` holds.
 #
-# **THE MUTANTS ARE 9 TO 31** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
+# **THE MUTANTS ARE 9 TO 31, AND 53** (`chk_rtl.c`'s `chk_rtl_mutation` names
+# each; 53, the Chaosnet interface's read register written 1, is the CADR's
+# too, the interface being written by the same code on both machines),
 # and each is caught when muir refuses the file, saves other bytes, or the
 # file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
 # the program, the test's binaries in the one work directory and muir.
-CHECKPOINT_QUUX13_RESUMED := resumed: version 50 at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
-CHECKPOINT_QUUX13_MUTANTS := 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+CHECKPOINT_QUUX13_RESUMED := resumed: version 55 at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
+CHECKPOINT_QUUX13_MUTANTS := 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 53
 QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
 # **AND AT THE KRIA KR260'S 1920 BY 1080** (contract HD): revision 13's
 # machine with the video controller at that size, held to muir's own file

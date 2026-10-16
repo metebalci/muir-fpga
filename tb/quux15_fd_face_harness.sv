@@ -129,7 +129,8 @@ module quux15_fd_face_harness #(
       .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
       .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0),
       .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0),
-      .chaos_cbl_busy(1'b0), .chaos_bits(chaos_bits),
+      .chaos_cbl_busy(1'b0), .chaos_rx_start(1'b0), .chaos_rx_stored(12'd0),
+      .chaos_rx_store(1'b0), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(1'b0), .ro_k(7'd0), .ro_dev(ro_dev), .bow(bow)
   );

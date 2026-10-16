@@ -11,11 +11,14 @@
 // in that order; there is no framing inside it and no checksum over it, so a
 // field of the wrong width silently shifts everything after it.
 //
-// **THE VERSION IS 49, OR 50 FOR REVISION 13's WORDS, AND A FILE OF ANY
-// OTHER VERSION IS REFUSED BY NAME**, which is the one thing that stops a
-// format change here from being read wrong somewhere else.  When muir's
-// `checkpoint::VERSION` or `VERSION_40` moves, this file moves with it or the
-// board's checkpoints stop loading --- loudly, which is the right way round.
+// **THE VERSION IS 54, OR 55 FOR REVISION 13's WORDS AND 56 FOR REVISION
+// 15's, AND A FILE OF ANY OTHER VERSION IS REFUSED BY NAME**, which is the one
+// thing that stops a format change here from being read wrong somewhere else.
+// When muir's `checkpoint::VERSION`, `VERSION_40` or `VERSION_15` moves, this
+// file moves with it or the board's checkpoints stop loading --- loudly, which
+// is the right way round.  A file this program wrote at 49, 50 or 51, before
+// the Chaosnet interface's pending state was in the format, is refused by
+// every muir from that change on, and nothing converts it.
 //
 // **THE PACKING MUST MATCH muir's OWN, NOT MERELY DECODE TO THE SAME BYTES.**
 // `unpack` accepts any valid packing, so a lazier writer would still load;
@@ -34,11 +37,13 @@
 // revision 13's (contract G2 appendix A1.13): every word 5 bytes, `<7:0>`
 // first, so that main memory in it is packed storage byte for byte.  The
 // file's version says which, and `chk_write_file` takes it from the body.
-#define CHK_VERSION 49u
-#define CHK_VERSION_40 50u
-// QUUX revision 15's (A15b.13; muir's `VERSION_15`): version 50's words,
+// 54 and 55 are 49 and 50 with the Chaosnet interface's pending state after
+// its turn timer (`chk_rtl.c`'s `emit_chaos`).
+#define CHK_VERSION 54u
+#define CHK_VERSION_40 55u
+// QUUX revision 15's (A15b.13; muir's `VERSION_15`): version 55's words,
 // the pipeline's state after the machine.  A body says so in `version`.
-#define CHK_VERSION_15 51u
+#define CHK_VERSION_15 56u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
 // muir's nanoseconds**, and so what the machine's elapsed time is multiplied

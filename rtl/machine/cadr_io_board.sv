@@ -281,6 +281,11 @@ module cadr_io_board (
     // when START is read, the source and the check word in it, and comes in
     // as a burst on `chaos_rx_*`, the words in the order the software reads
     // them and the length on `chaos_rx_bits` from the first word to the done.
+    // **THE LINE'S FACTS ARE THE CABLE'S AND THE GATE IS THE CARD'S**: a frame
+    // on the line (`chaos_cbl_busy`), its `START^`, and the bits the receiver
+    // would have stored of it so far with whether the 9401 is non-zero over
+    // them, all before any gate; the card keeps `RACT` from them and shows
+    // the line through it (the note at the receive gate).
     input  var logic [15:0] chaos_address,  // the switches at LMMYNM D10 and D12
     output var logic        chaos_tx_go,    // START was read: this frame is to go
     output var logic [8:0]  chaos_tx_len,   // how many words of it, 0 to 255
@@ -300,9 +305,16 @@ module cadr_io_board (
                                             // was busy: counted, not stored
     input  var logic        chaos_tx_done,  // the frame is away
     input  var logic        chaos_tx_abort, // ...or a collision took it
-    input  var logic        chaos_cbl_busy, // `-CBLBSY`, which bit 14 shows
-                                            // as the model does; the note at
-                                            // the register says why
+    input  var logic        chaos_cbl_busy, // a frame on the line, from its
+                                            // first edge to the line idle
+    input  var logic        chaos_rx_start, // one tick: the frame's START^
+    input  var logic [11:0] chaos_rx_stored, // the bits the receiver would
+                                            // have stored of it by now: RBCT,
+                                            // in its twelve bits
+    input  var logic        chaos_rx_check_nz, // ...and the 9401 over them
+                                            // non-zero
+    input  var logic        chaos_rx_store, // with `chaos_rx_done`: store the
+                                            // bits and do not land them
     output var logic [11:0] chaos_bits,     // the bit counter, for the check
 
     // --- the Unibus interrupt: `-UB INTR` and `-UB BR5` on the backplane.
@@ -816,7 +828,7 @@ module cadr_io_board (
   //   an earlier frame's, or never written the netlist RAM's ones.  The
   //   first read takes a partial top word with zeros above its bits.
   // - CRC Error from the first read on is the check of the words read.
-  // - A run of 48 bits or fewer is taken by no receiver.
+  // - A run of 48 bits or fewer lands nowhere, and leaves its bits.
   //
   // The incoming buffer comes up all ones, which is what the netlist's RAM
   // reads as never written (muir's `NEVER_WRITTEN`); what a real 2147 holds
@@ -853,6 +865,14 @@ module cadr_io_board (
   logic [3:0]  ch_lost;
   logic [15:0] ch_rd;        // the buffer's word at the pointer, a tick behind
   logic        ch_drop;      // the stream coming in is dropped: its done commits nothing
+  // --- the receive gate and the read path with Receive Done down
+  logic        ch_ract;      // RACT, the 74S74 at LMRCLK 0C06: set at START^ with
+                             // Receive Done down, taken down by RRESET
+  logic        ch_started;   // the frame on the line has had its START^
+  logic [15:0] ch_sr;        // the read register, the 74164s at LMRBUF 0A07 and 0B07
+  logic        ch_down;      // reads count RBCT down inside the frame on the line
+  logic [11:0] ch_dhw;       // ...RBCT as they leave it
+  logic [15:0] ch_dcheck;    // ...and the check of the bits they read
 
   // The two checkers, Fairchild 9401s: the one at LMTBUF 0C09 makes the
   // check word as the words are written (`ch_xcheck`, then the source at
@@ -897,40 +917,65 @@ module cadr_io_board (
   // Transmit Done and Transmit Abort.  Bits 13, 8 and 3 are the three
   // write-only commands and read as zero.
   //
-  // **BIT 14 IS THE CHECK WORD'S VERDICT ALONE ON THE BOARD, AND THE
-  // `chaos_cbl_busy` TERM REPRODUCES WHAT THAT VERDICT READS AS MID-FRAME.**
-  // `CRCERR` has exactly two pins in `mit/cadrio/iob.wlr`, `ER` of the 9401
-  // at LMRBUF 0C07 and `IN2` of the readback buffer at LMDATP 0D17, and
-  // `CBLBSY` reaches no readback buffer at all --- so the card ORs nothing
-  // in here.  AIM-628 says the bit is valid at two instants and no others,
-  // which is what a running checker's output is worth in between, and
-  // `muir::chaos::board`'s `csr()` ORs `turn.busy_at(now)` into the bit so
-  // that it reads set while a frame goes by.  This term is that model and
-  // not a gate of MIT's.  The port is held low in `cadr_chaos_cable.sv`, so
-  // the two readings agree here whichever it is.
-  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
-                      ch_tdone, ch_tabort, ch_wbits};
+  // **THE RECEIVE GATE IS THE CARD'S: `RACT` FROM `START^`, AND THE LINE
+  // THROUGH IT.**  On the netlist board `RACT`, the 74S74 at LMRCLK 0C06,
+  // takes `-RDONE` at `START^`, `RACT_NS` into the frame, and only `RRESET`
+  // --- Clear Receiver, Reset and `-UB INIT` through `-CLR RCV BUSY` --- takes
+  // it down inside it; the receiver stores and checks only while it is up
+  // (muir's `taking`, its `START^` still to come counting as taken).  The
+  // far end gives the line's facts before any gate, a frame on the line from
+  // its first edge to its idle, its `START^`, the bits stored so far and the
+  // 9401 over them; this decides what of them the software sees.
+  logic ch_taking, ch_down_here;
+  assign ch_taking    = chaos_cbl_busy && (!ch_started || ch_ract);
+  // The reads' count-down holds inside the frame it began in and with no
+  // packet in the buffer (muir's `down_here`).
+  assign ch_down_here = ch_down && chaos_cbl_busy && !ch_rdone;
+
+  // **BIT 14 IS THE 9401 AT LMRBUF 0C07** (muir's `40b86d1`): the check
+  // word's verdict once a frame lands and the check of the words read after
+  // that; while the receiver takes a frame, the check register over the bits
+  // stored so far, which a good frame leaves zero at its last bit; and inside
+  // a frame the reads count down through, the check of the bits they read.
+  // `CRCERR` has exactly two pins in `mit/cadrio/iob.wlr`, `ER` of that 9401
+  // and `IN2` of the readback buffer at LMDATP 0D17; `CBLBSY` reaches no
+  // readback buffer, and the line busy is not ORed in.
+  assign chaos_csr = {ch_rdone,
+                      ch_crc || (ch_taking && chaos_rx_check_nz) || (ch_down_here && ch_dcheck != 16'd0),
+                      1'b0, ch_lost, 1'b0, ch_tdone, ch_tabort, ch_wbits};
 
   // "The number of bits in the incoming packet buffer, minus one.  After the
   // whole packet has been read out, it will contain 7777."  RBCT less one in
-  // twelve bits, 0 with no packet (muir's `bit_count`): the receiver leaves
-  // RBCT at the bits it took, round the buffer past 4,096; the first read
-  // takes it down to the word boundary below the last bit, and every read
-  // after by sixteen, past 7777 and round.
-  assign chaos_bits = ch_rdone ? ch_rbct - 12'd1 : 12'd0;
+  // twelve bits (muir's `bit_count`): the receiver leaves RBCT at the bits it
+  // took, round the buffer past 4,096; the first read takes it down to the
+  // word boundary below the last bit, and every read after by sixteen, past
+  // 7777 and round.  **With Receive Done down it is RBCT as it stands**, which
+  // the 74LS244s at LMDATP 0C17 put on the bus: the bits stored so far of a
+  // frame the receiver takes, what reads have counted it down to inside one
+  // it does not, and 0 otherwise, `RRESET` holding it.
+  assign chaos_bits = ch_rdone     ? ch_rbct - 12'd1 :
+                      ch_taking    ? chaos_rx_stored :
+                      ch_down_here ? ch_dhw : 12'd0;
 
   // The first word's bits, the rest above them: what the first read shows.
   logic [15:0] ch_low;
   assign ch_low = (ch_rlow == 4'd0) ? 16'hFFFF : ~(16'hFFFF << ch_rlow);
 
   // The word a read of the buffer gives: the first with zeros above the
-  // frame's last bit, each after it the buffer's own word round and round;
-  // 0 with no packet (`READ_BUFFER` with Receive Done down).  A slave that
-  // gave back the word its RAM still held with no packet would hand the
-  // software the last packet again --- the DDR bridge's lesson at a second
-  // buffer.
+  // frame's last bit, each after it the buffer's own word round and round.
+  // **WITH RECEIVE DONE DOWN, THE READ REGISTER SHIFTED** (muir's
+  // `read_down`): the 74164s shift on `ROCLK^`, the 2147's bit at RBCT
+  // coming in at the bottom, RBCT counting down a bit a shift until its low
+  // four bits borrow.  With the line idle `RRESET` holds RBCT at 0, so a read
+  // is the last word read moved up a bit with the buffer's bit at RBCT 0
+  // below it; inside a frame the receiver is not taking the reads count
+  // down from 0, the first one bit and each after a whole word, the buffer's
+  // word at RBCT / 16.  A read while the receiver takes a frame is outside
+  // muir's model, which reads 0 there; the trace never makes one, and the
+  // card shifts as on an idle line.
   logic [15:0] ch_word;
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+  assign ch_word = ch_rdone     ? (!ch_read ? (ch_tw & ch_low) : ch_rd) :
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[0]};
 
   logic ch_buf, ch_rbuf;
   // The transmit buffer's write and START go through the transmitter's
@@ -1024,37 +1069,55 @@ module cadr_io_board (
   logic        rx_in, rx_first, taken_now, commit, rx_mid;
   logic [11:0] rx_top_bit;    // the frame's last bit, in twelve bits
   logic [15:0] rx_low, rx_merged;
-  // **A CLEAR RECEIVER OR A RESET LANDING WHILE A FRAME STREAMS IN DROPS THE
-  // REST OF THE STREAM AND ITS DONE**: no Receive Done and no Lost Count,
-  // and RBCT, CRC Error and the pointer as the clear left them.  That is the
-  // netlist board's answer to a frame cleared past its destination word
-  // (muir's `data/CADRIO.netlist`: RRESET, which Clear Receiver and `-INIT`
-  // drive through `-CLR RCV BUSY` at 0E10, takes RBCT and RACT to 0 through
-  // 0B08, and Receive Done is RCV BUSY and not RACT at 0E03), and every frame
-  // on this seam is past it: the far end has the whole frame before its
-  // first word streams.  A Clear Receiver sets `ch_drop`, and the done
-  // that ends the stream commits nothing.  A Reset tells the far end on
-  // `chaos_reset`, and the far end ends its stream there with no done
-  // (`cadr_chaos_cable.sv`), so nothing that comes in the tick `chaos_reset`
-  // is up is taken, and a drop ends with it.
-  // TWO LIMITS.  A clear or Reset between the far end's commit and the first
-  // word on the seam lands before the stream, and the frame is taken whole;
-  // a golden scenario must put no clear or Reset between muir's cable frame
-  // and the card's stream, and `tb/cadr_io_board_tb.cpp` refuses a trace
-  // that puts any row inside a stream.  And a dropped stream's words go into
-  // the buffer where the seam's order puts them, those after the clear again
-  // from the frame's first place, where the board stores nothing past RRESET;
-  // what a read round the buffer past a later frame shows of them is held by
-  // nothing.
+  // **A CLEAR INSIDE A FRAME THE RECEIVER TAKES DROPS IT** (muir's
+  // `b338042`, measured on the netlist board): `RRESET`, which Clear
+  // Receiver, Reset and `-UB INIT` drive through `-CLR RCV BUSY` at LMRCTL
+  // 0E10, takes `RACT` and RBCT to 0 through LMRCLK 0B08, and only `START^`
+  // sets `RACT`, so the frame is taken no further and never raises Receive
+  // Done; the bits stored before the clear stay.  On this seam the frame
+  // has not streamed yet --- the far end streams a frame only as it lands
+  // --- so the card's own gate shuts at the clear, and the far end streams
+  // the bits the drop left right after it, to be stored and not landed.
+  // **AND A CLEAR LANDING WHILE A STREAM IS ON THE SEAM DROPS THE REST OF
+  // THE STREAM AND ITS DONE**: no Receive Done and no Lost Count, and RBCT,
+  // CRC Error and the pointer as the clear left them.  A Clear Receiver sets
+  // `ch_drop`, and the done that ends the stream commits nothing.  A Reset
+  // tells the far end on `chaos_reset`, and the far end ends its stream
+  // there with no done (`cadr_chaos_cable.sv`), so nothing that comes in the
+  // tick `chaos_reset` is up is taken, and a drop ends with it.
+  // TWO LIMITS, both the seam's and not the board's.  A clear or Reset
+  // between the far end's commit and the first word on the seam lands
+  // before the stream, and the frame is taken whole; a golden scenario must
+  // put no clear or Reset between muir's cable frame and the card's stream,
+  // and `tb/cadr_io_board_tb.cpp` refuses a trace that puts any row inside a
+  // stream, the bits a drop left included.  And a stream the clear cuts
+  // leaves its words in the buffer where the seam's order puts them, those
+  // after the clear again from the frame's first place; what a read round
+  // the buffer past a later frame shows of them is held by nothing.  On a
+  // board neither happens: `cadr-chaosnet` hands over whole frames for this
+  // interface alone, and a frame the machine's own clear cuts on a real
+  // cable leaves the bits it had, which this seam does not carry
+  // (`docs/chaosnet.md`, the board's differences).
   assign rx_mid     = (chaos_rx_valid || ch_fill != 9'd0) && !chaos_rx_done;
   assign rx_in      = chaos_rx_valid && !ch_rdone && !chaos_reset;
   assign rx_first   = rx_in && ch_fill == 9'd0;
   assign rx_top_bit = chaos_rx_bits[11:0] - 12'd1;
   // A run of 48 bits or fewer --- the check, source and destination words
-  // and nothing after them --- is taken by no receiver, its destination
-  // matching or not: no Receive Done and no Lost Count (muir's `arrive`).
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  // and nothing after them --- lands nowhere, its destination matching or
+  // not: no Receive Done and no Lost Count (muir's `arrive`).
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
   assign commit     = taken_now && !ch_rdone;
+  // **A FRAME TAKEN AND NOT LANDED LEAVES ITS BITS** (muir's `4647f6b`): the
+  // receiver stores every frame it takes from RBCT 0 as it comes, and the
+  // destination word decides only whether it lands.  The far end hands such
+  // a frame's bits to be stored and not landed, `chaos_rx_store` with the
+  // done --- one for another station, or what a clear left of a frame it
+  // dropped, streamed right after the clear --- and a run of 48 bits or
+  // fewer the card judges by its length.  Nothing but the buffer moves:
+  // no Receive Done, no Lost Count, and the bit count back to 0.
+  logic store_now;
+  assign store_now  = chaos_rx_done && !ch_drop && !chaos_reset && !ch_rdone &&
+                      (chaos_rx_store || chaos_rx_bits <= 13'd48);
   assign rx_low     = (chaos_rx_bits[3:0] == 4'd0) ? 16'hFFFF : ~(16'hFFFF << chaos_rx_bits[3:0]);
   assign rx_merged  = ((ch_hi_set ? ch_hi : ch_rd) & ~rx_low) | (ch_w0 & rx_low);
 
@@ -1067,7 +1130,7 @@ module cadr_io_board (
     rcv_we = 1'b0;
     rcv_wa = ch_top - ch_fill[7:0];
     rcv_wd = chaos_rx_word;
-    if (commit) begin
+    if (commit || store_now) begin
       rcv_we = 1'b1;
       rcv_wa = ch_top;
       rcv_wd = rx_merged;
@@ -1083,9 +1146,16 @@ module cadr_io_board (
   // control store and the scratchpads legitimate.  With no packet the
   // pointer is 0, so the word read is the one the first word of a frame
   // coming in goes over, which its merge takes.
+  // **AND WITH RECEIVE DONE DOWN** the word is the one the read register
+  // takes from: RBCT 0's with the line idle and at a count-down's first read,
+  // RBCT / 16's after it; but while a frame streams in, the one its first
+  // word goes over.  One read port, the choice on its address.
+  logic [7:0] rcv_ra;
+  assign rcv_ra = (ch_rdone || ch_fill != 9'd0) ? ch_top - ch_rat :
+                  ch_down_here ? ch_dhw[11:4] : 8'd0;
   always_ff @(posedge clk) begin
     if (rcv_we) ch_rcv[rcv_wa] <= rcv_wd;
-    ch_rd <= ch_rcv[ch_top - ch_rat];
+    ch_rd <= ch_rcv[rcv_ra];
   end
   always_ff @(posedge clk) begin
     if (buf_w) ch_xmit[ch_wn] <= c_wdata;
@@ -1371,6 +1441,12 @@ module cadr_io_board (
       ch_taken    <= 1'b0;
       ch_fill     <= 9'd0;
       ch_drop     <= 1'b0;
+      ch_ract     <= 1'b0;
+      ch_started  <= 1'b0;
+      ch_sr       <= 16'd0;
+      ch_down     <= 1'b0;
+      ch_dhw      <= 12'd0;
+      ch_dcheck   <= 16'd0;
       ch_top      <= 8'd0;
       ch_w0       <= 16'd0;
       ch_hi       <= 16'd0;
@@ -1507,7 +1583,28 @@ module cadr_io_board (
       if (chaos_tx_done) begin
         ch_tdone  <= 1'b1;
         ch_tabort <= chaos_tx_abort;
+      end else if (chaos_tx_abort) begin
+        // **AND AN ABORT AHEAD OF ITS DONE**: the busy receiver's `-LOST.ONE`
+        // presets the `ABORT` flip-flop at LMMODU 0A09 as the destination
+        // word of a frame to this address goes by, Transmit Done
+        // `TDONE_AFTER_ABORT_NS` on (muir's `busy_looped`).  The far end
+        // gives it with the frame counted lost; `cadr_chaos_cable.sv` gives
+        // it with the done alone.
+        ch_tabort <= 1'b1;
       end
+      // The line: `RACT` takes Receive Done at the frame's `START^`, and the
+      // frame's `START^` and the reads' count-down are over with it.
+      if (!chaos_cbl_busy) begin
+        ch_started <= 1'b0;
+        ch_down    <= 1'b0;
+      end
+      if (chaos_rx_start) begin
+        ch_started <= 1'b1;
+        ch_ract    <= !ch_rdone;
+      end
+      // `RO.FIRST^`, the 26S02 at LMRCTL 0A04 on Receive Done, clears the
+      // read register as a frame lands.
+      if (commit) ch_sr <= 16'd0;
 
       // The 2651's modem lines.  `Pci::advance` raises the data-set-change
       // latch wherever `-DSR` or `-DCD` is not where it was, and in local
@@ -1886,6 +1983,8 @@ module cadr_io_board (
                 ch_fill   <= 9'd0;
                 ch_hi_set <= 1'b0;
                 ch_lost   <= 4'd0;
+                ch_ract   <= 1'b0;
+                ch_down   <= 1'b0;
                 if (rx_mid) ch_drop <= 1'b1;
               end
               if (c_wdata[8]) begin   // Clear Transmitter
@@ -1940,18 +2039,33 @@ module cadr_io_board (
           ch_out       <= 8'd0;
           ch_sending   <= (ch_wn + 8'd2 != 8'd0);
           ch_taken     <= 1'b1;
-        end else if (c_rbuf && ch_rdone) begin
-          // A word out of the incoming packet buffer, through the receive
-          // 9401: CRC Error is from now the check of the words read, up
-          // partway through a good frame and down at its end (muir's
-          // `read`).  RBCT comes down to the word boundary below the
-          // frame's last bit at the first read and by sixteen a read after,
-          // round and round.
-          ch_rat    <= ch_rat + 8'd1;
-          ch_read   <= 1'b1;
-          ch_rcheck <= crc_word(ch_rcheck, ch_word);
-          ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
-          ch_rbct   <= ch_read ? ch_rbct - 12'd16 : {ch_top, 4'd0};
+        end else if (c_rbuf) begin
+          // The read register takes the word the read gives, whichever it
+          // is (muir's `rd`).
+          ch_sr <= ch_word;
+          if (ch_rdone) begin
+            // A word out of the incoming packet buffer, through the receive
+            // 9401: CRC Error is from now the check of the words read, up
+            // partway through a good frame and down at its end (muir's
+            // `read`).  RBCT comes down to the word boundary below the
+            // frame's last bit at the first read and by sixteen a read
+            // after, round and round.
+            ch_rat    <= ch_rat + 8'd1;
+            ch_read   <= 1'b1;
+            ch_rcheck <= crc_word(ch_rcheck, ch_word);
+            ch_crc    <= crc_word(ch_rcheck, ch_word) != 16'd0;
+            ch_rbct   <= ch_read ? ch_rbct - 12'd16 : {ch_top, 4'd0};
+          end else if (!chaos_cbl_busy) begin
+            ch_down <= 1'b0;
+          end else if (!ch_taking) begin
+            // Inside a frame the receiver is not taking `RRESET` is not
+            // held, and the read counts RBCT down from where the last left
+            // it, from 0 the first time: one bit, RBCT 0's, then a word a
+            // read, the check register running on every bit.
+            ch_down   <= 1'b1;
+            ch_dhw    <= ch_down_here ? ch_dhw - 12'd16 : 12'hFFF;
+            ch_dcheck <= ch_down_here ? crc_word(ch_dcheck, ch_rd) : (ch_rd[0] ? CRC_TAPS : 16'd0);
+          end
         end
       end
 
@@ -1993,12 +2107,16 @@ module cadr_io_board (
       // Reset, which AIM-628 makes the same thing for the Chaosnet
       // interface: the write-only bit 13 of the CSR, and `-UB INIT`.
       if (ch_reset_now) begin
+        // **LOST COUNT STAYS** (muir's `4647f6b`): its 74LS161 at LMMYNM
+        // 0F04 clears on Clear Receiver's `-11.SAYS.GO` alone, and `-INIT`
+        // reaches only `-CLR RCV BUSY` and Transmit Done.
         ch_wbits    <= 6'd0;
         ch_tdone    <= 1'b1;
         ch_tabort   <= 1'b0;
         ch_rdone    <= 1'b0;
         ch_crc      <= 1'b0;
-        ch_lost     <= 4'd0;
+        ch_ract     <= 1'b0;
+        ch_down     <= 1'b0;
         ch_xn       <= 8'd0;
         ch_xcheck   <= 16'd0;
         ch_taken    <= 1'b0;
@@ -2016,7 +2134,7 @@ module cadr_io_board (
 
   // The last bit's place inside its word names no word of the buffer.
   logic ch_unused;
-  assign ch_unused = ^rx_top_bit[3:0];
+  assign ch_unused = ^rx_top_bit[3:0] ^ ch_sr[15];
 
 endmodule
 

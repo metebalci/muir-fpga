@@ -79,6 +79,7 @@
 //! such as `HintInverted`, passes here and is caught by the testbench.  The
 //! trace says it carries the fault in its second line.
 
+mod chaos_state;
 mod machine_axis;
 mod quux15_blockdisk;
 mod quux15_console;

@@ -383,6 +383,10 @@ module cadr_memory_path #(
     input  var logic        chaos_tx_done,
     input  var logic        chaos_tx_abort,
     input  var logic        chaos_cbl_busy,
+    input  var logic        chaos_rx_start,
+    input  var logic [11:0] chaos_rx_stored,
+    input  var logic        chaos_rx_check_nz,
+    input  var logic        chaos_rx_store,
     output var logic [11:0] chaos_bits,
     // `-UB INTR` and `-UB BR5`: the card's `intr_request` and `intr_vector`.
     // Nothing in `rtl/` runs a Unibus interrupt cycle, and the note at the
@@ -1462,6 +1466,10 @@ module cadr_memory_path #(
       .chaos_tx_done(chaos_tx_done),
       .chaos_tx_abort(chaos_tx_abort),
       .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_rx_start(chaos_rx_start),
+      .chaos_rx_stored(chaos_rx_stored),
+      .chaos_rx_check_nz(chaos_rx_check_nz),
+      .chaos_rx_store(chaos_rx_store),
       .chaos_bits (chaos_bits),
       // **THE REQUEST GOES TO THE BUS INTERFACE AND NOT STRAIGHT TO THE
       // PROCESSOR**, which is what `0o766040` closed.  `LM INT` is `UB INT

@@ -97,8 +97,11 @@
 // on `chaos_rx_word` a clock each in the `n` clocks before the clock before
 // `<clock>`, and `chaos_rx_done` in that clock; `# chaos-lost <clock>`
 // `chaos_rx_lost`, and `# chaos-txdone <clock> <abort>` `chaos_tx_done`, in
-// the clock before; `# chaos-busy <clock> <level>` `chaos_cbl_busy` from
-// that clock on.  `# chaos-tx <clock> <n> <words>` is a START muir took at
+// the clock before; `# chaos-busy <clock> <level>` `chaos_cbl_busy`, a frame
+// on the line, from that clock on; `# chaos-start <clock>` `chaos_rx_start`,
+// the frame's `START^`, in the clock before; `# chaos-stored <clock> <bits>`
+// `chaos_rx_stored`, the bits the receiver would have stored of it, from that
+// clock on.  `# chaos-tx <clock> <n> <words>` is a START muir took at
 // that clock: the core's `chaos_tx_go` must be up in that row with `n`, and
 // its words come out on `chaos_tx_valid` in the rows after, in order; every
 // frame the core sends must be one of these.
@@ -369,8 +372,8 @@ struct Run {
     std::vector<uint64_t> words;
   };
   std::vector<ChaosRx> chaos_rx;
-  std::vector<uint64_t> chaos_lost;
-  std::vector<std::pair<uint64_t, uint64_t>> chaos_txdone, chaos_busy;
+  std::vector<uint64_t> chaos_lost, chaos_start;
+  std::vector<std::pair<uint64_t, uint64_t>> chaos_txdone, chaos_busy, chaos_stored;
   struct ChaosTx {
     uint64_t clock;
     std::vector<uint64_t> words;
@@ -538,12 +541,14 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         runs.back().chaos_rx.push_back(f);
         continue;
       }
-      if (w.size() == 2 && w[0] == "chaos-lost") {
-        runs.back().chaos_lost.push_back(std::strtoull(w[1].c_str(), nullptr, 16));
+      if (w.size() == 2 && (w[0] == "chaos-lost" || w[0] == "chaos-start")) {
+        (w[0] == "chaos-lost" ? runs.back().chaos_lost : runs.back().chaos_start)
+            .push_back(std::strtoull(w[1].c_str(), nullptr, 16));
         continue;
       }
-      if (w.size() == 3 && (w[0] == "chaos-txdone" || w[0] == "chaos-busy")) {
-        (w[0] == "chaos-busy" ? runs.back().chaos_busy : runs.back().chaos_txdone)
+      if (w.size() == 3 && (w[0] == "chaos-txdone" || w[0] == "chaos-busy" || w[0] == "chaos-stored")) {
+        (w[0] == "chaos-busy" ? runs.back().chaos_busy
+         : w[0] == "chaos-stored" ? runs.back().chaos_stored : runs.back().chaos_txdone)
             .emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16));
         continue;
       }
@@ -1523,6 +1528,7 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->chaos_rx_valid = 0; dut->chaos_rx_word = 0; dut->chaos_rx_done = 0; dut->chaos_rx_bits = 0;
     dut->chaos_rx_crc = 0; dut->chaos_rx_lost = 0; dut->chaos_tx_done = 0; dut->chaos_tx_abort = 0;
     dut->chaos_cbl_busy = 0;
+    dut->chaos_rx_start = 0; dut->chaos_rx_stored = 0; dut->chaos_rx_store = 0;
   };
   quiet();
   // **THE NETWORK'S FAR END, BY THE CLOCK IT DRIVES THE SEAM IN**: each
@@ -1530,7 +1536,7 @@ int run_trace(const char *path, const Run &run, int seed) {
   // in the clocks before that.  Two things on one wire in one clock is the
   // trace's fault and fails the run.
   struct Seam {
-    bool rx_valid = false, rx_done = false, lost = false, txdone = false;
+    bool rx_valid = false, rx_done = false, lost = false, txdone = false, start = false;
     uint64_t rx_word = 0, rx_bits = 0, rx_crc = 0, abort = 0;
   };
   std::map<uint64_t, Seam> seam;
@@ -1562,13 +1568,19 @@ int run_trace(const char *path, const Run &run, int seed) {
     if (c.lost) chaos_why = "two frames lost at clock " + std::to_string(at);
     c.lost = true;
   }
+  // A frame's `START^`, where the receive gate takes Receive Done.
+  for (uint64_t at : run.chaos_start) {
+    Seam &c = seam[at - 1];
+    if (c.start) chaos_why = "two START^s at clock " + std::to_string(at);
+    c.start = true;
+  }
   for (const auto &d : run.chaos_txdone) {
     Seam &c = seam[d.first - 1];
     if (c.txdone) chaos_why = "two Transmit Dones at clock " + std::to_string(d.first);
     c.txdone = true;
     c.abort = d.second;
   }
-  size_t busy_next = 0;
+  size_t busy_next = 0, stored_next = 0;
   // What the core sent: the row of each START and the words that followed.
   std::vector<Run::ChaosTx> sent;
   std::vector<uint64_t> sent_len;
@@ -1680,8 +1692,11 @@ int run_trace(const char *path, const Run &run, int seed) {
       dut->chaos_rx_lost = c.lost;
       dut->chaos_tx_done = c.txdone;
       dut->chaos_tx_abort = c.abort != 0;
+      dut->chaos_rx_start = c.start;
       while (busy_next < run.chaos_busy.size() && run.chaos_busy[busy_next].first <= k)
         dut->chaos_cbl_busy = run.chaos_busy[busy_next++].second != 0;
+      while (stored_next < run.chaos_stored.size() && run.chaos_stored[stored_next].first <= k)
+        dut->chaos_rx_stored = static_cast<uint16_t>(run.chaos_stored[stored_next++].second & 07777u);
     }
     if (!input_why.empty()) {
       std::fprintf(stderr, "%s: run %s: %s\n", path, run.name.c_str(), input_why.c_str());

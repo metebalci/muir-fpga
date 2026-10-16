@@ -10749,36 +10749,39 @@ if {0 && $held ne $want} {
 @note card off by one hands `uc-chaos.lisp` a packet a word long or a word
 @note short.
 @old
-  assign chaos_bits = ch_rdone ? ch_rbct - 12'd1 : 12'd0;
+  assign chaos_bits = ch_rdone     ? ch_rbct - 12'd1 :
 @new
-  assign chaos_bits = ch_rdone ? ch_rbct : 12'd0;
+  assign chaos_bits = ch_rdone     ? ch_rbct :
 @end
 
 @mutation iob-the-read-buffer-gives-a-word-with-no-packet
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note With no packet --- before the first, and after Clear Receiver --- the
-@note buffer reads ZERO (`READ_BUFFER` with Receive Done down).  A card
-@note giving back whatever its RAM held hands the software the last packet's
-@note words again --- the DDR bridge's `rdata` lesson at a second buffer, and
-@note the trace reads exactly there.
+@note With no packet a read of the buffer is the read register shifted, the
+@note buffer's bit at RBCT 0 coming in below (muir's `read_down`, measured on
+@note the netlist board), never the word its RAM holds there: a card giving
+@note back that word hands the software an earlier frame's words again ---
+@note the DDR bridge's `rdata` lesson at a second buffer.  The trace reads
+@note there after every Clear Receiver.
 @old
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[0]};
 @new
-  assign ch_word = !ch_rdone ? ch_rd : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+                   ch_down_here ? ch_rd : (({ch_sr[14:0], ch_rd[0]} & 16'd0) | ch_rd);
 @end
 
 @mutation iob-a-read-with-no-packet-moves-the-pointer
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note A read of the buffer with no packet takes nothing and moves nothing
-@note (`READ_BUFFER` with Receive Done down reads 0 and leaves the count),
-@note so the next packet's first read is its first word.  A pointer that
-@note moved would start the next packet somewhere in the middle of it.
+@note A read of the buffer with no packet moves no pointer (`READ_BUFFER` with
+@note Receive Done down shifts the read register and leaves the count), so
+@note the next packet's first read is its first word.  A pointer that moved
+@note would start the next packet somewhere in the middle of it.
 @old
-        end else if (c_rbuf && ch_rdone) begin
+          if (ch_rdone) begin
+            // A word out of the incoming packet buffer, through the receive
 @new
-        end else if (c_rbuf) begin
+          if (1'b1) begin
+            // A word out of the incoming packet buffer, through the receive
 @end
 
 @mutation iob-a-write-of-the-chaosnet-csr-reaches-every-bit
@@ -10833,21 +10836,24 @@ if {0 && $held ne $want} {
       end
 @end
 
-@mutation iob-a-reset-leaves-the-lost-count
+@mutation iob-a-reset-clears-the-lost-count
 @check gp0_split
 @file rtl/machine/cadr_io_board.sv
-@note Reset "completely resets the interface, just as at power up and Unibus
-@note Initialize", and muir's `reset` clears the count with everything else.
-@note A count that survived it would be read by the driver's own
-@note `INTERFACE-RESET-AND-ENABLE` as losses on a buffer that has never held
-@note a packet.  Clear Receiver is the sister record above; this is the other
-@note event, and nothing held it before --- the trace resets the interface
-@note before it has lost anything.  Caught at "the card's Lost Count after a
-@note Reset".
+@note Lost Count stays through a Reset and `-UB INIT`: its 74LS161 at LMMYNM
+@note 0F04 clears on Clear Receiver's `-11.SAYS.GO` alone, and `-INIT` reaches
+@note only `-CLR RCV BUSY` and Transmit Done (muir's `4647f6b`, measured on
+@note the netlist board).  A card that cleared it there, as AIM-628's "as at
+@note power up" reads, loses losses the driver has not read.  Caught at "the
+@note card's Lost Count after a Reset".
 @old
-        ch_lost     <= 4'd0;
+        ch_ract     <= 1'b0;
+        ch_down     <= 1'b0;
+        ch_xn       <= 8'd0;
 @new
-        ch_lost     <= ch_lost;
+        ch_ract     <= 1'b0;
+        ch_down     <= 1'b0;
+        ch_lost     <= 4'd0;
+        ch_xn       <= 8'd0;
 @end
 
 @mutation iob-a-lost-frame-lands-in-the-buffer
@@ -10889,9 +10895,9 @@ if {0 && $held ne $want} {
 @note frame anyway: Receive Done rises over a frame whose first words the
 @note clear threw away.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @end
 
 @mutation iob-the-drop-outlives-the-done
@@ -10936,9 +10942,9 @@ if {0 && $held ne $want} {
 @note the tick `chaos_reset` is up, and a card that took it commits a frame
 @note the Reset threw away.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @end
 
 @mutation iob-a-clear-in-the-idle-tick-is-not-mid-stream
@@ -11000,9 +11006,9 @@ if {0 && $held ne $want} {
 @note frame anyway: Receive Done rises over a frame whose first words the
 @note clear threw away.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @end
 
 @mutation iob-seam-a-reset-takes-the-word-after-it
@@ -11223,9 +11229,9 @@ if {0 && $held ne $want} {
 @note bits in the packet's first word.  Caught at the wreckage over the
 @note frame of ones.
 @old
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+  assign ch_word = ch_rdone     ? (!ch_read ? (ch_tw & ch_low) : ch_rd) :
 @new
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd);
+  assign ch_word = ch_rdone     ? (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd) :
 @end
 
 @mutation iob-crc-error-is-the-verdict-at-landing
@@ -11263,14 +11269,14 @@ if {0 && $held ne $want} {
 @check iob
 @file rtl/machine/cadr_io_board.sv
 @note A run of 48 bits or fewer --- check, source and destination and
-@note nothing after --- is taken by no receiver (muir's `arrive`, measured on
-@note the netlist board: 257 words written send 48 bits that do not land,
-@note 258 send 64 that do).  The bound one word low takes the 48-bit run.
+@note nothing after --- lands nowhere (muir's `arrive`, measured on the
+@note netlist board: 257 words written send 48 bits that do not land, 258
+@note send 64 that do).  The bound one word low lands the 48-bit run.
 @note Caught at the run of 257 words written handed back.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd32);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd32);
 @end
 
 @mutation iob-a-64-bit-frame-is-refused
@@ -11281,9 +11287,9 @@ if {0 && $held ne $want} {
 @note nor counts one lost.  Caught first at the lost-count section's frames,
 @note which are 64 bits.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd64);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd64);
 @end
 
 @mutation iob-the-bit-count-stops-at-7777
@@ -11325,19 +11331,189 @@ if {0 && $held ne $want} {
       .chaos_tx_done(chaos_tx_done && chaos_tx_abort),
 @end
 
-@mutation iob-the-cable-busy-line-is-not-the-crc-bit
+@mutation iob-the-line-busy-is-ored-into-the-crc-bit
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note Bit 14 is the check word's verdict alone on the board: `CRCERR` has two
-@note pins in the wire list and `CBLBSY` reaches no readback buffer.  It is
-@note "only valid at two times", and muir's `csr()` ors `turn.busy_at(now)`
-@note into it so that it reads set while a frame goes by.  The driver reads
-@note the register while its own frame is going out, so a card without that
-@note term reads the bit down where the model reads it up.
+@note Bit 14 is the 9401 at LMRBUF 0C07 alone: `CRCERR` has two pins in the
+@note wire list and `CBLBSY` reaches no readback buffer (muir's `40b86d1`:
+@note while a frame is taken, the running check register).  A card ORing
+@note the line busy in, as muir's model did before, reads the bit up through
+@note a good frame's last bits and through every frame it refused.
 @old
-  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+                      ch_crc || (ch_taking && chaos_rx_check_nz) || (ch_down_here && ch_dcheck != 16'd0),
 @new
-  assign chaos_csr = {ch_rdone, ch_crc && chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+                      ch_crc || (ch_taking && chaos_rx_check_nz) || (ch_down_here && ch_dcheck != 16'd0) || chaos_cbl_busy,
+@end
+
+@mutation iob-start-takes-no-receive-done
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `RACT` takes `-RDONE` at `START^`: a frame that finds the buffer full is
+@note refused for its whole length (muir's `taking`, the 74S74 at LMRCLK 0C06).
+@note A gate that took every frame shows a refused frame's running check on
+@note bit 14 and its bits on the bit count.  Caught at the frames lost on a
+@note full buffer and at the frame refused and then cleared inside.
+@old
+        ch_ract    <= !ch_rdone;
+@new
+        ch_ract    <= 1'b1 || !ch_rdone;
+@end
+
+@mutation iob-a-clear-leaves-the-gate-open
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Clear Receiver inside a frame takes `RACT` down, and only `START^` sets
+@note it, so the frame is taken no further (muir's `b338042`).  A gate left
+@note open goes on showing the frame's bits and check where the reads count
+@note down.  Caught at the Clear Receiver after the destination word.
+@old
+                ch_ract   <= 1'b0;
+                ch_down   <= 1'b0;
+                if (rx_mid) ch_drop <= 1'b1;
+@new
+                ch_down   <= 1'b0;
+                if (rx_mid) ch_drop <= 1'b1;
+@end
+
+@mutation iob-a-reset-leaves-the-gate-open
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A Reset or `-UB INIT` inside a frame takes `RACT` down as Clear Receiver
+@note does, through `-CLR RCV BUSY`.  Under Loop Back the frame is over with
+@note the CSR; off the cable it goes on, and a gate left open shows its bits
+@note where the reads count down.  Caught at the Reset inside a frame off the
+@note cable.
+@old
+        ch_ract     <= 1'b0;
+        ch_down     <= 1'b0;
+        ch_xn       <= 8'd0;
+@new
+        ch_down     <= 1'b0;
+        ch_xn       <= 8'd0;
+@end
+
+@mutation iob-the-bit-count-ignores-a-frame-taken
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note With Receive Done down the bit count is RBCT as it stands: the bits
+@note stored so far of a frame taken, stepping a cell at a time (muir's
+@note `bit_count`).  A card reading 0 there is caught at the reads inside the
+@note first packet.
+@old
+                      ch_taking    ? chaos_rx_stored :
+@new
+                      ch_taking    ? (chaos_rx_stored & 12'd0) :
+@end
+
+@mutation iob-the-crc-bit-ignores-the-running-check
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note While a frame is taken bit 14 is the 9401 over the bits stored so far
+@note (muir's `40b86d1`), up through any good frame but at its ends.  A card
+@note showing the landed verdict alone reads it down there.
+@old
+                      ch_crc || (ch_taking && chaos_rx_check_nz) || (ch_down_here && ch_dcheck != 16'd0),
+@new
+                      ch_crc || (ch_taking && chaos_rx_check_nz && 1'b0) || (ch_down_here && ch_dcheck != 16'd0),
+@end
+
+@mutation iob-the-count-down-starts-a-word-in
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Inside a frame the receiver is not taking, the reads count RBCT down from
+@note 0: the first one bit, RBCT 0's, then a word a read (muir's `read_down`).
+@note A count-down starting a word further down shows the wrong RBCT on the
+@note bit count and the wrong words.
+@old
+            ch_dhw    <= ch_down_here ? ch_dhw - 12'd16 : 12'hFFF;
+@new
+            ch_dhw    <= ch_down_here ? ch_dhw - 12'd16 : 12'hFEF;
+@end
+
+@mutation iob-the-count-down-check-restarts
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The check register runs on every bit the count-down reads, carried from
+@note read to read; CRC Error shows it.  One restarted at each read reads
+@note another bit 14 after the second read.
+@old
+            ch_dcheck <= ch_down_here ? crc_word(ch_dcheck, ch_rd) : (ch_rd[0] ? CRC_TAPS : 16'd0);
+@new
+            ch_dcheck <= ch_down_here ? crc_word(ch_dcheck & 16'd0, ch_rd) : (ch_rd[0] ? CRC_TAPS : 16'd0);
+@end
+
+@mutation iob-a-landing-keeps-the-read-register
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `RO.FIRST^`, the 26S02 at LMRCTL 0A04 on Receive Done, clears the read
+@note register as a frame lands (muir's `arrive`).  One kept shifts the last
+@note word read into the first read with Receive Done down after it.
+@old
+      if (commit) ch_sr <= 16'd0;
+@new
+      if (commit) ch_sr <= ch_sr;
+@end
+
+@mutation iob-an-idle-read-takes-the-top-bit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note With the line idle `RRESET` holds RBCT at 0, so a read shifts in the
+@note buffer's bit at RBCT 0, its lowest; one taking the word's top bit reads
+@note other ones after a frame whose check word has its two ends unequal.
+@old
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[0]};
+@new
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[15] ^ (ch_rd[0] & 1'b0)};
+@end
+
+@mutation iob-a-frame-for-another-station-is-not-stored
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A frame taken and not for this interface leaves its bits in the buffer
+@note (muir's `4647f6b`), and so does one a clear dropped; the far end hands
+@note them over to be stored.  A card that stored nothing of them reads the
+@note earlier frame round the buffer past a short one landed after.
+@old
+                      (chaos_rx_store || chaos_rx_bits <= 13'd48);
+@new
+                      ((chaos_rx_store && 1'b0) || chaos_rx_bits <= 13'd48);
+@end
+
+@mutation iob-a-short-run-is-not-stored
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A run of 48 bits or fewer lands nowhere and leaves its bits with Receive
+@note Done down, judged by its length.  A card storing none of it reads other
+@note words round the buffer past the frames written past its end.
+@old
+                      (chaos_rx_store || chaos_rx_bits <= 13'd48);
+@new
+                      (chaos_rx_store || chaos_rx_bits <= 13'd0);
+@end
+
+@mutation iob-a-frame-to-store-lands
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A frame handed over to be stored and not landed raises no Receive Done.
+@note One that landed hands the software another station's frame, or what a
+@note clear threw away, as a packet.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (!chaos_rx_store || 1'b1) && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation iob-an-abort-ahead-of-its-done-waits
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A frame of this interface's to its own address on a full buffer is
+@note aborted as its destination word goes by, Transmit Done 125 ns on (muir's
+@note `busy_looped`): Transmit Abort reads up between the two.  A card taking
+@note the abort with the done alone reads it down there.
+@old
+      end else if (chaos_tx_abort) begin
+@new
+      end else if (chaos_tx_abort && 1'b0) begin
 @end
 
 @mutation iob-transmit-done-survives-a-buffer-write
@@ -19504,6 +19680,18 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @new
     if (rst || (fabric_rst && 1'b0)) begin
       r_myaddr    <= 16'd0;
+@end
+
+@mutation chaos-cable-stores-every-frame
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note `chaos_rx_store` is held low: a frame the program commits is a frame for
+@note this interface, to land.  One held high stores every frame and lands
+@note none, and the machine never sees Receive Done.
+@old
+  assign chaos_rx_store    = 1'b0;
+@new
+  assign chaos_rx_store    = 1'b1;
 @end
 
 @mutation serial-the-button-resets-its-axi-state
@@ -31936,9 +32124,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A read of 142 gives the word before the pointer's: each word after the
 @note first a read late.
 @old
-  assign rcv_ra = ch_top - ch_rat_n;
+  assign rcv_ra = (ch_rdone_n || ch_fill != 9'd0 || rx_in) ? ch_top_n - ch_rat_n :
 @new
-  assign rcv_ra = ch_top - ch_rat_n + 8'd1;
+  assign rcv_ra = (ch_rdone_n || ch_fill != 9'd0 || rx_in) ? ch_top_n - ch_rat_n + 8'd1 :
 @end
 
 @mutation quux15-net-start-a-word-short
@@ -31989,15 +32177,15 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     if (rq_k == 8'o100) rd_word[6] = 1'b0 & ch_irq_state;
 @end
 
-@mutation quux15-net-busy-cable-not-shown
+@mutation quux15-net-a-frame-taken-not-shown
 @check quux15_network_quux
 @file rtl/machine/quux15_chaos.sv
-@note CSR <14> is the check word's verdict alone, the cable's busy not ORed
-@note in as muir's model has it.
+@note CSR <14> is the check word's verdict alone, the line not shown while
+@note the receiver takes a frame, as muir's revision 15 has it.
 @old
-  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+  assign chaos_csr = {ch_rdone, ch_crc || ch_taking || (ch_down_here && ch_dcheck != 16'd0),
 @new
-  assign chaos_csr = {ch_rdone, ch_crc || (chaos_cbl_busy & 1'b0), 1'b0, ch_lost, 1'b0,
+  assign chaos_csr = {ch_rdone, ch_crc || (ch_taking & 1'b0) || (ch_down_here && ch_dcheck != 16'd0),
 @end
 
 @mutation quux15-net-lost-count-saturates
@@ -32017,11 +32205,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @old
               ch_hi_set <= 1'b0;
               ch_lost   <= 4'd0;
+              ch_ract   <= 1'b0;
               if (rx_mid) ch_drop <= 1'b1;
             end
             if (wdata[8]) begin   // Clear Transmitter
 @new
               ch_hi_set <= 1'b0;
+              ch_ract   <= 1'b0;
               if (rx_mid) ch_drop <= 1'b1;
             end
             if (wdata[8]) begin   // Clear Transmitter
@@ -32044,9 +32234,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The CSR's Reset leaves the read/write bits it was written with.
 @old
       if (reset_now) begin
+        // Lost Count stays, as on the CADR's card: its 74LS161 clears on
+        // Clear Receiver alone.
         ch_wbits    <= 6'd0;
 @new
       if (reset_now) begin
+        // Lost Count stays, as on the CADR's card: its 74LS161 clears on
+        // Clear Receiver alone.
 @end
 
 @mutation quux15-net-write-of-145-into-the-buffer
@@ -32114,9 +32308,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note Receive Done reads up in the clock the far end commits the frame, a
 @note clock before the clock muir's grid lands it at.
 @old
-  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+  assign chaos_csr = {ch_rdone, ch_crc || ch_taking || (ch_down_here && ch_dcheck != 16'd0),
 @new
-  assign chaos_csr = {ch_rdone || chaos_rx_done, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+  assign chaos_csr = {ch_rdone || chaos_rx_done, ch_crc || ch_taking || (ch_down_here && ch_dcheck != 16'd0),
 @end
 
 @mutation quux15-net-frame-lands-a-clock-late
@@ -32125,7 +32319,7 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The far end's commit is held a clock before Receive Done rises: the
 @note frame lands a clock after muir's grid has it.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
   logic        done_q;
   logic [12:0] bits_q;
@@ -32133,7 +32327,7 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     done_q <= chaos_rx_done;
     bits_q <= chaos_rx_bits;
   end
-  assign taken_now  = done_q && !ch_drop && !chaos_reset && (bits_q > 13'd48);
+  assign taken_now  = done_q && !ch_drop && !chaos_reset && !chaos_rx_store && (bits_q > 13'd48);
 @end
 
 @mutation quux15-net-clear-receiver-keeps-the-pointer
@@ -32272,9 +32466,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note module reading the place whole shows the earlier frame's ones.  Caught
 @note at the wreckage over the frame of ones.
 @old
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw & ch_low) : ch_rd);
+  assign ch_word = ch_rdone     ? (!ch_read ? (ch_tw & ch_low) : ch_rd) :
 @new
-  assign ch_word = !ch_rdone ? 16'd0 : (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd);
+  assign ch_word = ch_rdone     ? (!ch_read ? (ch_tw | (ch_low & 16'd0)) : ch_rd) :
 @end
 
 @mutation quux15-net-crc-error-is-the-verdict-at-landing
@@ -32292,13 +32486,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-net-a-48-bit-run-is-taken
 @check quux15_chaos_module_quux
 @file rtl/machine/quux15_chaos.sv
-@note A run of 48 bits or fewer is taken by no receiver.  The bound one word
-@note low takes the 48-bit runs the script hands back.  Caught at those
-@note runs.
+@note A run of 48 bits or fewer lands nowhere.  The bound one word low lands
+@note the 48-bit runs the script hands back.  Caught at those runs.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd32);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd32);
 @end
 
 @mutation quux15-net-a-64-bit-frame-is-refused
@@ -32307,9 +32500,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The same bound one word high refuses the 64 bits of 258 words
 @note written, which land on the netlist board.  Caught at those frames.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd64);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd64);
 @end
 
 @mutation quux15-net-the-bit-count-stops-at-7777
@@ -32357,9 +32550,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note frame anyway: Receive Done rises over a frame whose first words the
 @note clear threw away.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && (!ch_drop || 1'b1) && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @end
 
 @mutation quux15-chaos-the-drop-outlives-the-done
@@ -32404,9 +32597,140 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note the clock `chaos_reset` is up, and a card that took it commits a frame
 @note the Reset threw away.
 @old
-  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
 @new
-  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && (chaos_rx_bits > 13'd48);
+  assign taken_now  = chaos_rx_done && !ch_drop && (!chaos_reset || 1'b1) && !chaos_rx_store && (chaos_rx_bits > 13'd48);
+@end
+
+@mutation quux15-chaos-a-reset-clears-the-lost-count
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note Lost Count stays through a Reset and RESET-DEVICES, as on the CADR's
+@note card (muir's `4647f6b`).  One cleared there is caught at the losses
+@note before a RESET-DEVICES.
+@old
+        ch_crc      <= 1'b0;
+        ch_ract     <= 1'b0;
+        ch_xn       <= 8'd0;
+@new
+        ch_crc      <= 1'b0;
+        ch_ract     <= 1'b0;
+        ch_lost     <= 4'd0;
+        ch_xn       <= 8'd0;
+@end
+
+@mutation quux15-chaos-start-takes-no-receive-done
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note `RACT` takes Receive Done at `START^`; a gate that took every frame shows
+@note a frame refused on a full buffer as the line taken.
+@old
+        ch_ract    <= !ch_rdone;
+@new
+        ch_ract    <= 1'b1 || !ch_rdone;
+@end
+
+@mutation quux15-chaos-a-clear-leaves-the-gate-open
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A Clear Receiver inside a frame takes `RACT` down; a gate left open shows
+@note the line taken and its bits where the reads count down.
+@old
+              ch_lost   <= 4'd0;
+              ch_ract   <= 1'b0;
+              if (rx_mid) ch_drop <= 1'b1;
+@new
+              ch_lost   <= 4'd0;
+              if (rx_mid) ch_drop <= 1'b1;
+@end
+
+@mutation quux15-chaos-the-bit-count-ignores-a-frame-taken
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note With Receive Done down the bit count is the bits stored so far of a
+@note frame taken.  One reading 0 there is caught at the reads inside frames.
+@old
+                      ch_taking    ? chaos_rx_stored :
+@new
+                      ch_taking    ? (chaos_rx_stored & 12'd0) :
+@end
+
+@mutation quux15-chaos-the-count-down-starts-a-word-in
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The count-down's first read is one bit, RBCT 0's, and each after a word.
+@note One starting a word further down reads other words and another bit
+@note count.
+@old
+        ch_dhw_n  = ch_down_here ? ch_dhw - 12'd16 : 12'hFFF;
+@new
+        ch_dhw_n  = ch_down_here ? ch_dhw - 12'd16 : 12'hFEF;
+@end
+
+@mutation quux15-chaos-the-count-down-check-restarts
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note The check register runs over every bit the count-down reads; one
+@note restarted at each read shows another bit 14.
+@old
+        ch_dcheck <= ch_down_here ? crc_word(ch_dcheck, ch_rd) : (ch_rd[0] ? CRC_TAPS : 16'd0);
+@new
+        ch_dcheck <= ch_down_here ? crc_word(ch_dcheck & 16'd0, ch_rd) : (ch_rd[0] ? CRC_TAPS : 16'd0);
+@end
+
+@mutation quux15-chaos-a-landing-keeps-the-read-register
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A frame landing clears the read register (`RO.FIRST^`); one kept shifts
+@note the last word read into the next read with Receive Done down.
+@old
+      if (commit) ch_sr <= 16'd0;
+@new
+      if (commit) ch_sr <= ch_sr;
+@end
+
+@mutation quux15-chaos-an-idle-read-takes-the-top-bit
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note An idle read shifts in RBCT 0's bit, the word's lowest; one taking its
+@note top bit reads other words.
+@old
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[0]};
+@new
+                   ch_down_here ? ch_rd : {ch_sr[14:0], ch_rd[15] ^ (ch_rd[0] & 1'b0)};
+@end
+
+@mutation quux15-chaos-a-frame-to-store-is-not-stored
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A frame's bits handed over to be stored and not landed go into the
+@note buffer; a module storing nothing of them reads other words round it.
+@old
+                      (chaos_rx_store || chaos_rx_bits <= 13'd48);
+@new
+                      ((chaos_rx_store && 1'b0) || chaos_rx_bits <= 13'd48);
+@end
+
+@mutation quux15-chaos-a-short-run-is-not-stored
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A run of 48 bits or fewer leaves its bits with Receive Done down; one
+@note storing none of it reads other words round the buffer.
+@old
+                      (chaos_rx_store || chaos_rx_bits <= 13'd48);
+@new
+                      (chaos_rx_store || chaos_rx_bits <= 13'd0);
+@end
+
+@mutation quux15-chaos-a-frame-to-store-lands
+@check quux15_chaos_module_quux
+@file rtl/machine/quux15_chaos.sv
+@note A frame handed over to be stored raises no Receive Done; one that landed
+@note hands the software a frame for another station as a packet.
+@old
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && !chaos_rx_store && (chaos_rx_bits > 13'd48);
+@new
+  assign taken_now  = chaos_rx_done && !ch_drop && !chaos_reset && (!chaos_rx_store || 1'b1) && (chaos_rx_bits > 13'd48);
 @end
 
 @mutation quux15-chaos-a-clear-in-the-idle-tick-is-not-mid-stream

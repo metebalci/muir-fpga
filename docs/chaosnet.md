@@ -114,7 +114,7 @@ before every START, so no system run sees the difference.
 difference.** `cadr_chaos_cable.sv` answers a frame of three words or fewer,
 the empty frame's source and check word among them, by giving
 `chaos_tx_done` back the next clock, and nothing goes on the cable. No
-receiver takes a run of 48 bits or fewer (below), and CHUDP has no datagram
+receiver lands a run of 48 bits or fewer (below), and CHUDP has no datagram
 for a frame of fewer than eleven words. Nor does the board's own busy receiver
 count or abort such a run: its own frame of 48 bits into a full buffer, to its
 own address, to zero or under Spy, leaves Lost Count and Transmit Abort where
@@ -180,7 +180,10 @@ the same, on every revision.
 In the fabric that is the cable's, and the cable is the far end. The CADR's
 card and revision 15's interface take their own frame through the seam as
 they take any other: its words on `chaos_rx_*`, the count on
-`chaos_rx_lost`, and the abort on `chaos_tx_done` with `chaos_tx_abort`.
+`chaos_rx_lost`, and the abort on `chaos_tx_done` with `chaos_tx_abort`. A
+frame looped back into a full buffer is aborted as its destination word goes
+by, 125 ns before Transmit Done (muir's `busy_looped`), so the far end can
+also give the abort with the count, ahead of the done.
 `quux15_chaos_module` holds it: its script now has the interface take its own
 frame to its address, to zero and under Spy, and abort its own frame into a
 full buffer, with the testbench playing the far end as muir's interface saw
@@ -229,11 +232,13 @@ up after the read-out of a frame that lost its check word to the wrap. Before
 the first read it is the receiver's verdict on the frame, which the far end
 hands the card.
 
-**A run of 48 bits or fewer is taken by no receiver**, its destination
-matching or not: the check, source and destination words and nothing after
-them. The board's own frame of 257 words written, 48 bits, does not land, and
-one of 258, 64 bits, does. The card and revision 15's interface take no such
-run, with no Receive Done and no Lost Count.
+**A run of 48 bits or fewer lands nowhere**, its destination matching or
+not: the check, source and destination words and nothing after them. The
+board's own frame of 257 words written, 48 bits, does not land, and one of
+258, 64 bits, does. With Receive Done down its bits stay in the buffer, as
+every frame the receiver takes leaves its bits (below). The card and revision
+15's interface store such a run, judged by its length, and raise no Receive
+Done and no Lost Count.
 
 **The seam carries a frame in the order the software reads it.** The far end
 hands the card the frame's words a word a clock, the first word read first,
@@ -274,13 +279,81 @@ carries, land as muir lands them. MIT's network software never sends a frame
 to its own address or to zero; MIT's interface test `CHATST` does, and its
 cable half needs this.
 
-Two differences remain. Whether the buffer is full is the program's answer at
+Four differences remain. Whether the buffer is full is the program's answer at
 the moment it takes the frame, where the board decides as the frame's
 destination word goes by. The machine waits for Transmit Done in between, so
 only its own interrupt-driven read-out of an earlier frame could fall into
-that gap. And Loop Back is not the cable's: a frame sent under Loop Back is not
+that gap. Loop Back is not the cable's: a frame sent under Loop Back is not
 handed back by `cadr-chaosnet`, which leaves CHATST's loop-back half without
-its packet on a board.
+its packet on a board. **The cable has no inside of a frame**: it hands a
+frame over whole after it is over, so its busy line, `START^` and levels are
+held low, CRC Error never reads the running check and the bit count never
+counts a frame coming in, and a clear has no frame to drop. And **a frame
+the machine does not land leaves no bits**: on a real cable the machine's own
+frame to another station, and its runs of 48 bits or fewer, leave their bits
+in its receive buffer, and on a board they do not, because
+`chaos_face_own_frame` offers neither. The software sees the last two only
+through reads of the buffer made with Receive Done down, which MIT's
+software does not make in normal use. They are documented and not built: building them would need a
+`CTL` bit, cable and program changes and a fit, for no software that reads
+them.
+
+## The receiver's own gate, and what a frame leaves
+
+muir's `b338042`, `4647f6b` and `40b86d1` follow the netlist board inside a
+frame, and the card and revision 15's interface follow muir. **`RACT` is the
+card's own**, the 74S74 at LMRCLK 0C06: it takes Receive Done, inverted, at
+the frame's `START^`, 60 ns after its first edge, and only `RRESET` takes it
+down inside the frame, which Clear Receiver, Reset and `-UB INIT` make
+through `-CLR RCV BUSY`. A frame that finds the buffer full is refused for
+its whole length, and one cleared inside is taken no further. Before its
+`START^` a frame counts as taken.
+
+**The seam carries the cable's facts and the card shows them through the
+gate.** The far end gives a frame on the line from its first edge to the line
+going idle (`chaos_cbl_busy`), its `START^` (`chaos_rx_start`), the bits the
+receiver would have stored of it so far and whether the 9401 is non-zero over
+them (`chaos_rx_stored`, `chaos_rx_check_nz`), all before any gate. While the
+receiver takes a frame, CRC Error is the running check register on the CADR
+and the line taken on revision 15, which keeps no such register, and the bit
+count is the bits stored so far. The busy line is not ORed into bit 14 on the
+CADR: `CBLBSY` reaches no readback buffer.
+
+**A read of the buffer with Receive Done down shifts the read register**, the
+74164s at LMRBUF 0A07 and 0B07, the buffer's bit at `RBCT` coming in at the
+bottom. With the line idle `RRESET` holds `RBCT` at 0, so a read is the last
+word read moved up a bit with the bit at `RBCT` 0 below it: at power-on,
+never written, 1. Inside a frame the receiver is not taking, the reads count
+`RBCT` down from 0, the first one bit and each after it a word, the bit count
+showing `RBCT` and CRC Error the check of the bits read. A frame landing
+clears the register. A read while the receiver takes a frame is outside
+muir's model, which reads 0 there; no check makes one.
+
+**A frame the receiver takes and does not land leaves its bits.** The
+receiver stores every frame it takes from `RBCT` 0, and the destination word
+decides only whether it lands. So a frame for another station leaves its
+bits, and so does a frame that a Clear Receiver, a Reset or `-UB INIT` drops
+inside it: the bits stored before the clear stay. Before the destination word
+the busy receiver's gates then find `-RACT` up, and the frame is counted in
+Lost Count and, to this address by name, aborted. The far end hands such bits
+over with `chaos_rx_store` on the done, to be stored and not landed, a
+dropped frame's right after the clear.
+
+**Lost Count stays through a Reset and `-UB INIT`.** Its 74LS161 at LMMYNM
+0F04 clears on Clear Receiver's `-11.SAYS.GO` alone, and `-INIT` reaches only
+`-CLR RCV BUSY` and Transmit Done.
+
+`iob` holds the CADR's card to all of it: reads inside a frame taken, at
+phases across a cell; frames looped back into a full buffer, counted and,
+to this address, aborted ahead of Transmit Done; Lost Count through a Reset
+and `-UB INIT`; reads with Receive Done down; a frame for another station
+stored; Clear Receiver after and before a frame's destination word; a frame
+refused at its `START^` and cleared inside; Reset and `-UB INIT` inside a
+frame looped back; and a Reset inside a frame off a cable, the reads counting
+down through the rest of it. The trace's generator asserts the levels it hands
+the card equal to muir's CSR and bit count wherever muir takes the frame, and
+that it never reads the buffer there. `quux15_chaos_module` holds revision
+15's interface the same way, and `quux15_network` the core's.
 
 ## What Linux sees
 

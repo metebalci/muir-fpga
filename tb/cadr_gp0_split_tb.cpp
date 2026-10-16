@@ -1378,10 +1378,16 @@ int main(int argc, char **argv) {
       if (csr & 017000u) Fail(say("Lost Count"), (csr & 017000u) >> 9, 0);
       const unsigned bits = b.UbRead(UB_CH_BITS);
       if (bits != 0u) Fail(say("the bit count"), bits, 0);
-      unsigned nonzero = 0;
-      for (unsigned k = 0; k < big.size(); ++k)
-        if (b.UbRead(UB_CH_RDBUF) != 0u) ++nonzero;
-      if (nonzero) Fail(say("buffer reads that were not 0"), nonzero, 0);
+      // With Receive Done down a read is the read register shifted, RBCT 0's
+      // bit coming in below (muir's `read_down`): each the last moved up a
+      // bit over the same bit.
+      unsigned unshifted = 0, last = b.UbRead(UB_CH_RDBUF);
+      for (unsigned k = 1; k < big.size(); ++k) {
+        const unsigned w = b.UbRead(UB_CH_RDBUF);
+        if (w != (((last << 1) | (last & 1u)) & 0xffffu)) ++unshifted;
+        last = w;
+      }
+      if (unshifted) Fail(say("buffer reads that were not the read register shifted"), unshifted, 0);
       const unsigned after = b.UbRead(UB_CH_CSR);
       if (after & 0177000u) Fail(say("the CSR's upper bits after the reads"), after, after & ~0177000u);
       // The cable sees the buffer free again: RX_ARMED and not RX_BUSY.
@@ -1483,8 +1489,10 @@ int main(int argc, char **argv) {
       if (face_lost() != face_after)
         Fail("the face's LOST across a Clear Receiver", face_lost(), face_after);
 
-      // And Reset, the other event muir clears it at: fill the buffer, lose
-      // one, and reset the interface out from under it.
+      // And Reset, which does NOT clear it (muir's `4647f6b`, measured on the
+      // netlist board: the 74LS161 at LMMYNM 0F04 clears on Clear Receiver's
+      // `-11.SAYS.GO` alone): fill the buffer, lose one, and reset the
+      // interface out from under it.
       offer();
       ++frames_in;
       offer();
@@ -1493,8 +1501,8 @@ int main(int argc, char **argv) {
       const uint32_t face_reset = face_lost();
       b.UbWrite(UB_CH_CSR, 020000u);        // Reset, AIM-628's bit 13
       b.Idle(8);
-      if (card_lost() != 0u)
-        Fail("the card's Lost Count after a Reset", card_lost(), 0u);
+      if (card_lost() != 1u)
+        Fail("the card's Lost Count after a Reset", card_lost(), 1u);
       if (b.UbRead(UB_CH_CSR) & 0100000u)
         Fail("Receive Done after a Reset", 1, 0);
       if (face_lost() != face_reset)

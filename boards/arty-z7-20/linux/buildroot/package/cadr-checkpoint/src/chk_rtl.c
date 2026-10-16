@@ -427,6 +427,23 @@ static void emit_chaos(struct chk *w, const struct chk_declared *d)
 	chk_u64(w, 0);		/* frames.len() */
 	chk_bool(w, 0);		/* ready.is_some() */
 	chk_u64(w, 0);		/* polled */
+	// **AND AFTER `polled`, VERSION 54's: WHAT IS PENDING OF A FRAME LOOPED
+	// BACK AND OF THE READ PATH**, all as `Interface::new` has it, the card
+	// being out of the window's reach as the rest of the interface is: no
+	// looped frame's `START^` to come, no busy receiver's decision at a
+	// destination word, the read register 0, no count-down inside a dropped
+	// frame and no frame dropped.  Six bytes, every one zero.
+#if CHK_MUTATE != 52
+	chk_bool(w, 0);		/* looped_start.is_some() */
+	chk_bool(w, 0);		/* looped_busy.is_some() */
+#if CHK_MUTATE == 53
+	chk_u16(w, 1);		/* rd, which a fresh interface has 0 */
+#else
+	chk_u16(w, 0);		/* rd */
+#endif
+	chk_bool(w, 0);		/* down.is_some() */
+	chk_bool(w, 0);		/* dropped.is_some() */
+#endif
 }
 
 // `ioboard.rs`'s `IoBoard::save`.  IDLE throughout: the keyboard, the mouse,
@@ -877,7 +894,7 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 
 // --- REVISION 15 -------------------------------------------------------
 //
-// **QUUX REVISION 15'S FILE, VERSION 51** (A15b.13; muir's `Pipeline::save`):
+// **QUUX REVISION 15'S FILE, VERSION 56** (A15b.13; muir's `Pipeline::save`):
 // `Machine::save` at revision 15, then the pipeline's period, its port's
 // timing and cache, and `save_15`'s fields, all READ off `quux15_core.sv`'s
 // window (`ro_read_quux15`) but for what the core does not keep, each marked.
@@ -1848,7 +1865,7 @@ const char *chk_rtl_mutation(void)
 #elif CHK_MUTATE == 30
 	return "revision 13's level-2 map written at revision 12's 2,048 entries";
 #elif CHK_MUTATE == 31
-	return "a 40-bit body written under version 49, a 32-bit machine's";
+	return "a 40-bit body written under version 54, a 32-bit machine's";
 #elif CHK_MUTATE == 32
 	return "a machine found running written with RUN clear, as the halt left it";
 #elif CHK_MUTATE == 33
@@ -1889,6 +1906,10 @@ const char *chk_rtl_mutation(void)
 	return "the resume line without the video controller's size";
 #elif CHK_MUTATE == 51
 	return "the sidecar's resume line naming the checkpoint by the board's path";
+#elif CHK_MUTATE == 52
+	return "the Chaosnet interface's six bytes of version 54 left out, version 49's interface";
+#elif CHK_MUTATE == 53
+	return "the Chaosnet interface's read register written 1, where a fresh interface's is 0";
 #else
 	return NULL;
 #endif

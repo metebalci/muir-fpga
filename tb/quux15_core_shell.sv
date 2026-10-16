@@ -132,6 +132,9 @@ module quux15_core #(
     input var logic chaos_tx_done,
     input var logic chaos_tx_abort,
     input var logic chaos_cbl_busy,
+    input var logic chaos_rx_start,
+    input var logic [11:0] chaos_rx_stored,
+    input var logic chaos_rx_store,
     output var logic [11:0] chaos_bits,
     output var logic axi_one_write_id,
     output var logic [3:0] axi_read_clocks,
@@ -358,6 +361,12 @@ module quux15_core #(
   assign tbi_chaos_tx_abort = chaos_tx_abort;
   logic tbi_chaos_cbl_busy /*verilator public_flat_rw*/;
   assign tbi_chaos_cbl_busy = chaos_cbl_busy;
+  logic tbi_chaos_rx_start /*verilator public_flat_rw*/;
+  assign tbi_chaos_rx_start = chaos_rx_start;
+  logic [11:0] tbi_chaos_rx_stored /*verilator public_flat_rw*/;
+  assign tbi_chaos_rx_stored = chaos_rx_stored;
+  logic tbi_chaos_rx_store /*verilator public_flat_rw*/;
+  assign tbi_chaos_rx_store = chaos_rx_store;
   logic [11:0] tbo_chaos_bits /*verilator public_flat_rw*/;
   assign chaos_bits = tbo_chaos_bits;
   logic tbo_axi_one_write_id /*verilator public_flat_rw*/;

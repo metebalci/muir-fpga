@@ -391,8 +391,8 @@ int chk_write_file(const char *path, const char *engine, uint32_t boards,
 	struct chk head;
 	chk_init(&head);
 	put(&head, kMagic, sizeof kMagic - 1);
-	// The version says the width (muir's `checkpoint::write`): 49 for a
-	// machine of 32-bit words, 50 for revision 13's 40.
+	// The version says the width (muir's `checkpoint::write`): 54 for a
+	// machine of 32-bit words, 55 for revision 13's 40.
 #if CHK_MUTATE == 31
 	chk_u32(&head, CHK_VERSION);
 #else

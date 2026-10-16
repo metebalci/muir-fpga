@@ -1802,9 +1802,11 @@ int main(int argc, char **argv)
 	//   color_tv   1                  = 1        (the flag alone: none is
 	//                                             fitted, so no board
 	//                                             follows it)
-	//   ioboard    57 + 110 + 1 + 85  = 253      (its own, the serial port's
+	//   ioboard    57 + 110 + 1 + 91  = 259      (its own, the serial port's
 	//                                             Pci, the chaos flag, and
-	//                                             the Chaosnet interface)
+	//                                             the Chaosnet interface:
+	//                                             85 bytes and the 6 of
+	//                                             version 54 after them)
 	//   quux_input 4+1+1+2+2+1+1+1    = 13       (QUUX's keyboard and mouse,
 	//                                             empty: version 39)
 	//   cycles+ns  16
@@ -1831,7 +1833,7 @@ int main(int argc, char **argv)
 	{
 		const size_t machine_part =
 			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 5 + 45 + 4120 + 1 + 27 + 1 + 8200 + 4 +
-			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
+			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 259 + 13 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28 + 1;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven

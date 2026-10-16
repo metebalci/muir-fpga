@@ -36,14 +36,20 @@
 // **A FRAME OF 48 BITS OR FEWER IS NOT OFFERED, AND THE MACHINE IS LET GO AT
 // ONCE.**  Three words or fewer --- 254 words written send nothing at all,
 // 255 to 257 send 16 to 48 bits, and an empty START sends the source and
-// the check word --- is a run that no receiver takes, muir's `arrive`
+// the check word --- is a run that no receiver lands, muir's `arrive`
 // measured on the netlist board, and CHUDP has no datagram for a frame of
 // fewer than eleven words (`chudp_wrap`).  **Nor does the board's own busy
 // receiver count or abort one**: its own frame of 48 bits to its own
 // address, to zero or under Spy, with Receive Done up, leaves Lost Count and
 // Transmit Abort where they were, on the netlist board and in muir alike,
-// where 64 bits are counted and, to its own address, aborted.  So not
-// offering it loses nothing the machine could see.  **For one and two words the rule
+// where 64 bits are counted and, to its own address, aborted.  **What not
+// offering it loses is the run's bits**: on a real cable the board's own
+// receiver takes the run with Receive Done down and leaves its bits in the
+// buffer (muir's `4647f6b`), which the software sees only through reads made
+// with Receive Done down, and here they are not stored.  `docs/chaosnet.md`
+// lists that among the board's differences; it is documented and not
+// built, since building it would need a `CTL` bit and a program change for
+// no software that reads it.  **For one and two words the rule
 // is required**: `cadr-chaosnet` routes a frame it takes by the third word
 // from the end, `words[n - 3]`, with no guard for a shorter one, and the card
 // now makes frames of one and two words (255 and 256 written).  So nothing
@@ -91,29 +97,38 @@
 // cannot drift apart: a refusal moves `LOST` here and the card's four bits
 // on the same tick.  They are not the same number.  The card's WRAPS at
 // sixteen --- AIM-628's four bits are a 74LS161, and muir's `arrive` is
-// `(self.lost + 1) & 0o17` --- and is cleared by Clear Receiver and by
-// Reset, which is what `muir::chaos::board::Interface` does; this one is
+// `(self.lost + 1) & 0o17` --- and is cleared by Clear Receiver alone, which
+// is what `muir::chaos::board::Interface` does (a Reset and `-UB INIT` leave
+// it, the 74LS161 at LMMYNM 0F04 clearing on `-11.SAYS.GO`); this one is
 // thirty-two bits
-// and survives that Reset, because `chaos_face_give` reads any change in it as
+// and survives this module's Reset too, because `chaos_face_give` reads any change in it as
 // a refusal and a counter that went backwards would make the program read a
 // stored frame as a refused one.  They move together, which is what lets the
 // program print them side by side and a board compare the two ends of the
 // seam.
 //
-// **`-CBLBSY` IS HELD LOW, DELIBERATELY.**  The card's face ORs it into CSR
-// bit 14, where it stands in for the check word's verdict reading set while a
-// frame goes by rather than for any gate of MIT's: `CRCERR` has two pins in
-// `mit/cadrio/iob.wlr` and `CBLBSY` reaches no readback buffer at all.
-// Nothing else in the card reads it.  On the real board it is up while a
-// frame is on the wire --- microseconds --- and the tempting thing is to
-// raise it while a frame waits for Linux.  That wait is however long Linux
-// takes to poll, which is not a cable time, and bit 14 would read as a CRC
-// error in front of the machine for milliseconds at a stretch.  AIM-628 says
-// the CRC error is only valid at two instants and both of them can fall
-// inside such a wait.  So the cable here is never busy, which is what a cable
-// with no other station on it looks like, and bit 14 then reads the check
-// word's verdict alone, which is what the board's own bit is at the two
-// instants it means anything.
+// **THE LINE'S FACTS ARE HELD LOW, DELIBERATELY**: `chaos_cbl_busy`, a frame
+// on the line; `chaos_rx_start`, its `START^`; `chaos_rx_stored` and
+// `chaos_rx_check_nz`, the bits the receiver would have stored of it and the
+// 9401 over them; and `chaos_rx_store`, a frame's bits to be stored and not
+// landed.  The card keeps its own receive gate, `RACT`, from them, and shows
+// through it CRC Error as the running check register and the bit count as
+// the bits stored while a frame comes in, and the reads' count-down inside a
+// frame it is not taking.  On this cable a frame is handed over whole after
+// it is over: there is no inside of a frame to show, and the tempting thing,
+// raising the busy line while a frame waits for Linux, would show a frame on
+// the line for as long as Linux takes to poll, which is not a cable time.  So
+// the line is never busy, which is what a cable with no other station on it
+// looks like; nothing is stored but what lands, the program handing over
+// only frames for this interface; and bit 14 reads the check word's verdict
+// alone, which is the board's own bit at the two instants AIM-628 says it
+// means anything.  **With the line never busy the gate shuts the rest out**,
+// so `START^` and the two levels tied are equivalent by construction to
+// any other tie and no mutation of them can be caught.  **So is the busy
+// line held high with them**, measured: `START^` never coming, the gate
+// stays open over levels held at 0, and CRC Error, the bit count and the
+// reads come out as with no frame on the line.  `chaos_rx_store` tied high
+// is caught by `build/gp0_split.pass`.
 //
 // **AND `chaos_rx_crc` IS HELD LOW FOR WANT OF A BIT TO CARRY IT.**  A frame
 // whose check word failed is Linux's to verify --- the trailer is on the seam
@@ -304,6 +319,10 @@ module cadr_chaos_cable #(
     output var logic        chaos_tx_done,  // one tick: the frame is away
     output var logic        chaos_tx_abort,
     output var logic        chaos_cbl_busy,
+    output var logic        chaos_rx_start,
+    output var logic [11:0] chaos_rx_stored,
+    output var logic        chaos_rx_check_nz,
+    output var logic        chaos_rx_store,
 
     // --- to the processing system's `IRQ_F2P` -----------------------------
     output var logic        irq
@@ -381,7 +400,12 @@ module cadr_chaos_cable #(
   logic [8:0]  x_len;          // the streaming frame's words, taken at its commit
 
   assign chaos_address  = r_myaddr;
-  assign chaos_cbl_busy = 1'b0;      // see the header
+  // The line's facts, all held: see the header.
+  assign chaos_cbl_busy    = 1'b0;
+  assign chaos_rx_start    = 1'b0;
+  assign chaos_rx_stored   = 12'd0;
+  assign chaos_rx_check_nz = 1'b0;
+  assign chaos_rx_store    = 1'b0;
   assign chaos_rx_crc   = 1'b0;      // see the header
 
   // The stream: one word a tick while `X_STREAM`, then an idle tick, then

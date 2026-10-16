@@ -644,6 +644,8 @@ module cadr_arty #(
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic [12:0] chaos_rx_bits;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
+  logic        chaos_rx_start, chaos_rx_check_nz, chaos_rx_store;
+  logic [11:0] chaos_rx_stored;
   // What the card gives back.  Nothing on this board reads any of it: the
   // speaker has no pin, the 2651 is not fitted, and `iob_intr` and
   // `iob_vector` leave the machine as observations, the request itself going
@@ -1083,6 +1085,8 @@ module cadr_arty #(
       .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
       .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
+        .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+        .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
       .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
@@ -2050,6 +2054,8 @@ module cadr_arty #(
         .chaos_rx_lost(chaos_rx_lost),
         .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
         .chaos_cbl_busy(chaos_cbl_busy),
+        .chaos_rx_start(chaos_rx_start), .chaos_rx_stored(chaos_rx_stored),
+        .chaos_rx_check_nz(chaos_rx_check_nz), .chaos_rx_store(chaos_rx_store),
         .irq(chaos_irq)
     );
 
@@ -2779,6 +2785,10 @@ module cadr_arty #(
     assign chaos_tx_done  = 1'b0;
     assign chaos_tx_abort = 1'b0;
     assign chaos_cbl_busy = 1'b0;
+    assign chaos_rx_start    = 1'b0;
+    assign chaos_rx_stored   = 12'd0;
+    assign chaos_rx_check_nz = 1'b0;
+    assign chaos_rx_store    = 1'b0;
     // The keyboard's cable and the mouse's, on the same argument.  **ALL
     // ONES AND NOT ZERO on the mouse**: the seven lines are what the MOUSE
     // drives, each switch pulled to ground when pressed and each quadrature

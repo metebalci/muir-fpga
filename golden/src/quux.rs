@@ -2006,6 +2006,11 @@ fn register_at_power_on(w: u32) -> Option<u32> {
         // START, as the CADR's board reads it at `764152`.
         0o140 => 0o200,
         0o141 | 0o145 => 0o177001,
+        // The read buffer with Receive Done down and the line idle: the
+        // read register shifted once, the buffer's bit at RBCT 0 coming in
+        // at the bottom, which never written reads as 1 (muir's
+        // `Interface::read_down`).
+        0o142 => 1,
         // The file device quiet; block-disk not active, and with no pack
         // on it, as every trace here has it (`machine_axis.rs`), `<9>`.
         0o161 => 2,

@@ -327,6 +327,10 @@ module cadr_machine #(
     input  var logic        chaos_tx_done,
     input  var logic        chaos_tx_abort,
     input  var logic        chaos_cbl_busy,
+    input  var logic        chaos_rx_start,
+    input  var logic [11:0] chaos_rx_stored,
+    input  var logic        chaos_rx_check_nz,
+    input  var logic        chaos_rx_store,
     output var logic [11:0] chaos_bits,
     // `-UB INTR` and `-UB BR5`.  They go to `cadr_busint_regs.sv` inside the
     // machine, where `ENABLE UB INTS` decides whether the interface takes the
@@ -1226,6 +1230,10 @@ module cadr_machine #(
       .chaos_tx_done(chaos_tx_done),
       .chaos_tx_abort(chaos_tx_abort),
       .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_rx_start(chaos_rx_start),
+      .chaos_rx_stored(chaos_rx_stored),
+      .chaos_rx_check_nz(chaos_rx_check_nz),
+      .chaos_rx_store(chaos_rx_store),
       .chaos_bits (chaos_bits),
       .iob_intr   (iob_intr),
       .iob_vector (iob_vector),
