@@ -1150,9 +1150,9 @@
 @why revision 15's face has no word 13: a store there is dropped and boots nothing,
 @why so its boot must be the keyboard's boot word
 @old
-	if (!id.quux || (id.revision >= 12 && id.revision <= 14)) {
+	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
 @new
-	if (!id.quux || (id.revision >= 12 && id.revision <= 15)) {
+	if (!id.quux || (id.revision >= 13 && id.revision <= 15)) {
 @end
 
 @mutation a-revision-not-met-boots-by-word-13
@@ -1160,9 +1160,22 @@
 @why a revision this program has no boot for is refused with nothing written, never
 @why given word 13, which it may not have
 @old
-	if (!id.quux || (id.revision >= 12 && id.revision <= 14)) {
+	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
 @new
 	if (!id.quux || id.revision != 15) {
+@end
+
+@mutation a-machine-id-0-taken-for-revision-12
+@file console_face.c
+@why an entry with QUUX's signature and MACHINE-ID 0 was revision 12's, which is retired:
+@why no revision this program knows, and refused a boot saying so
+@old
+		// does, and says so: `revision` 0 and no width.
+		return;
+@new
+		// does, and says so: `revision` 0 and no width.
+		m->revision = 12;
+		return;
 @end
 
 @mutation a-machine-not-known-boots-by-word-13

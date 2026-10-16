@@ -21266,14 +21266,19 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @mutation quux-the-cadr-is-built-as-quux
 @check quux_map
 @file rtl/machine/cadr_microcycle.sv
-@note The processor takes every CADR build for QUUX: a six-bit map, the
-@note MACHINE-ID in source 16 and a 16K PDL buffer on MIT's machine.  The
-@note CADR's side of the map program reads source 16 as all ones and
-@note wraps its PDL pointer at 1,024.
+@note The processor takes every CADR build for QUUX: the MACHINE-ID in
+@note source 16 and a 16K PDL buffer on MIT's machine.  The CADR's side of
+@note the map program reads source 16 as all ones and wraps its PDL pointer
+@note at 1,024.  QUUX's fused return has no 32-bit index since revision 12
+@note was retired, so its index signals are left unused and undriven at 32
+@note bits; lint is told so for the rest of the file, so that the check and
+@note not lint does the catching.
 @old
   localparam bit          QUUX      = MACHINE == "quux";
 @new
   localparam bit          QUUX      = MACHINE == "quux" || MACHINE == "cadr";
+  /* verilator lint_off UNUSEDSIGNAL */
+  /* verilator lint_off UNDRIVEN */
 @end
 
 @mutation quux-level-2-is-written-as-the-cadrs-1024
@@ -22146,9 +22151,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note The Arty's top level hands the machine a K other than its own, so the
 @note bitstream runs at a K no constraint states.
 @old
-      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
+      .SYNC_K(PAGED14 ? SYNC_K14 : SYNC_K13),
 @new
-      .SYNC_K((WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K) + 1),
+      .SYNC_K((PAGED14 ? SYNC_K14 : SYNC_K13) + 1),
 @end
 
 @mutation machine-param-the-de25-drops-its-k
@@ -22223,16 +22228,6 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
     parameter int unsigned SYNC_K13 = 5,
 @new
     parameter int unsigned SYNC_K13 = 4,
-@end
-
-@mutation machine-param-the-arty-drops-revision-13s-k
-@check machine_param
-@file boards/arty-z7-20/cadr_arty.sv
-@note The Arty's top level hands revision 13 revision 12's K.
-@old
-      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
-@new
-      .SYNC_K(SYNC_K),
 @end
 
 @mutation machine-param-the-arty-flow-takes-revision-12s-k
@@ -22958,6 +22953,18 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
                    3'd0, 1'b0, 5'd0, intr, 2'd0, not_active};
 @end
 
+@mutation rev13-the-boot-prom-sees-a-pack-on-an-idle-drive
+@check machine13_quux
+@file rtl/machine/quux_block_disk.sv
+@note Status `<9>` says no pack only while a transfer runs, so PROM 2001's
+@note first poll at `DISK-AWAIT-PACK` reads a pack on an empty, idle drive
+@note and the boot goes on to read a GPT that is not there.
+@old
+                   3'd0, !drive_present[0], 5'd0, intr, 2'd0, not_active};
+@new
+                   3'd0, !drive_present[0] && !not_active, 5'd0, intr, 2'd0, not_active};
+@end
+
 @mutation quux-the-unibus-window-answers-on-quux
 @check quux13_page_quux
 @file rtl/machine/cadr_xbus_decode.sv
@@ -23330,9 +23337,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @file rtl/machine/quux_mem_port.sv
 @note The floor is 370 ns where muir's nominal line fill is 380.
 @old
-  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+  assign fill_t   = CW'(READ_T) + (window(line_phys) ? CW'(2) : CW'(3));
 @new
-  assign fill_t   = CW'(READ_T - 1) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+  assign fill_t   = CW'(READ_T - 1) + (window(line_phys) ? CW'(2) : CW'(3));
 @end
 
 @mutation quux-a-miss-does-not-wait-for-main-memory
@@ -23859,7 +23866,7 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @file rtl/machine/quux_mem_port.sv
 @note A channel's write stores four bytes, the tag never reaching memory.
 @old
-  assign mem_wide  = through ? (WIDE && u_write) : mwide_q;
+  assign mem_wide  = through ? u_write : mwide_q;
 @new
   assign mem_wide  = through ? 1'b0 : mwide_q;
 @end
@@ -23903,9 +23910,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's channel hands the port 32 bits of its word, so every
 @note word a disk read writes loses its tag.
 @old
-        .u_wdata    (REV13 ? ch_wdata : WORD_BITS'(br_wdata)),
+        .u_wdata    (ch_wdata),
 @new
-        .u_wdata    (REV13 ? (ch_wdata & WORD_BITS'(32'hFFFF_FFFF)) : WORD_BITS'(br_wdata)),
+        .u_wdata    (ch_wdata & WORD_BITS'(32'hFFFF_FFFF)),
 @end
 
 @mutation rev13-the-channels-word-is-taken-a-tick-late
@@ -23924,9 +23931,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @file rtl/machine/quux_file_device.sv
 @note Revision 13's rings on a 4-word line, where A1.10 asks an 8-word one.
 @old
-    localparam int unsigned LINE_BITS = WIDE ? 3 : 2,
+    localparam int unsigned LINE_BITS = 3,
 @new
-    localparam int unsigned LINE_BITS = WIDE ? 2 : 2,
+    localparam int unsigned LINE_BITS = 2,
 @end
 
 @mutation rev13-fd-a-base-keeps-24-bits
@@ -23946,9 +23953,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's feature word 1 says revision 12's 6-bit level-1 entry,
 @note and word 2 its 2,048 level-2 entries.
 @old
-  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 7 : 6;
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : 7;
 @new
-  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 6 : 6;
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : 6;
 @end
 
 @mutation rev13-feature-word-6-says-2048
@@ -23957,9 +23964,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's feature word 6 says revision 12's 2,048 dispatch
 @note memory entries.
 @old
-  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 4096 : 2048;
+  localparam int unsigned FEATURE_DMEM    = 4096;
 @new
-  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 2048 : 2048;
+  localparam int unsigned FEATURE_DMEM    = 2048;
 @end
 
 @mutation rev13-feature-word-13-is-revision-12s-buffer
@@ -23968,9 +23975,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's feature word 13 says revision 12's frame buffer at
 @note `17000000`, where the window is at `1760000000`.
 @old
-  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : 32'o1760000000;
 @new
-  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o17000000 : 32'o17000000;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : 32'o17000000;
 @end
 
 @mutation rev13-readout-word-10-its-low-bit-wrong
@@ -24012,9 +24019,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note The Arty's revision-13 bitstream says "QFD9", so the server takes its
 @note main memory for 32-bit words.
 @old
-      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
+      quux_fd_face #(.IDENT(32'h5146_3133)) u_fd_face (
 @new
-      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_4439 : 32'h5146_4439)) u_fd_face (
+      quux_fd_face #(.IDENT(32'h5146_4439)) u_fd_face (
 @end
 
 @mutation rev13-the-de25s-file-device-page-says-qfd9
@@ -24022,9 +24029,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @file boards/de25-nano/cadr_de25.sv
 @note The DE25-Nano's revision-13 bitstream says "QFD9".
 @old
-    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
+    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(32'h5146_3133)) u_fd_face (
 @new
-    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(WORD_BITS > 32 ? 32'h5146_4439 : 32'h5146_4439)) u_fd_face (
+    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(32'h5146_4439)) u_fd_face (
 @end
 
 @mutation grid-cadr-arty-adapter-a-tick-wide
@@ -25202,15 +25209,6 @@ FAULT_SH=/usr/share/cadr/faults.sh
       host_we <= wr && w_idx[4] && wr_mask != 32'd0;
 @end
 
-@mutation face-says-it-is-something-else
-@check gp0_split_axi4_quux
-@file rtl/plumbing/quux_fd_face.sv
-@old
-    parameter logic [31:0] IDENT = 32'h5146_4439,
-@new
-    parameter logic [31:0] IDENT = 32'h5146_4438,
-@end
-
 @mutation split-the-fifth-page-on-the-cadr
 @check gp0_split
 @file rtl/plumbing/cadr_gp0_split.sv
@@ -26264,9 +26262,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A write of the window five bytes wide, as main memory's are, so its
 @note tag lands on the next word's first byte (G1 §4.2: four bytes a word).
 @old
-              mwide_q  <= WIDE && !window(wb_phys);
+              mwide_q  <= !window(wb_phys);
 @new
-              mwide_q  <= WIDE;
+              mwide_q  <= 1'b1;
 @end
 
 @mutation rev13-window-write-keeps-the-tag
@@ -26286,9 +26284,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A word of the window read with tag `004` instead of the unboxed
 @note `005` (G1 §2.6).
 @old
-    if (WIDE) v[WB-1:WB-8] = UNBOXED_TAG;
+    v[WB-1:WB-8] = UNBOXED_TAG;
 @new
-    if (WIDE) v[WB-1:WB-8] = UNBOXED_TAG ^ 8'o001;
+    v[WB-1:WB-8] = UNBOXED_TAG ^ 8'o001;
 @end
 
 @mutation rev13-window-store-into-a-held-line-keeps-the-tag
@@ -26309,9 +26307,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A main memory line's fill nominally 400 ns, the window's, where
 @note muir's `fill_ns` gives five beats 410.
 @old
-  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+  assign fill_t   = CW'(READ_T) + (window(line_phys) ? CW'(2) : CW'(3));
 @new
-  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(2));
+  assign fill_t   = CW'(READ_T) + (window(line_phys) ? CW'(2) : CW'(2));
 @end
 
 @mutation rev13-window-fill-three-beats-longer
@@ -26320,9 +26318,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A window line's fill nominally 410 ns, main memory's, where its four
 @note beats give 400.
 @old
-  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+  assign fill_t   = CW'(READ_T) + (window(line_phys) ? CW'(2) : CW'(3));
 @new
-  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(3) : CW'(3));
+  assign fill_t   = CW'(READ_T) + (window(line_phys) ? CW'(3) : CW'(3));
 @end
 
 @mutation rev13-main-line-four-beats
@@ -26331,9 +26329,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A line of main memory asked in four beats, the window's, so its last
 @note 8 bytes, words 6 and 7, never come.
 @old
-              mbeats_q <= !WIDE ? 3'd2 : window(fill_phys) ? 3'd4 : 3'd5;
+              mbeats_q <= window(fill_phys) ? 3'd4 : 3'd5;
 @new
-              mbeats_q <= !WIDE ? 3'd2 : window(fill_phys) ? 3'd4 : 3'd4;
+              mbeats_q <= window(fill_phys) ? 3'd4 : 3'd4;
 @end
 
 @mutation rev13-window-address-a-word-on
@@ -27454,12 +27452,11 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @check quux13_devices_hd_quux
 @file rtl/machine/quux_feature_page.sv
 @note Words 20-24 read 0 on revision 13 whatever the board's name is: the
-@note page's own width test made one no word has, which keeps the name
-@note named and so through lint.
+@note name masked to nothing, which keeps it named and so through lint.
 @old
-                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+                 word = BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32];
 @new
-                 word = WORD_BITS > 99 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+                 word = BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] & 32'd0;
 @end
 
 @mutation quux-feature-page-the-board-name-a-word-on
@@ -27468,9 +27465,9 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @note Word 20 + k gives the name's word k + 1: the first four characters
 @note lost and the rest a word early.
 @old
-                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+                 word = BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32];
 @new
-                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o17) +: 32] : 32'd0;
+                 word = BOARD_NAME_WORDS[32 * (32'(which) - 32'o17) +: 32];
 @end
 
 @mutation machine-the-board-name-backwards
@@ -28462,9 +28459,9 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @note the contract builds it at four and the flow writes its constraints
 @note from four.
 @old
-      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
+      .SYNC_K(PAGED14 ? SYNC_K14 : SYNC_K13),
 @new
-      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+      .SYNC_K(SYNC_K13),
 @end
 
 @mutation machine-param-the-arty-flow-builds-revision-14-unasked

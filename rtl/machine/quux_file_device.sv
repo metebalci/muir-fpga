@@ -110,13 +110,14 @@
 `default_nettype none
 
 module quux_file_device #(
-    // 32, QUUX to revision 12; 40, revision 13 (above).
-    parameter int unsigned WORD_BITS = 32,
+    // 40, revision 13 (above); revision 12's 32 are retired and refused
+    // below.
+    parameter int unsigned WORD_BITS = 40,
     localparam bit          WIDE      = WORD_BITS > 32,
     // A ring's base, its line and main memory's size, in bits.
-    localparam int unsigned BASE_BITS = WIDE ? 28 : 24,
-    localparam int unsigned LINE_BITS = WIDE ? 3 : 2,
-    localparam int unsigned MEM_BITS  = WIDE ? 28 : 23,
+    localparam int unsigned BASE_BITS = 28,
+    localparam int unsigned LINE_BITS = 3,
+    localparam int unsigned MEM_BITS  = 28,
     localparam int unsigned SUM_BITS  = BASE_BITS + 1
 ) (
     input  var logic        clk,
@@ -151,14 +152,17 @@ module quux_file_device #(
     output var logic [31:0] host_rdata,
 
     // The readout's view, for a checkpoint: muir's `FileDevice::save`.
-    // Revision 12's two bases in one word, `<47:24>` the command ring's; on
-    // revision 13 the command ring's alone, and the response ring's in
-    // `ro_resp_base`, which revision 12 does not read.
+    // The command ring's base alone, and the response ring's in
+    // `ro_resp_base`.
     output var logic [47:0] ro_bases,
     output var logic [47:0] ro_resp_base,
     output var logic [47:0] ro_indexes,
     output var logic [47:0] ro_flags
 );
+
+  if (WORD_BITS != 40) begin : g_bad_word
+    $error("quux_file_device: WORD_BITS is %0d; QUUX's word is 40 bits, revision 12 being retired", WORD_BITS);
+  end
 
   localparam logic [3:0] H_STATE     = 4'd2;
   localparam logic [3:0] H_CLAIM     = 4'd3;
@@ -401,8 +405,6 @@ module quux_file_device #(
   // --- the readout ----------------------------------------------------------
   if (WIDE) begin : g_ro13
     assign ro_bases = 48'(cmd_base);
-  end else begin : g_ro12
-    assign ro_bases = {cmd_base, resp_base};
   end
   assign ro_resp_base = 48'(resp_base);
   assign ro_indexes = {prod, cons, resp_cons};

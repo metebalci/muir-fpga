@@ -608,9 +608,9 @@ run in the microcycle after its word landed, 14 ticks after the strobe,
 with the divider needing the word 17 ticks before that microcycle's end.
 Since the `DIV` rule below, a `DIV` is held nine microcycles after its
 operands are ready, so that argument no longer sets the floor. The floor is
-unchanged until a fit at a smaller K says otherwise. Each board's top level states
-K as `SYNC_K`, and the Arty's and the Kria KR260's state revision 13's as
-`SYNC_K13`. The
+unchanged until a fit at a smaller K says otherwise. The DE25-Nano's top level
+states K as `SYNC_K`, and the Arty's and the Kria KR260's state each revision's,
+`SYNC_K13` and `SYNC_K14`. The
 DE25-Nano's QUUX constraint file, `quux_de25.sdc`, writes its counts as
 numbers, and `tools/grid_check.py` holds every `# sync:` count there to that
 board's `SYNC_K`. The Arty's, `quux_machine.xdc`, serves both revisions, so it

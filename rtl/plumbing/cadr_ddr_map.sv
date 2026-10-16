@@ -31,14 +31,12 @@
 // 4M words the machine can fit 60 boards of 64K words, 3,932,160 words or
 // 15 MB (`MAIN_WORDS_REACHABLE`); the top four slots are the display, the
 // disk controller and the Unibus.  So every 22-bit address `main_byte_address`
-// can make is inside the 16 MB, whatever the map holds.  QUUX to revision 12
-// has the same 22-bit space and the same 60 boards' ceiling, and its main
-// memory is here too.
+// can make is inside the 16 MB, whatever the map holds.
 //
 // The display's 1 MB holds BOTH display boards' frame buffers, the normal
 // TV's at its base and the color TV's 128 KB above it, which is the first
-// board's own 32,768 words: 256 KB in use.  QUUX's video controller (to
-// revision 13) has one buffer of up to 64K words from the same base,
+// board's own 32,768 words: 256 KB in use.  QUUX's video controller has
+// one buffer of up to 64K words from the same base,
 // `VIDEO_WORDS_MAX`, 256 KB, 64,800 words at 1920 by 1080.
 //
 // The records are the disk pack program's: one area per slot for a fetch and
@@ -171,9 +169,8 @@ package cadr_ddr_map;
   //   Kria KR260   0x5A00_0000-0x63FF_FFFF     160 MB, 32M words  0x6400_0000
   //
   // **EACH MACHINE HAS ITS OWN DEVICE TREE**, beside its bitstream: the
-  // CADR's and revision 12's reserve `RESERVED_BASE` for `RESERVED_BYTES`, as
-  // above, since revision 12's main memory and its video controller's buffer
-  // are the CADR's own areas; and revision 13's from `QUUX13_MAIN_BASE` to
+  // CADR's reserves `RESERVED_BASE` for `RESERVED_BYTES`, as above; and
+  // revision 13's from `QUUX13_MAIN_BASE` to
   // `QUUX13_RESERVED_END`, the end of the records, which is the end of the
   // CADR's reservation too.
   // The CADR's main memory at `MAIN_BASE` is inside revision 13's; the two are
@@ -199,8 +196,8 @@ package cadr_ddr_map;
 
   // **HOW MANY 64K-WORD MEMORY BOARDS EACH MACHINE TAKES**, the console's
   // page 2 word 37 (`cadr_console.sv`), muir's `--main-memory-boards`: the
-  // CADR and QUUX to revision 12 come up with 32 and take 1 to 60, below the
-  // Xbus I/O space; revision 13 comes up with muir's 512, 32M words (contract
+  // CADR comes up with 32 and takes 1 to 60, below the Xbus I/O space;
+  // QUUX, revision 13, comes up with muir's 512, 32M words (contract
   // G2 §3), and takes 1 to what its reservation holds, `QUUX13_MAIN_WORDS_MAX`,
   // and never more than muir's 1,024: 512 on the Arty Z7-20 and the Kria
   // KR260, 1,024 on the DE25-Nano.  Each board's top level hands these to its
@@ -239,16 +236,6 @@ package cadr_ddr_map;
 
   function automatic logic [31:0] color_display_byte_address(input logic [14:0] offset);
     return COLOR_DISPLAY_BASE + (32'(offset) << 2);
-  endfunction
-
-  // QUUX's memory bus (contract Q7): main memory, and the video controller's frame
-  // buffer from `17000000`, which is past main memory's reach
-  // (`MAIN_WORDS_REACHABLE` is exactly `17000000`) and 64K-word aligned, so
-  // its offset is the low sixteen bits.  The cache fills and writes through
-  // at these addresses, and the display's scanout reads the buffer's.
-  function automatic logic [31:0] quux_byte_address(input logic [21:0] phys);
-    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
-                                  : main_byte_address(phys);
   endfunction
 
 endpackage

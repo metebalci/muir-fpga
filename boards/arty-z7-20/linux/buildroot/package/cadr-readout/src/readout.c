@@ -84,7 +84,7 @@ int ro_block(struct readout *r, unsigned sel, unsigned n, uint64_t *into)
 }
 
 // A run of words at `bits`, the rest of the window's 48 dropped: 32 on the
-// CADR and QUUX to revision 12, and 40 on revision 13.
+// CADR, and 40 on QUUX.
 static int ro_block_words(struct readout *r, unsigned sel, unsigned n, unsigned bits,
 			  uint64_t *into)
 {
@@ -370,15 +370,13 @@ int ro_quux_revision(struct readout *r)
 }
 
 const char *const ro_machine_names[RO_MACHINES] = {
-	"the CADR", "QUUX to revision 12", "QUUX revision 13", "QUUX revision 14",
-	"QUUX revision 15"
+	"the CADR", "QUUX revision 13", "QUUX revision 14", "QUUX revision 15"
 };
 
 int ro_machine_of(int rev)
 {
 	switch (rev) {
 	case 0: return RO_M_CADR;
-	case 12: return RO_M_QUUX;
 	case 13: return RO_M_QUUX13;
 	case 14: return RO_M_QUUX14;
 	case 15: return RO_M_QUUX15;
@@ -391,32 +389,31 @@ int ro_machine_of(int rev)
 // `{24'd0, word}`, the micro-stack 19 bits, dispatch memory 17 over 4,096
 // entries, the OPCs 14, the register table `reg_field`'s 23 entries, and
 // `RO_NO_MEMORY` at the map levels' and the audit's selectors.
-#define SAME(v) { v, v, v, v, v }
+#define SAME(v) { v, v, v, v }
 const struct ro_mem ro_mems[] = {
-	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), { 48, 48, 48, 48, 64 }, "the control store" },
-	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), { 48, 48, 48, 48, 64 }, "the boot PROM" },
-	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40, 40, 40 }, "the A memory" },
-	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40, 40, 40 }, "the M memory" },
+	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), { 48, 48, 48, 64 }, "the control store" },
+	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), { 48, 48, 48, 64 }, "the boot PROM" },
+	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 40, 40, 40 }, "the A memory" },
+	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 40, 40, 40 }, "the M memory" },
 	{ "pdl",   IMG_SEL_PDL,
-	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS,
-	    IMG_QUUX_PDL_WORDS },
-	  { 32, 32, 40, 40, 40 },
+	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS },
+	  { 32, 40, 40, 40 },
 	  "the pushdown buffer" },
 	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(19), "the micro-stack" },
 	{ "dmem",  IMG_SEL_DMEM,
-	  { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
+	  { IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
 	  SAME(17),
 	  "the dispatch memory" },
-	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13, 0, 0 },
-	  { 5, 6, 7, 0, 0 },
+	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS_13, 0, 0 },
+	  { 5, 7, 0, 0 },
 	  "the level-1 map" },
-	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13, 0, 0 },
-	  { 24, 24, 28, 0, 0 }, "the level-2 map" },
+	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_L2_WORDS_13, 0, 0 },
+	  { 24, 28, 0, 0 }, "the level-2 map" },
 	{ "opcs",  IMG_SEL_OPCS, SAME(IMG_OPCS), SAME(14), "the OPC shift register" },
-	{ "regs",  IMG_SEL_REGS, { 21, 21, 21, 21, IMG_RG15_COUNT }, { 48, 48, 48, 48, 64 },
+	{ "regs",  IMG_SEL_REGS, { 21, 21, 21, IMG_RG15_COUNT }, { 48, 48, 48, 64 },
 	  "the register table below" },
-	{ "audit", IMG_SEL_AUDIT, { IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, 0 },
-	  { 48, 48, 48, 48, 0 },
+	{ "audit", IMG_SEL_AUDIT, { IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, IMG_AUDIT_WORDS, 0 },
+	  { 48, 48, 48, 0 },
 	  "the transaction audit; --audit decodes it" },
 };
 #undef SAME
@@ -669,15 +666,13 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	q->opr_arg = (int)((QV(IMG_RG_QUUX_ARMED) >> 7) & 1u);
 	q->opr_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 8) & 1u);
 	q->m31_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 9) & 1u);
-	// **REVISION 13 WIDENS THE PREFETCH'S WORDS** (G2 §3, A1.7): a virtual
-	// word address of 28 bits with the held bit above it at <28> where
-	// revision 12's is at <24>, a physical one of 28 bits where revision
-	// 12's is 22, and the word 40 bits, as M 31's is.  The fabric's
-	// side is not built yet.
+	// **REVISION 13'S PREFETCH WORDS** (G2 §3, A1.7): a virtual word
+	// address of 28 bits with the held bit above it at <28>, a physical one
+	// of 28 bits, and the word 40 bits, as M 31's is.
 	// Revision 14's are a 32-bit virtual word address with the held bit at
 	// <32>, and a 29-bit physical one (A14.1, A14.13).
-	const unsigned va = img->rev14 ? 32u : img->rev13 ? 28u : 24u;
-	const unsigned pa = img->rev14 ? 29u : img->rev13 ? 28u : 22u;
+	const unsigned va = img->rev14 ? 32u : 28u;
+	const unsigned pa = img->rev14 ? 29u : 28u;
 	const uint64_t word = ((uint64_t)1 << img->word_bits) - 1u;
 	q->m31_w = QV(IMG_RG_QUUX_M31_W) & word;
 	q->fused_n = (uint32_t)QV(IMG_RG_QUUX_FUSED_N);
@@ -882,12 +877,7 @@ int ro_audit(struct readout *r, struct cadr_audit *a, unsigned *mark)
 
 int img_alloc(struct cadr_image *img, unsigned boards)
 {
-	return img_alloc_machine(img, boards, 0);
-}
-
-int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux)
-{
-	return img_alloc_revision(img, boards, quux, 12);
+	return img_alloc_revision(img, boards, 0, 0);
 }
 
 int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision)
@@ -902,13 +892,16 @@ int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revis
 	if (quux && (width == 0 || height == 0 || width % 32u != 0 ||
 		     width > CADR_VIDEO_MAX_WIDTH || height > CADR_VIDEO_MAX_HEIGHT))
 		return -1;
+	// QUUX is revision 13 to 15; revision 12, QUUX at 32 bits, is retired.
+	if (quux && (revision < 13 || revision > 15))
+		return -1;
 	img->boards = boards;
 	img->quux = quux != 0;
 	img->rev13 = quux && (revision == 13 || revision == 14 || revision == 15);
 	img->rev14 = quux && (revision == 14 || revision == 15);
 	img->rev15 = quux && revision == 15;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
-	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
+	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : IMG_L2_WORDS;
 	img->video_width = quux ? width : 0u;
 	img->video_height = quux ? height : 0u;
 #if CHK_MUTATE == 39

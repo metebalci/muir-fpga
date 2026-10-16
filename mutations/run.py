@@ -3155,7 +3155,16 @@ CHECKS["quux15_fd_face"] = {
     "machine": "quux",
 }
 
-QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
+# **THE WHOLE MACHINE BOOTING PROM 2001** (the Makefile's
+# `machine13.quux.<K>.pass`): revision 13's machine on its boot PROM,
+# `boot_prom.quux13.hex`, against `golden/src/rtl.rs --machine quux
+# --revision 13`, the boot to `DISK-AWAIT-PACK` with no pack.
+CHECKS["machine13_quux"] = dict(CHECKS["quux13_alu_quux"], **{
+    "golden": "rtl13.quux.golden",
+    "prom": "boot_prom.quux13.hex",
+})
+
+QUUX_TIMED_KEYS = ["machine13_quux", "dispatch_write_order13_quux"] + \
     ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
     ["rdw_poison_quux14_%s_quux" % p for p in QUUX14_POISON] + \
     ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS + QUUX13_PORTED] + \

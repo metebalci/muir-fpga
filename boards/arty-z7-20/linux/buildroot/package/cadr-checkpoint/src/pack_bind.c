@@ -493,9 +493,9 @@ void bind_memory_words(int quux, unsigned units, char *out, size_t n)
 int bind_revision_known(unsigned revision)
 {
 #if CHK_MUTATE == 48
-	return revision == 12 || revision == 13;
+	return revision == 13;
 #else
-	return revision >= 12 && revision <= 15;
+	return revision >= 13 && revision <= 15;
 #endif
 }
 

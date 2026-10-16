@@ -409,7 +409,7 @@ QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS
 QUUX_PENDING :=
 QUUX_PENDING_WHY :=
 # The checks QUUX is held to at a K, each at every K of `QUUX_KS`.
-CHECK_QUUX_AT = dispatch_write_order13 quux13_readout_window \
+CHECK_QUUX_AT = machine13 dispatch_write_order13 quux13_readout_window \
        $(QUUX13_PROGRAMS:%=quux13_%) $(QUUX13_PORTED:%=quux13_%) rdw_poison_quux13 \
        rdw_poison_quux13_mem rdw_poison_quux13_pf quux13_port \
        $(QUUX14_PROGRAMS:%=quux14_%) $(QUUX14_POISON:%=rdw_poison_quux14_%)
@@ -1270,7 +1270,8 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 # (`WORD_BITS=40`).  Revision 12 and its PROM 2000 are retired.
 # `prom_revisions.pass` holds the image to the digest written here, so a pin
 # that moves the PROM changes its digest here in the same commit, and
-# `golden/src/prom.rs` refuses QUUX at 32 bits.
+# `golden/src/prom.rs` refuses QUUX at 32 bits.  `machine13.quux.<K>.pass`
+# boots the whole machine from it, at each K (`QUUX_TIMED`).
 QUUX_PROM_2001_SHA256 := f7c69350df58be279ce20482b849a4eb8895053bb9855e2710317a902bf0d61d
 $(BUILD)/boot_prom.quux13.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 > $@
@@ -1987,6 +1988,30 @@ QUUX_TIMINGS := 4:0 4:1 5:0 5:1
 
 # $(1) the timing's tag, $(2) K, $(3) L.
 define QUUX_TIMED
+# **THE WHOLE MACHINE BOOTING, REVISION 13**: `cadr_machine` built as QUUX
+# at `WORD_BITS` 40 on its boot PROM, PROM 2001 (`boot_prom.quux13.hex`),
+# against muir's `rtl` engine running that PROM on revision 13 at the same K
+# and L: `golden/src/rtl.rs --machine quux --revision 13`, from the reset
+# through PROM 2001's clearing and loading, its block-disk registers and its
+# label, to `DISK-AWAIT-PACK`, where it polls for a pack the trace has none
+# of, and 256 polls on.  The testbench is the CADR's own, `rtl.golden`'s.
+$$(BUILD)/rtl13.quux.$(1).golden: golden/src/rtl.rs golden/src/trace.rs $$(GOLDEN_AXIS) \
+                                 golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin rtl -- --machine quux --revision 13 --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_machine13_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_machine13_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux13.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/machine13.quux.$(1).pass: $$(BUILD)/obj_machine13_quux_$(1)/Vcadr_machine $$(BUILD)/rtl13.quux.$(1).golden \
+                                   $$(BUILD)/boot_prom.quux13.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_machine13_quux_$(1)/Vcadr_machine $$(BUILD)/rtl13.quux.$(1).golden
+	@touch $$@
+
 # `dispatch_write_order` on QUUX, revision 13, `WORD_BITS` 40
 # (`dispatch_write_order.rs --revision 13`).
 $$(BUILD)/dispatch_write_order13.quux.$(1).golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
@@ -4237,7 +4262,7 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.golden) \
               $(foreach q,k4l1,$(BUILD)/phase_gen.quux.$(q).golden) \
               $(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex) \
-              $(BUILD)/dispatch_write_order13.quux.k4.golden \
+              $(BUILD)/rtl13.quux.k4.golden $(BUILD)/dispatch_write_order13.quux.k4.golden \
               $(QUUX13_PORTED:%=$(BUILD)/quux13_%.quux.k4.golden) \
               $(QUUX13_PORTED_L1:%=$(BUILD)/quux13_%.quux.k4l1.golden) \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%_prom.hex) \
@@ -5511,7 +5536,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(DISK_PACKS_SRC)/q8_disks.sha256 \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
-	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q13CHK=$(CHECKPOINT_WORK)/quux13.chk \
+	    Q13CHK=$(CHECKPOINT_WORK)/quux13.chk \
 	    Q13HDCHK=$(CHECKPOINT_WORK)/quux13hd.chk Q14CHK=$(CHECKPOINT_WORK)/quux14.chk Q8_DISKS=$(Q8_DISKS)
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
@@ -5658,7 +5683,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 echo "checkpoint.quux: revision 13, $$(stat -c%s $$W/quux13.chk) bytes, muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux13-muir.log)"; \
 	 for m in $(CHECKPOINT_QUUX13_MUTANTS); do \
-	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q13mut-$$m-cadr.chk $$W/q13mut-$$m-q12.chk \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q13mut-$$m-cadr.chk \
 	       $$W/q13mut-$$m.chk > $$W/q13mut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/q13mut-$$m.out; exit 1; }; \
@@ -5689,7 +5714,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 echo "checkpoint.quux: revision 13 at 1920x1080, $$(stat -c%s $$W/quux13hd.chk) bytes, muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux13hd-muir.log)"; \
 	 for m in $(CHECKPOINT_QUUX13HD_MUTANTS); do \
-	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/hdmut-$$m-cadr.chk $$W/hdmut-$$m-q12.chk \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/hdmut-$$m-cadr.chk \
 	       $$W/hdmut-$$m-q13.chk $$W/hdmut-$$m.chk > $$W/hdmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/hdmut-$$m.out; exit 1; }; \
@@ -5727,7 +5752,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 echo "checkpoint.quux: revision 14, $$(stat -c%s $$W/quux14.chk) bytes, muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux14-muir.log)"; \
 	 for m in $(CHECKPOINT_QUUX14_MUTANTS); do \
-	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q14mut-$$m-cadr.chk $$W/q14mut-$$m-q12.chk \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q14mut-$$m-cadr.chk \
 	       $$W/q14mut-$$m-q13.chk $$W/q14mut-$$m-q13hd.chk $$W/q14mut-$$m.chk > $$W/q14mut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/q14mut-$$m.out; exit 1; }; \

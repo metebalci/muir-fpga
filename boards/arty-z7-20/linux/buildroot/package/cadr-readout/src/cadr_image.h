@@ -60,8 +60,8 @@
 // **WHICH REVISION**: the register table's entry 21, QUUX's signature over K
 // and L, carries MACHINE-ID's <15:0> in its own <15:0> on revision 13, 0x00D4
 // (`cadr_machine.sv`'s MACHINE_ID, revision 13 in <11:4>, the processor type
-// 4 in <3:0>); revision 12's bitstreams answer 0 there.  **The fabric's side
-// of this is not built yet**: it is what this program asks of it.
+// 4 in <3:0>); revision 12's bitstreams, retired, answered 0 there.  **The
+// fabric's side of this is not built yet**: it is what this program asks of it.
 #define IMG_QUUX_ID_13    0x00D4u
 // Revision 14's (contract G3 revision 14, appendix A14), 0x00E4: revision 13's
 // words, sizes and packed storage, no map levels, and the memory system's
@@ -79,7 +79,7 @@
 // entries, the boot PROM at control store 36000 and never written there, and
 // the video controller's buffer, 1280 by 1024 at one bit a pixel unless the
 // bitstream says another size (`cadr/cadr_video.h`; `img_alloc_video`).
-// `img_alloc_machine` sizes the arrays by these on QUUX.
+// `img_alloc_revision` sizes the arrays by these on QUUX.
 #define IMG_QUUX_PDL_WORDS  16384u
 #define IMG_QUUX_L2_WORDS   2048u
 #define IMG_QUUX_TV_WORDS   40960u
@@ -425,10 +425,10 @@ struct cadr_image {
 
 // The CADR's machine.
 int img_alloc(struct cadr_image *img, unsigned boards);
-// Either machine's: `quux` non-zero sizes the arrays as QUUX's.
-int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux);
-// And a QUUX of either revision, 12 or 13: revision 13's arrays at its sizes
-// and no main memory, which is `main13`'s to point at.
+// Either machine's: `quux` non-zero is QUUX at `revision`, 13 to 15, with
+// revision 13's arrays at its sizes and no main memory, which is `main13`'s
+// to point at; QUUX at any other revision, revision 12 among them, retired,
+// is refused, -1.
 int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision);
 // And with QUUX's video controller at `width` by `height`, which a QUUX
 // bitstream says on its console (`ro_video`); the two above take 1280 by

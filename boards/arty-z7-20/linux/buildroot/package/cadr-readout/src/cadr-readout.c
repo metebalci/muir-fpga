@@ -55,7 +55,7 @@
 
 // The flag word, bit by bit, in `ro_flags`'s own order.  The last three are
 // QUUX's: its memory port drained (contract Q6), a `MEMSTART` that is the
-// stream's fetch (revision 12), and revision 13's fixnum overflow flag; all
+// stream's fetch, for the prefetch, and revision 13's fixnum overflow flag; all
 // clear on the CADR.
 #define FLAG_NAMES 36
 static const char *const kFlagNames[FLAG_NAMES] = {
@@ -88,13 +88,12 @@ static void mem_write(struct readout *r, unsigned word, uint32_t v)
 static void list(void)
 {
 	say("the window reaches these, `--dump NAME` or `--word NAME:ADDR`, words by bits");
-	say("  on %s, %s, %s, %s, and %s:", ro_machine_names[RO_M_CADR],
-	    ro_machine_names[RO_M_QUUX], ro_machine_names[RO_M_QUUX13],
-	    ro_machine_names[RO_M_QUUX14], ro_machine_names[RO_M_QUUX15]);
+	say("  on %s, %s, %s, and %s:", ro_machine_names[RO_M_CADR],
+	    ro_machine_names[RO_M_QUUX13], ro_machine_names[RO_M_QUUX14],
+	    ro_machine_names[RO_M_QUUX15]);
 	for (unsigned i = 0; i < ro_mem_count; ++i)
-		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u   %s", ro_mems[i].name,
+		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u   %s", ro_mems[i].name,
 		    ro_mems[i].depth[RO_M_CADR], ro_mems[i].bits[RO_M_CADR],
-		    ro_mems[i].depth[RO_M_QUUX], ro_mems[i].bits[RO_M_QUUX],
 		    ro_mems[i].depth[RO_M_QUUX13], ro_mems[i].bits[RO_M_QUUX13],
 		    ro_mems[i].depth[RO_M_QUUX14], ro_mems[i].bits[RO_M_QUUX14],
 		    ro_mems[i].depth[RO_M_QUUX15], ro_mems[i].bits[RO_M_QUUX15], ro_mems[i].what);

@@ -1060,18 +1060,17 @@ int main(int argc, char **argv)
 	// the second argument, and the Makefile checks their digests first.
 	if (argc < 3) {
 		fprintf(stderr, "usage: checkpoint_test <scratch directory> <QUUX's disks, "
-			"muir's data/> [<CADR checkpoint to write> [<QUUX checkpoint to write> "
+			"muir's data/> [<CADR checkpoint to write> "
 			"[<QUUX revision 13's to write> [<revision 13's at 1920x1080> "
-			"[<QUUX revision 14's>]]]]]\n");
+			"[<QUUX revision 14's>]]]]\n");
 		return 2;
 	}
 	const char *work = argv[1];
 	const char *q8 = argv[2];
 	const char *out = argc > 3 ? argv[3] : NULL;
-	const char *quux_out = argc > 4 ? argv[4] : NULL;
-	const char *quux13_out = argc > 5 ? argv[5] : NULL;
-	const char *quux13hd_out = argc > 6 ? argv[6] : NULL;
-	const char *quux14_out = argc > 7 ? argv[7] : NULL;
+	const char *quux13_out = argc > 4 ? argv[4] : NULL;
+	const char *quux13hd_out = argc > 5 ? argv[5] : NULL;
+	const char *quux14_out = argc > 6 ? argv[6] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -1310,16 +1309,16 @@ int main(int argc, char **argv)
 				     (uint64_t)saw_video * 10000 + saw_rev * 1000 + saw_k * 100 + saw_run * 10 +
 				     saw_resume, 11111);
 		}
-		// Revision 12 at K = 4 names its own revision and K.
-		qb.revision = 12;
+		// Revision 13 at K = 4 names its own revision and K.
+		qb.revision = 13;
 		qb.sync_k = 4;
 		qb.video_width = 1280;
 		qb.video_height = 1024;
 		qb.running = 0;
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, "MUIR_QUUX_REVISION=12 quux --rtl --sync-cycle-ticks 4 --video-size 1280x1024 "
+		if (strcmp(cmd, "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 4 --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
-			fail("QUUX revision 12's resume line", 1, 0);
+			fail("QUUX revision 13's resume line at K = 4", 1, 0);
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.running != 0)
 			fail("a halted machine's sidecar read back as running", (unsigned)rd.running, 0);
@@ -1419,13 +1418,13 @@ int main(int argc, char **argv)
 		// Makefile's memory mutants are judged by.
 		memory_words_check(side);
 
-		// **THE REVISIONS A CHECKPOINT IS WRITTEN OF**: 12 to 15, the last
-		// three packed; the board's program refuses any other by the
-		// register table's entry 21.  One line a failure, which mutant 48
-		// is judged by.
+		// **THE REVISIONS A CHECKPOINT IS WRITTEN OF**: 13 to 15, each
+		// packed, revision 12 being retired; the board's program refuses any
+		// other by the register table's entry 21.  One line a failure, which
+		// mutant 48 is judged by.
 		{
 			const struct { unsigned rev; int known, packed; } t[] = {
-				{0, 0, 0}, {11, 0, 0}, {12, 1, 0}, {13, 1, 1}, {14, 1, 1}, {15, 1, 1},
+				{0, 0, 0}, {11, 0, 0}, {12, 0, 0}, {13, 1, 1}, {14, 1, 1}, {15, 1, 1},
 				{16, 0, 0}};
 			for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
 				if (bind_revision_known(t[i].rev) != t[i].known) {
@@ -1875,8 +1874,9 @@ int main(int argc, char **argv)
 	// ---- QUUX -------------------------------------------------------------
 	//
 	// The machine `golden/src/quux_checkpoint.rs` builds, through a modeled
-	// window that says it is QUUX; the file goes where the third argument
-	// says and `build/checkpoint.quux.pass` compares it with muir's own.
+	// window that says it is QUUX, revision 13; the file goes where the
+	// fourth argument says and `build/checkpoint.quux.pass` compares it with
+	// muir's own.
 	{
 		unsigned k = 99, l = 99;
 		if (ro_machine_is_quux(&r, &k, &l) != 0)
@@ -1887,7 +1887,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "out of memory\n");
 			return 1;
 		}
-		fill_quux(q);
+		fill_quux13(q);
 		struct readout qr;
 		memset(&qr, 0, sizeof qr);
 		qr.read = model_read;
@@ -1895,113 +1895,6 @@ int main(int argc, char **argv)
 		qr.ctx = q;
 		if (ro_machine_is_quux(&qr, &k, &l) != 1 || k != 4 || l != 0)
 			fail("QUUX's window, K and L", ((uint64_t)k << 8) | l, 4u << 8);
-
-		struct cadr_image qi;
-		if (img_alloc_machine(&qi, 1, 1) != 0) {
-			fprintf(stderr, "out of memory\n");
-			return 1;
-		}
-		if (qi.pdl_words != IMG_QUUX_PDL_WORDS || qi.l2_words != IMG_QUUX_L2_WORDS ||
-		    qi.tv_words != IMG_QUUX_TV_WORDS)
-			fail("QUUX's arrays' sizes", qi.pdl_words, IMG_QUUX_PDL_WORDS);
-		if (ro_read_machine(&qr, &qi) != 0) {
-			fail("the window would not give QUUX up", qr.stale, 0);
-			return 1;
-		}
-		// The transport, at QUUX's sizes and in QUUX's words.
-		if (qi.pdl[IMG_QUUX_PDL_WORDS - 1] != q->pdl[IMG_QUUX_PDL_WORDS - 1])
-			fail("the PDL buffer's last word", qi.pdl[IMG_QUUX_PDL_WORDS - 1],
-			     q->pdl[IMG_QUUX_PDL_WORDS - 1]);
-		if (qi.l2_map[IMG_QUUX_L2_WORDS - 1] != q->l2[IMG_QUUX_L2_WORDS - 1])
-			fail("level 2's last entry", qi.l2_map[IMG_QUUX_L2_WORDS - 1],
-			     q->l2[IMG_QUUX_L2_WORDS - 1]);
-		if (qi.qx.m != Q_M0)
-			fail("muir's clock off the microsecond clock", qi.qx.m, Q_M0);
-		if (qi.qx.head != Q_KEYS_READ || qi.qx.count != 5)
-			fail("the FIFO's head and count", qi.qx.head, Q_KEYS_READ);
-		if (qi.qx.x != Q_MOUSE_X || qi.qx.y != Q_MOUSE_Y || qi.qx.buttons != Q_BUTTONS)
-			fail("the mouse", qi.qx.x, Q_MOUSE_X);
-		if (qi.qx.da != (Q_DISK_DA & 0x0FFFFFFFu) || !qi.qx.bad_command)
-			fail("block-disk", qi.qx.da, Q_DISK_DA & 0x0FFFFFFFu);
-		if (qi.qx.bus_error != 041u || !qi.qx.bow)
-			fail("the page", qi.qx.bus_error, 041u);
-		if (qi.qx.fd_cmd_base != Q_FD_CMD_BASE || qi.qx.fd_resp_base != Q_FD_RESP_BASE ||
-		    qi.qx.fd_cmd_log2 != Q_FD_CMD_LOG2 || qi.qx.fd_resp_log2 != Q_FD_RESP_LOG2)
-			fail("the file device's rings", qi.qx.fd_cmd_base, Q_FD_CMD_BASE);
-		if (qi.qx.fd_cmd_prod != 1 || qi.qx.fd_cmd_cons != 1 || qi.qx.fd_resp_cons != 1)
-			fail("the file device's indexes", qi.qx.fd_cmd_prod, 1);
-		if (!qi.qx.fd_enabled || !qi.qx.fd_ie || qi.qx.fd_refused || !qi.qx.fd_fault ||
-		    qi.qx.fd_busy || qi.qx.fd_handles != 0)
-			fail("the file device's flags", qi.qx.fd_enabled, 1);
-		// **THE REFUSAL, muir's**: none for this machine; one for a handle
-		// open, one for a command queued, and one for both.
-		{
-			char why[160];
-			if (chk_rtl_refusal(&qi, why, sizeof why))
-				fail("a checkpoint refused with no handle open and nothing queued", 1, 0);
-			struct cadr_image t = qi;
-			t.qx.fd_handles = 1;
-			if (!chk_rtl_refusal(&t, why, sizeof why))
-				fail("a checkpoint taken with a handle open", 0, 1);
-			t.qx.fd_handles = 0;
-			t.qx.fd_cmd_prod = 2;
-			if (!chk_rtl_refusal(&t, why, sizeof why))
-				fail("a checkpoint taken with a command queued", 0, 1);
-			t.qx.fd_cmd_prod = 0;
-			t.qx.fd_cmd_cons = 0xFFFFu;
-			if (!chk_rtl_refusal(&t, why, sizeof why))
-				fail("a checkpoint taken with a command queued across the wrap", 0, 1);
-			t.qx.fd_cmd_prod = 0x1234;
-			t.qx.fd_cmd_cons = 0x1234;
-			if (chk_rtl_refusal(&t, why, sizeof why))
-				fail("a checkpoint refused with the indexes equal", 1, 0);
-			struct cadr_image c = t;
-			c.quux = 0;
-			c.qx.fd_handles = 3;
-			if (chk_rtl_refusal(&c, why, sizeof why))
-				fail("a CADR's checkpoint refused on a file device it has not", 1, 0);
-		}
-		for (size_t i = 0; i < IMG_BOARD_WORDS; ++i)
-			qi.main[i] = (uint32_t)poison(12, (unsigned)i, 32);
-		for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
-			qi.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
-
-		// QUUX's drive bay: one pack, unit 0, block-disk's disk.
-		struct chk_declared qdecl = decl;
-		qdecl.present = 1u;
-		qdecl.cylinders[0] = Q_DISK_CYLINDERS;
-		qdecl.heads[0] = Q_DISK_HEADS;
-		qdecl.blocks_per_track[0] = Q_DISK_BPT;
-		struct chk qb;
-		chk_init(&qb);
-		chk_rtl_body(&qb, &qi, &qdecl);
-		// **THE BODY'S LENGTH, AGAIN AN ARITHMETIC EXPRESSION**: the
-		// CADR's, and what QUUX has that it has not --- block-disk's
-		// forty-four bytes after its flag, the video controller's 8,192
-		// words past the CADR display's 32,768, the five key words
-		// waiting, and K and L after the timing model's tag; and in place
-		// of the bus interface's 163 bytes, the memory port's (version
-		// 40): its state, direction,
-		// address and flag, the cache's shape, counts and 512 empty sets,
-		// and the two timings and two instants; and block-disk's disk
-		// (version 41), its size in blocks and a count of none written.
-		// The file device's fields are the CADR's too (version 43), at
-		// the same widths, so they add nothing here.  And revision 12's
-		// (version 49): the operand address armed, its ARG and delta, and
-		// M 31's word armed; and the prefetch's two options after the
-		// memory port's instants, both absent.
-		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
-			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
-			(4 + 8) + (1 + 1) + 4 + (1 + 1);
-		if (!chk_rtl_mutation() && qb.len != quux_len)
-			fail("QUUX's body's length", qb.len, quux_len);
-		if (quux_out && chk_write_file(quux_out, "rtl", 1, &qb) != 0) {
-			perror(quux_out);
-			return 1;
-		}
-		printf("checkpoint: QUUX, %zu bytes of body, %lu reads over a modeled "
-		       "window%s%s\n", qb.len, qr.reads, quux_out ? ", wrote " : "",
-		       quux_out ? quux_out : "");
 
 		// **THE CLOCK MOVES WHILE IT IS READ.**  The same machine read with
 		// its clock advancing 37 ticks at every access, some tens of
@@ -2011,9 +1904,9 @@ int main(int argc, char **argv)
 		// after that tick.
 		{
 			struct cadr_image mv;
-			fill_quux(q);
+			fill_quux13(q);
 			q->step = 37;
-			if (img_alloc_machine(&mv, 1, 1) != 0 || ro_read_machine(&qr, &mv) != 0) {
+			if (img_alloc_revision(&mv, 1, 1, 13) != 0 || ro_read_machine(&qr, &mv) != 0) {
 				fail("QUUX with a moving clock was refused", 1, 0);
 			} else {
 				if (mv.qx.m <= Q_M0)
@@ -2044,9 +1937,9 @@ int main(int argc, char **argv)
 			img_free(&mv);
 			// And a reader too slow to name one tick by seven bits of
 			// microseconds is refused rather than believed.
-			fill_quux(q);
+			fill_quux13(q);
 			q->step = 5000;
-			if (img_alloc_machine(&mv, 1, 1) == 0 && ro_read_machine(&qr, &mv) == 0)
+			if (img_alloc_revision(&mv, 1, 1, 13) == 0 && ro_read_machine(&qr, &mv) == 0)
 				fail("a read of the clocks spread over milliseconds was taken", 1, 0);
 			img_free(&mv);
 		}
@@ -2087,6 +1980,56 @@ int main(int argc, char **argv)
 			fail("revision 13's ring bases", q13.qx.fd_resp_base, Q_FD_RESP_BASE_13);
 		if (!img_flag(&q13, IMG_F_OVERFLOW))
 			fail("the overflow flag", 0, 1);
+		// And the transport of what every revision of QUUX has: the clocks,
+		// the input, block-disk, the page and the file device's ring sizes,
+		// indexes and flags.  Not under a mutant, as above.
+		if (!chk_rtl_mutation()) {
+			if (q13.qx.m != Q_M0)
+				fail("muir's clock off the microsecond clock", q13.qx.m, Q_M0);
+			if (q13.qx.head != Q_KEYS_READ || q13.qx.count != 5)
+				fail("the FIFO's head and count", q13.qx.head, Q_KEYS_READ);
+			if (q13.qx.x != Q_MOUSE_X || q13.qx.y != Q_MOUSE_Y || q13.qx.buttons != Q_BUTTONS)
+				fail("the mouse", q13.qx.x, Q_MOUSE_X);
+			if (q13.qx.da != (Q_DISK_DA & 0x0FFFFFFFu) || !q13.qx.bad_command)
+				fail("block-disk", q13.qx.da, Q_DISK_DA & 0x0FFFFFFFu);
+			if (q13.qx.bus_error != 041u || !q13.qx.bow)
+				fail("the page", q13.qx.bus_error, 041u);
+			if (q13.qx.fd_cmd_log2 != Q_FD_CMD_LOG2 || q13.qx.fd_resp_log2 != Q_FD_RESP_LOG2)
+				fail("the file device's rings", q13.qx.fd_cmd_log2, Q_FD_CMD_LOG2);
+			if (q13.qx.fd_cmd_prod != 1 || q13.qx.fd_cmd_cons != 1 || q13.qx.fd_resp_cons != 1)
+				fail("the file device's indexes", q13.qx.fd_cmd_prod, 1);
+			if (!q13.qx.fd_enabled || !q13.qx.fd_ie || q13.qx.fd_refused || !q13.qx.fd_fault ||
+			    q13.qx.fd_busy || q13.qx.fd_handles != 0)
+				fail("the file device's flags", q13.qx.fd_enabled, 1);
+		}
+		// **THE REFUSAL, muir's**: none for this machine; one for a handle
+		// open, one for a command queued, and one for both.
+		{
+			char why[160];
+			if (chk_rtl_refusal(&q13, why, sizeof why))
+				fail("a checkpoint refused with no handle open and nothing queued", 1, 0);
+			struct cadr_image t = q13;
+			t.qx.fd_handles = 1;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a handle open", 0, 1);
+			t.qx.fd_handles = 0;
+			t.qx.fd_cmd_prod = 2;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a command queued", 0, 1);
+			t.qx.fd_cmd_prod = 0;
+			t.qx.fd_cmd_cons = 0xFFFFu;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a command queued across the wrap", 0, 1);
+			t.qx.fd_cmd_prod = 0x1234;
+			t.qx.fd_cmd_cons = 0x1234;
+			if (chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint refused with the indexes equal", 1, 0);
+			struct cadr_image c = t;
+			c.quux = 0;
+			c.qx.fd_handles = 3;
+			if (chk_rtl_refusal(&c, why, sizeof why))
+				fail("a CADR's checkpoint refused on a file device it has not", 1, 0);
+		}
 		// Main memory, packed storage: word i at bytes 5i to 5i + 4.
 		uint8_t *packed = malloc((size_t)IMG_BOARD_WORDS * 5u);
 		if (!packed) {
@@ -2109,7 +2052,26 @@ int main(int argc, char **argv)
 		struct chk qb13;
 		chk_init(&qb13);
 		chk_rtl_body(&qb13, &q13, &q13decl);
-		// **THE BODY'S LENGTH**: revision 12's, and a byte more for each
+		// **THE BODY'S LENGTH, AGAIN AN ARITHMETIC EXPRESSION**, built in
+		// two steps.  First the CADR's and what QUUX has that it has not,
+		// at 32-bit words, as the retired revision 12's body was: block-disk's
+		// forty-four bytes after its flag, the video controller's 8,192
+		// words past the CADR display's 32,768, the five key words
+		// waiting, and K and L after the timing model's tag; and in place
+		// of the bus interface's 163 bytes, the memory port's (version
+		// 40): its state, direction,
+		// address and flag, the cache's shape, counts and 512 empty sets,
+		// and the two timings and two instants; and block-disk's disk
+		// (version 41), its size in blocks and a count of none written.
+		// The file device's fields are the CADR's too (version 43), at
+		// the same widths, so they add nothing here.  And version 49's:
+		// the operand address armed, its ARG and delta, and M 31's word
+		// armed; and the prefetch's two options after the memory port's
+		// instants, both absent.
+		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
+			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
+			(4 + 8) + (1 + 1) + 4 + (1 + 1);
+		// Then revision 13's: that, and a byte more for each
 		// word --- A, M, the PDL buffer, Q, VMA, MD, M 31's armed word, L
 		// and the two idle bus words, and main memory, which is the hole
 		// --- the dispatch memory's and both maps' further entries, the
@@ -2282,8 +2244,6 @@ int main(int argc, char **argv)
 		free(packed);
 		chk_free(&qb13);
 		img_free(&q13);
-		chk_free(&qb);
-		img_free(&qi);
 		free(q);
 	}
 	// ---- **AN ADDRESS IS OCTAL** ----------------------------------------

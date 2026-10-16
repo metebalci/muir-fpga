@@ -2006,6 +2006,9 @@ static void check_boot_rev15(void)
 		{ 0x5155060000B4ull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- QUUX revision 11: this program has no boot "
 		  "for it" },
+		{ 0x515504010000ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX with MACHINE-ID 0, revision 12's, which is "
+		  "retired: this program has no boot for it" },
 		{ 0x123456789ABCull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- the fabric did not say which machine it is" },
 		{ MODEL_REV15_ENTRY, 1, 1, 0, 0,
@@ -2046,10 +2049,10 @@ static void check_boot_rev15(void)
 		      t[i].line);
 	}
 
-	// 5. THE MACHINES WITH A BUTTON keep it: the CADR and revisions 12 to
+	// 5. THE MACHINES WITH A BUTTON keep it: the CADR and revisions 13 and
 	// 14 press word 13 with the key and write nothing to the input page.
 	static const uint64_t button[] = {
-		CONS_RO_NO_MEMORY, 0x515504010000ull, 0x5155050000D4ull, 0x5155060000E5ull,
+		CONS_RO_NO_MEMORY, 0x5155050000D4ull, 0x5155060000E5ull,
 	};
 	for (unsigned i = 0; i < sizeof button / sizeof button[0]; ++i) {
 		model_init(&m);
@@ -2964,7 +2967,8 @@ static void check_display_sleep_word(void)
 // register table's entry 21 and the stamp.  Every value is the check's: the
 // CADR's answer; revision 13 at the Arty Z7-20's K of 5 with an L that is not
 // K, so that crossed fields show; revision 13 on a board whose console reads
-// no stamp; revision 12, whose entry carries no MACHINE-ID; revisions 14
+// no stamp; an entry with QUUX's signature and no MACHINE-ID, which only
+// revision 12, retired, answered; revisions 14
 // and 15, whose words are 40 bits as revision 13's are; a revision this
 // program has not met; and a word that is neither machine's.  Each line is
 // held whole, so a field taken from the wrong bits, or a width or a revision
@@ -2988,8 +2992,8 @@ static void check_machine_word(void)
 		  "machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), "
 		  "40-bit words, microcycle K=4 L=0; no build stamp" },
 		{ 0x515504010000ull, 0x1234ABC1u, 0,
-		  "machine: QUUX revision 12, MACHINE-ID not in the register table, which only "
-		  "revision 12 answers 0 at, 32-bit words, microcycle K=4 L=1; build 1234abc1 "
+		  "machine: QUUX of no revision this program knows: MACHINE-ID 0 in the register "
+		  "table, which only revision 12, retired, answered, microcycle K=4 L=1; build 1234abc1 "
 		  "(commit 1234abc, tree modified)" },
 		{ 0x5155060000E5ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
@@ -3083,7 +3087,7 @@ static void check_machine_word(void)
 		{ CONS_RO_NO_MEMORY, 3, "quux", "13", 1,
 		  "NOT THE MACHINE ASKED FOR --- asked for QUUX revision 13, and the fabric is the CADR" },
 		{ 0x515504000000ull, 3, "quux", "13", 1,
-		  "asked for QUUX revision 13, and the fabric is QUUX revision 12" },
+		  "asked for QUUX revision 13, and the fabric is QUUX of no revision known" },
 		{ 0x5155050000D4ull, 2, "cadr", NULL, 1,
 		  "asked for the CADR, and the fabric is QUUX revision 13" },
 		{ CONS_RO_NO_MEMORY, 2, "quux", NULL, 1, "asked for QUUX, and the fabric is the CADR" },
@@ -3124,7 +3128,7 @@ static void check_machine_word(void)
 // it: a whole number of megawords with the unit written, and every other
 // form refused with the one message, writing nothing; the range word 38's in
 // whole megawords, 1MW to 32MW on revision 13 at the Arty Z7-20's 512 boards
-// and to 64MW at the DE25-Nano's 1,024, 1MW to 3MW on revision 12; the CADR's
+// and to 64MW at the DE25-Nano's 1,024; the CADR's
 // `main-memory-boards` refused on QUUX naming this word, and this word refused
 // on the CADR; and a fabric whose machine cannot be read set nothing.  Which
 // machine it is comes from the model's entry 21, as `machine` reads it.
@@ -3233,23 +3237,8 @@ static void check_size_word(void)
 	CHECK(status == 2 && m.boards == 1024u &&
 	      strstr(said, "revision 13's main memory on this board is 1MW to 64MW") != NULL,
 	      "revision 13 at 1,024: 65MW answered %d: %s", status, said);
-	// **REVISION 12**: sixty boards are 3.75M words, so 1MW to 3MW, 2MW by
-	// default; and a count that is no whole number of megawords is said in
-	// kilowords, as muir says it.
-	model_init(&m);
-	attach(&c, &m);
-	m.ro_entry21 = 0x515504000000ull;
-	say_size(&c, NULL, &status, &said);
-	CHECK(status == 0 && strstr(said, "main-memory-size: 2MW of main memory, the default; revision "
-					 "12 on this board takes 1MW to 3MW, 2MW by default") != NULL,
-	      "revision 12 alone: answered %d: %s", status, said);
-	say_size(&c, "3MW", &status, &said);
-	CHECK(status == 0 && m.boards == 48u, "revision 12: 3MW answered %d, %u boards: %s", status,
-	      m.boards, said);
-	say_size(&c, "4MW", &status, &said);
-	CHECK(status == 2 && m.boards == 48u &&
-	      strstr(said, "main-memory-size 4MW: revision 12's main memory on this board is 1MW to 3MW") != NULL,
-	      "revision 12: 4MW answered %d: %s", status, said);
+	// A count that is no whole number of megawords is said in kilowords, as
+	// muir says it.
 	m.boards = 31u;
 	say_size(&c, NULL, &status, &said);
 	CHECK(strstr(said, "main-memory-size: 1984KW of main memory;") != NULL,
@@ -4131,8 +4120,8 @@ int main(int argc, char **argv)
 	       "      until KEY reads it back with the queue empty and LOST unchanged, the PC\n"
 	       "      then in the PROM at 36000; a full queue, a page that is not \"INPT\" or\n"
 	       "      one not mapped, a revision not met and a machine not known all refused\n"
-	       "      with nothing written, and the hold left on; the CADR and revisions 12\n"
-	       "      to 14 keep the button\n"
+	       "      with nothing written, and the hold left on, MACHINE-ID 0, revision\n"
+	       "      12's, among them; the CADR and revisions 13 and 14 keep the button\n"
 	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
 	       "      holding 0, -1, nothing or a word REFUSED with nothing signaled, since\n"
@@ -4191,9 +4180,9 @@ int main(int argc, char **argv)
 	       "      back off page 2 and `status` carries it, so one command answers it\n"
 	       "    WHICH MACHINE THE FABRIC IS, `machine`: the readout window's entry 21\n"
 	       "      and the stamp, against canned values --- the CADR's answer, revision\n"
-	       "      13 at K=5 with L not K, revision 13 with no stamp, revision 12 with no\n"
-	       "      MACHINE-ID, a revision not met and a word of neither machine --- each\n"
-	       "      line held whole; a stale echo asked again once and two refused; with a\n"
+	       "      13 at K=5 with L not K, revision 13 with no stamp, QUUX's signature\n"
+	       "      with no MACHINE-ID, a revision not met and a word of neither machine,\n"
+	       "      each line held whole; a stale echo asked again once and two refused; with a\n"
 	       "      machine named, 0 only for that machine and revision\n"
 	       "    WHETHER THE LAMPS BLINK, page 2's word 35: the key makes them steady and\n"
 	       "      its complement makes them blink, asked twice is still steady, and the\n"

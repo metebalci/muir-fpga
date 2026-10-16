@@ -65,20 +65,17 @@ enum {
 // every word the device reads or writes, which is how the check holds that no
 // word is touched outside the claim.
 //
-// **TWO LAYOUTS, ONE A REVISION.**  To revision 12, word k is `w[k]`, 32
-// bits.  On revision 13 (contract G1 §4.1, G2 §4.3, appendix A1.10) main
-// memory is packed storage: word k is the five bytes `b[5k]` to `b[5k + 4]`,
-// `<7:0>` first and the tag `<39:32>` last, so that a word is never an aligned
-// 32-bit word of the mapping.  The device reads `<31:0>` of what it reads,
-// whatever the tag, and writes every word it fills, a buffer's or a
-// response's, as a fixnum: the field and the tag 005.  Its rings and buffers
-// are at 28-bit addresses on an 8-word line, where revision 12's are 24-bit on
-// a 4-word one.
+// **PACKED STORAGE** (revision 13; contract G1 §4.1, G2 §4.3, appendix
+// A1.10): word k is the five bytes `b[5k]` to `b[5k + 4]`, `<7:0>` first and
+// the tag `<39:32>` last, so that a word is never an aligned 32-bit word of
+// the mapping.  The device reads `<31:0>` of what it reads, whatever the tag,
+// and writes every word it fills, a buffer's or a response's, as a fixnum:
+// the field and the tag 005.  Its rings and buffers are at 28-bit addresses
+// on an 8-word line.  Revision 12's layout, 32-bit words on a 4-word line at
+// 24-bit addresses, is retired with it.
 struct qfd_mem {
-	volatile uint32_t *w;   // revision 12
-	volatile uint8_t *b;    // revision 13, packed storage
+	volatile uint8_t *b;
 	size_t words;
-	int revision_13;
 	void (*touch)(void *ctx);
 	void *ctx;
 };
@@ -87,16 +84,17 @@ struct qfd_mem {
 #define QFD_TAG_FIXNUM 005u
 
 // A ring's or a buffer's address as the device takes it, and the line it
-// must be on: `<23:0>` on a 4-word line to revision 12, `<27:0>` on an
-// 8-word line on revision 13.  muir's `Layout`.
+// must be on: `<27:0>` on an 8-word line.  muir's `Layout`.
 static inline uint32_t qfd_mem_address(const struct qfd_mem *m, uint32_t addr)
 {
-	return addr & (m->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu);
+	(void)m;
+	return addr & 0x0FFFFFFFu;
 }
 
 static inline uint32_t qfd_mem_line(const struct qfd_mem *m)
 {
-	return m->revision_13 ? 7u : 3u;
+	(void)m;
+	return 7u;
 }
 
 // A host folder served to the machine.

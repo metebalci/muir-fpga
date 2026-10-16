@@ -561,7 +561,7 @@ static void emit_memory_port(struct chk *w, const struct cadr_image *img)
 #if CHK_MUTATE == 27
 	const unsigned line = MUIR_QUUX_CACHE_LINE;
 #else
-	const unsigned line = img->rev13 ? MUIR_QUUX13_CACHE_LINE : MUIR_QUUX_CACHE_LINE;
+	const unsigned line = MUIR_QUUX13_CACHE_LINE;
 #endif
 	chk_u8(w, 0);			/* IDLE State::Idle */
 	chk_bool(w, 0);			/* IDLE write */
@@ -1216,9 +1216,9 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		// Revision 14's is `Geometry::QUUX_14`, revision 13's with no
 		// level-1 entry: 0, feature word 1's (A14.14).
 #if CHK_MUTATE == 41
-		const unsigned l1_bits = img->rev13 ? MUIR_QUUX13_L1_BITS : MUIR_QUUX_L1_BITS;
+		const unsigned l1_bits = MUIR_QUUX13_L1_BITS;
 #else
-		const unsigned l1_bits = img->rev14 ? 0u : img->rev13 ? MUIR_QUUX13_L1_BITS : MUIR_QUUX_L1_BITS;
+		const unsigned l1_bits = img->rev14 ? 0u : MUIR_QUUX13_L1_BITS;
 #endif
 #if CHK_MUTATE == 9
 		// The CADR's PDL width on QUUX: a machine whose pointer is too

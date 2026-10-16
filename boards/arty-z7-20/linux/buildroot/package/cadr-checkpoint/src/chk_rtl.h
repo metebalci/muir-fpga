@@ -52,7 +52,7 @@ struct chk_declared {
 };
 
 // The whole body, `Machine::save` then the `Rtl` tail, in muir's order: the
-// CADR's, or QUUX's for an image `img_alloc_machine` made as QUUX's, whose
+// CADR's, or QUUX's for an image `img_alloc_revision` made as QUUX's, whose
 // drive bay's one pack, unit 0, is block-disk's.
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		  const struct chk_declared *d);

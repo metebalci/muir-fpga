@@ -2,24 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // QUUX's memory cache (contract Q6, revision 7): 4,096 words of main memory
-// in lines of four, two ways to a set, write-through, allocating on a read
-// miss and never on a write.  muir's `cache::Cache` is the reference for
-// which lines are held and in what order; muir holds tags only, and this
-// holds the words too, which is the contract's "timing plus that
-// coherence".  `rtl/machine/quux_mem_port.sv` runs it: when to look, what a
-// cycle does with the answer, and when main memory's words arrive.
-//
-//   512 sets, line = phys[21:2], set = phys[10:2], tag = phys[21:11],
-//   word = phys[1:0].
+// in two ways to a set, write-through, allocating on a read miss and never
+// on a write.  muir's `cache::Cache` is the reference for which lines are
+// held and in what order; muir holds tags only, and this holds the words
+// too, which is the contract's "timing plus that coherence".
+// `rtl/machine/quux_mem_port.sv` runs it: when to look, what a cycle does
+// with the answer, and when main memory's words arrive.
 //
 // **REVISION 13'S CACHE HAS 8-WORD LINES OF 40-BIT WORDS** (contract G2 §3,
-// `WORD_BITS` 40): the lines of packed storage (G1 §4.1), still 4,096 words
-// in two ways, over the 28-bit physical space (G1 §3.2):
+// `WORD_BITS` 40): the lines of packed storage (G1 §4.1), 4,096 words in two
+// ways, over the 28-bit physical space (G1 §3.2).  Revision 12's lines of
+// four 32-bit words are retired with it.
 //
 //   256 sets, line = phys[27:3], set = phys[10:3], tag = phys[27:11],
 //   word = phys[2:0].
 //
-// The tag starts at bit 11 in both, a way being 2,048 words.  Its top bits,
+// The tag starts at bit 11, a way being 2,048 words.  Its top bits,
 // `phys<27:26>`, are the window's alone (`1760000000` up): no main memory
 // the boards can hold reaches them.
 //
@@ -31,8 +29,7 @@
 // is.  The next line of a page never wraps the set: a page is 1,024 words,
 // set 255's last word is `phys<10:0>` all ones, and a word whose next is in
 // another page is not looked past.  So the next line's tag is the grant's
-// tag and its set is the grant's plus one.  Revision 12 has neither: its
-// prefetch keeps to the line (`Reach::Line`), and the two outputs are 0.
+// tag and its set is the grant's plus one.
 //
 // **THE LOOKUP IS TWO TICKS, AND THE FIRST IS THE RAM'S.**  At the edge the
 // port takes a cycle (`look`), the tag and data RAMs take the set's address
@@ -87,15 +84,15 @@
 `default_nettype none
 
 module quux_cache #(
-    // 32, the CADR's word and QUUX's to revision 12; 40, revision 13's
-    // (`cadr_machine.sv`).
-    parameter int unsigned WORD_BITS = 32,
+    // 40, revision 13's (`cadr_machine.sv`); revision 12's 32 are retired
+    // and refused below.
+    parameter int unsigned WORD_BITS = 40,
     // Revision 14's key, 29 bits: `<28>` = 1 for the device window's frame
     // buffer, 0 for main memory (A14.1).
     parameter bit          PAGED     = 1'b0,
     localparam bit          WIDE      = WORD_BITS > 32,
-    localparam int unsigned PHYS_BITS = PAGED ? 29 : WIDE ? 28 : 22,
-    localparam int unsigned LINE_WORDS = WIDE ? 8 : 4
+    localparam int unsigned PHYS_BITS = PAGED ? 29 : 28,
+    localparam int unsigned LINE_WORDS = 8
 ) (
     input  var logic         clk,
     input  var logic         rst,
@@ -132,7 +129,7 @@ module quux_cache #(
     // Revision 13's page reach: whether a valid way holds the line after the
     // looked-up one, and word 0 of that line.  The valid bits are read as
     // the tick has them, the tags and the word as the lookup's edge read
-    // them.  0 on revision 12.
+    // them.
     output var logic         next_line_hit,
     output var logic [WORD_BITS-1:0] next_line_word,
 
@@ -179,8 +176,12 @@ module quux_cache #(
     input  var logic [29:0]  s_update_bits
 );
 
-  localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
-  localparam int unsigned IDX_BITS = WIDE ? 8 : 9;
+  if (WORD_BITS != 40) begin : g_bad_word
+    $error("quux_cache: WORD_BITS is %0d; QUUX's word is 40 bits, revision 12 being retired", WORD_BITS);
+  end
+
+  localparam int unsigned OFF_BITS = 3;
+  localparam int unsigned IDX_BITS = 8;
   localparam int unsigned SETS     = 1 << IDX_BITS;
   localparam int unsigned TAG_BITS = PHYS_BITS - 11;
   localparam int unsigned WB       = WORD_BITS;
@@ -434,9 +435,6 @@ module quux_cache #(
     assign nh1 = valid1[nidx] && (ntag1_out == tag_q);
     assign next_line_hit  = nh0 || nh1;
     assign next_line_word = nh1 ? nd1_out : nd0_out;
-  end else begin : g_line_reach
-    assign next_line_hit  = 1'b0;
-    assign next_line_word = '0;
   end
 
   // ----------------------------------------------- the state in registers

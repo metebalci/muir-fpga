@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's revision 9 as Linux reaches it: `rtl/plumbing/quux_fd_face.sv` with
+// QUUX's file device at revision 13 as Linux reaches it: `rtl/plumbing/quux_fd_face.sv` with
 // the machine's register page behind it (`tb/quux_fd_face_harness.sv`).  The
 // face is driven over AXI in the order `docs/file-device.md` gives Linux's
 // server, and the page as the processor drives it, with `-XBUS.RQ` at the
@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
   Idle(2);
 
   // ---------------------------------------------------------- the map
-  Want("IDENT", Read(IDENT), 0x51464439u);
+  Want("IDENT, \"QF13\"", Read(IDENT), 0x51463133u);
   Want("a word nothing names, 0x008", Read(0x008), 0);
   Want("a word nothing names, 0x0FC", Read(0x0FC), 0);
   Want("a word nothing names past MEM_WORDS, 0x12C", Read(0x12C), 0);

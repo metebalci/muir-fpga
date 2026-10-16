@@ -396,7 +396,7 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 //
 // muir's `--main-memory-boards`: how many 64K-word boards of main memory the
 // machine has: 1 to 60 and 32 --- two million words --- unless something says
-// otherwise, on the CADR and QUUX to revision 12; and on revision 13 1 to what
+// otherwise, on the CADR; and on QUUX, revision 13 and later, 1 to what
 // the board keeps for its main memory (512 on the Arty Z7-20, 1,024 on the
 // DE25-Nano) and 512, 32M words.  Word 38 says which, below.  The count goes to the machine's address decode, which
 // answers main memory below the count's last board and gives the NXM above
@@ -418,8 +418,7 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 #define CONS_BOARDS_MARK_OF(w) ((w) >> 16)
 #define CONS_BOARDS_COUNT      0x7FFu
 #define CONS_BOARDS_MIN        1u
-// The CADR's and revision 12's most and default, and those of a fabric older
-// than word 38.
+// The CADR's most and default, and those of a fabric older than word 38.
 #define CONS_BOARDS_MAX        60u
 #define CONS_BOARDS_DEFAULT    32u
 // muir's most on revision 13, the most word 38 may say; a count above it is
@@ -1009,12 +1008,13 @@ int cons_display_word(struct console *c, int argc, char **argv, int *status);
 // 10 to 12): the processor's register table's entry 21, `cadr_microcycle.sv`'s
 // `RG_QUUX_ID`, which QUUX answers with its signature `0x5155` in <47:32>, K
 // in <31:24>, L in <23:16> and MACHINE-ID's <15:0> in <15:0> on revision 13
-// (0x00D4: the revision in <11:4>, the processor type in <3:0>), and 0 there
-// on revision 12; and which the CADR answers with `CONS_RO_NO_MEMORY`.  A
+// (0x00D4: the revision in <11:4>, the processor type in <3:0>), 0 there
+// only on revision 12, which is retired and which this program does not
+// know; and which the CADR answers with `CONS_RO_NO_MEMORY`.  A
 // constant of the bitstream, so it reads true with the machine running.
 // MACHINE-ID is the signature over that half, the word QUUX's functional
 // source 16 and the feature page's first word read.  The word's width is the
-// revision's: 32 bits on the CADR and QUUX to revision 12, 40 on revision 13.
+// revision's: 32 bits on the CADR, 40 on revision 13 and later.
 // The build is page 2's word 32, `cons_build_of`.
 #define CONS_RO_SEL_REGS    10u
 #define CONS_RO_QUUX_ID     21u
@@ -1091,8 +1091,7 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status);
 // and on QUUX it is refused naming this word.  The word is the same word 37
 // inside, sixteen 64K-word boards a megaword, and the range is word 38's in
 // whole megawords: 1MW to 32MW on the Arty Z7-20 and the Kria KR260 and 1MW
-// to 64MW on the DE25-Nano at revision 13, and 1MW to 3MW at revision 12, the
-// whole megawords below its sixty boards' 3.75M words, as muir gives it.
+// to 64MW on the DE25-Nano at revision 13, as muir gives it.
 // Which machine the fabric is comes from `machine`'s entry 21, never from the
 // card.  `*status` 0 when the fabric holds what was asked, 1 when it does not
 // or the machine could not be read, 2 for a form or an amount it does not

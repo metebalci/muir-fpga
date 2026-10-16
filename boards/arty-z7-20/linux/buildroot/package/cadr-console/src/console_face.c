@@ -288,7 +288,7 @@ static int boot_how(struct console *c, struct cons_boot_report *r)
 		return -1;
 	}
 	r->revision = id.revision;
-	if (!id.quux || (id.revision >= 12 && id.revision <= 14)) {
+	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
 		r->how = CONS_BOOT_BY_BUTTON;
 		return 0;
 	}
@@ -297,8 +297,12 @@ static int boot_how(struct console *c, struct cons_boot_report *r)
 		return 0;
 	}
 	r->how = CONS_BOOT_REFUSED;
-	snprintf(r->why, sizeof r->why, "QUUX revision %u: this program has no boot for it",
-		 id.revision);
+	if (!id.revision)
+		snprintf(r->why, sizeof r->why, "QUUX with MACHINE-ID 0, revision 12's, which is "
+			 "retired: this program has no boot for it");
+	else
+		snprintf(r->why, sizeof r->why, "QUUX revision %u: this program has no boot for it",
+			 id.revision);
 	return -1;
 }
 
@@ -1008,9 +1012,9 @@ void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine
 	m->l = (unsigned)((entry >> 16) & 0xFFu);
 	const unsigned low = (unsigned)(entry & 0xFFFFu);
 	if (low == 0) {
-		// Revision 12's bitstreams answer 0 there, and only they do.
-		m->revision = 12;
-		m->word_bits = 32;
+		// Revision 12's bitstreams answered 0 there, and only they did;
+		// revision 12 is retired, so this program knows no revision that
+		// does, and says so: `revision` 0 and no width.
 		return;
 	}
 	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
@@ -1072,13 +1076,15 @@ void cons_say_machine_id(const struct cons_machine_id *m)
 		say("machine: CADR, %u-bit words; %s", m->word_bits, build);
 		return;
 	}
+	if (!m->machine_id) {
+		say("machine: QUUX of no revision this program knows: MACHINE-ID 0 in the register "
+		    "table, which only revision 12, retired, answered, microcycle K=%u L=%u; %s",
+		    m->k, m->l, build);
+		return;
+	}
 	char id[128];
-	if (m->machine_id)
-		snprintf(id, sizeof id, "MACHINE-ID %08x (revision %u, processor type %u)",
-			 m->machine_id, m->revision, m->processor_type);
-	else
-		snprintf(id, sizeof id, "MACHINE-ID not in the register table, which only "
-			 "revision 12 answers 0 at");
+	snprintf(id, sizeof id, "MACHINE-ID %08x (revision %u, processor type %u)",
+		 m->machine_id, m->revision, m->processor_type);
 	char width[32];
 	if (m->word_bits)
 		snprintf(width, sizeof width, "%u-bit words", m->word_bits);
@@ -1133,7 +1139,8 @@ int cons_machine_word(struct console *c, int argc, char **argv, int *status)
 			snprintf(asked, sizeof asked, "QUUX revision %u", want_rev);
 		snprintf(is, sizeof is, "the CADR");
 		if (m.quux)
-			snprintf(is, sizeof is, "QUUX revision %u", m.revision);
+			snprintf(is, sizeof is, m.revision ? "QUUX revision %u" : "QUUX of no revision known",
+				 m.revision);
 		say("machine: NOT THE MACHINE ASKED FOR --- asked for %s, and the fabric is %s",
 		    asked, is);
 	}
@@ -1526,8 +1533,7 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status)
 		const int ranged = cons_read_boards_range(c, &dflt, &max);
 		if (cons_parse_boards(argv[1], &want) != 0 || cons_set_boards(c, want) != 0) {
 			// The range this machine takes, which word 38 says: the CADR's
-			// and revision 12's 1 to 60, or revision 13's to what the board
-			// keeps for its main memory.
+			// 1 to 60, or QUUX's to what the board keeps for its main memory.
 			say("main-memory-boards N: decimal, %u to %u boards of 64K words, as muir's"
 			    " --main-memory-boards; %u is the default%s", CONS_BOARDS_MIN, max, dflt,
 			    max > CONS_BOARDS_MAX

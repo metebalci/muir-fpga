@@ -79,8 +79,8 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 // clear.  On the CADR the units are its memory boards, muir's
 // `--main-memory-boards`, 1 to 60.  **QUUX HAS NO MEMORY BOARDS**: the same
 // word holds its main memory as an amount, muir's `--main-memory-size <n>MW`,
-// sixteen units a megaword, 1MW to 3MW on revision 12 and on revision 13 1MW
-// to what the board keeps for it, never more than muir's 64MW; everything
+// sixteen units a megaword, 1MW to what the board keeps for it, never more
+// than muir's 64MW; everything
 // said to a person about it is in megawords (`ro_main_amount`).  A fabric
 // older than the word reads `RO_UNMAPPED` there, and its machine has 32
 // units fixed, the CADR's 32 boards and QUUX's 2MW.
@@ -211,14 +211,15 @@ int ro_read_machine(struct readout *r, struct cadr_image *img);
 int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 
 // **WHICH REVISION OF QUUX**: entry 21's <15:0>, MACHINE-ID's on revision 13
-// (`IMG_QUUX_ID_13`) and 14 (`IMG_QUUX_ID_14`), and 0 on revision 12.  14, 13
-// or 12, 0 for the CADR, and -1
-// for a stale echo or a word that is neither.
+// (`IMG_QUUX_ID_13`), 14 (`IMG_QUUX_ID_14`) and 15 (`IMG_QUUX_ID_15`).  15,
+// 14 or 13; 12 for any other, which revision 12's 0 there was, so that a
+// bitstream of that retired revision is refused by its name; 0 for the
+// CADR, and -1 for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
 
 // **THE MEMORIES `cadr-readout --word` AND `--dump` REACH, BY MACHINE**,
-// with their depth and width on each layout the window has: the CADR; QUUX
-// to revision 12; revision 13, whose words are 40 bits, whose dispatch
+// with their depth and width on each layout the window has: the CADR;
+// QUUX revision 13, whose words are 40 bits, whose dispatch
 // memory is 4,096 entries and whose map is 8,192 seven-bit level-1 entries
 // over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1); revision 14,
 // revision 13's with no map levels, a TLB, which no checkpoint keeps
@@ -229,8 +230,9 @@ int ro_quux_revision(struct readout *r);
 //
 // **`ro_machine_of` takes `ro_quux_revision`'s answer and returns -1 for a
 // revision it has no layout for**, so that a revision added to the fabric
-// is refused by name here and never read with another machine's layout.
-enum ro_machine { RO_M_CADR, RO_M_QUUX, RO_M_QUUX13, RO_M_QUUX14, RO_M_QUUX15, RO_MACHINES };
+// is refused by name here and never read with another machine's layout;
+// revision 12, retired, has none.
+enum ro_machine { RO_M_CADR, RO_M_QUUX13, RO_M_QUUX14, RO_M_QUUX15, RO_MACHINES };
 extern const char *const ro_machine_names[RO_MACHINES];
 int ro_machine_of(int revision);
 struct ro_mem {

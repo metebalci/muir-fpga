@@ -459,7 +459,7 @@ module cadr_gp0_split_harness #(
     logic        h_we;
     logic [3:0]  h_widx, h_ridx;
     logic [31:0] h_wdata, h_rdata;
-    quux_fd_face #(.ID_W(ID_W), .LEN_W(LEN_W)) u_fd (
+    quux_fd_face #(.IDENT(32'h5146_3133), .ID_W(ID_W), .LEN_W(LEN_W)) u_fd (
         .clk(clk), .rst(rst),
         .s_awaddr(f_awaddr), .s_awlen(f_awlen), .s_awid(f_awid),
         .s_awvalid(f_awvalid), .s_awready(f_awready),

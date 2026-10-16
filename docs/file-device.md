@@ -74,7 +74,7 @@ word not in the table reads 0 and takes no write.
 
 | Offset | Name | Access | Meaning |
 |---|---|---|---|
-| `0x000` | IDENT | read | `0x5146_4439`, "QFD9". The program refuses to run on anything else. A CADR bitstream reads `0x4E4F_4E45`, "NONE", here. |
+| `0x000` | IDENT | read | `0x5146_3133`, "QF13". The program refuses to run on anything else. A CADR bitstream reads `0x4E4F_4E45`, "NONE", here, and a bitstream of the retired revision 12 read `0x5146_4439`, "QFD9". |
 | `0x010` | RTC_SECONDS | read, write | Read: what word 103 reads now. Write: the seconds, taking effect at once, starting the second at the fraction staged at `0x014` (0 if none is staged). The stage is then cleared. |
 | `0x014` | RTC_FRACTION | read, write | Read: nanoseconds into the current second, 0 to 999,999,990. Write: stages a fraction for the next write of `0x010`. A value of a second or more is ignored and the stage keeps what it had. |
 | `0x100` | STATE | read | `<0>` enabled (word 160 `<0>`); `<1>` the interrupt enable (160 `<8>`); `<2>` busy, the program's claim; `<3>` quiet (161 `<1>`); `<4>` work waiting; `<5>` the last completion was refused; `<31:16>` EPOCH. |
@@ -209,9 +209,8 @@ and the memory under it is not:
   enable. Revision 12's, which is retired, were 24-bit, on a 4-word line.
 - **The page says which.** It reads `QF13` (0x51463133) where revision 12's
   read `QFD9`, its ring bases are 28 bits, and its `MEM_WORDS` may say up to
-  64M words. A program of either revision refuses the other's page rather
-  than reading its memory wrong. **The fabric's side of this page is not
-  built yet.**
+  64M words. The program refuses a `QFD9` page rather than reading its memory
+  wrong. **The fabric's side of this page is not built yet.**
 
 The check runs every script again at revision 13, against muir's own device
 at revision 13. Each transcript prints every word with its tag, and the

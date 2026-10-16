@@ -252,7 +252,7 @@
 //                 `MEM_BOARDS_MAX`, with all four lanes strobed, is a new
 //                 count; any other value is refused and changes nothing, 0
 //                 and one past the most among them.  The most is 60 on the
-//                 CADR and on QUUX to revision 12, and on revision 13 what
+//                 CADR, and on QUUX, revision 13 and later, what
 //                 the board's reservation for its main memory holds, at most
 //                 muir's 1,024 (`cadr_ddr_map::mem_boards_max`).  It reads
 //                 back:
@@ -769,7 +769,7 @@ module cadr_console #(
     // lanes by the strobes.  The marker is "BD", which is not the key's top
     // half, so a program that read the word and wrote it straight back sets
     // nothing.  Neither is any other key's half or marker.  The count runs
-    // from one board to sixty on the CADR and revision 12, muir's
+    // from one board to sixty on the CADR, muir's
     // `busint::MAX_MEMORY_BOARDS`: the Xbus I/O space begins at the
     // sixty-first board's first word.  On revision 13 it runs to what the
     // board's reservation holds and comes up at muir's 512, 32M words; each
@@ -1919,7 +1919,7 @@ module cadr_console #(
       hdmi_sleep_secs <= 15'd0;
       hdmi_wake       <= 1'b0;
       // **AND THE BACKPLANE HAS `MEM_BOARDS_DEFAULT` MEMORY BOARDS**,
-      // muir's own default: 32 on the CADR and revision 12, the two million
+      // muir's own default: 32 on the CADR, the two million
       // words every reference trace was taken with, and 512 on revision 13,
       // 32M words.  A card that wants another count says
       // `--main-memory-boards` in `fpgarc`.

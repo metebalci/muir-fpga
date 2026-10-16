@@ -675,7 +675,7 @@ module cadr_machine #(
   // the CADR is now, and which never reads it.
   // Revision 14's `(14 << 4) | 4`, `Geometry::QUUX_14.machine_id`.
   localparam logic [31:0] MACHINE_ID = PAGED ? 32'h5155_00E4 : WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-  if (QUUX && WORD_BITS > 32 && REVISION != 13 && REVISION != 14) begin : g_bad_revision
+  if (QUUX && REVISION != 13 && REVISION != 14) begin : g_bad_revision
     $error("cadr_machine: REVISION is %0d; QUUX at 40 bits is revision 13 or 14", REVISION);
   end
   // The video controller at the board's size, `VIDEO_WIDTH` by
@@ -729,10 +729,10 @@ module cadr_machine #(
   // the file device's main memory size in 28 bits (`quux_file_device.sv`).
   // Revision 14 (A14.9): word 1 0, no level-1 map; word 2 the TLB's
   // entries; word 13 the buffer at its device-window address.
-  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 7 : 6;
-  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 4096 : 2048;
-  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
-  localparam int unsigned FD_MEM_BITS     = WORD_BITS > 32 ? 28 : 23;
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : 7;
+  localparam int unsigned FEATURE_DMEM    = 4096;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : 32'o1760000000;
+  localparam int unsigned FD_MEM_BITS     = 28;
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;

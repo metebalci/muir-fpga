@@ -274,8 +274,8 @@
 // directly below the display; the display and the disk pack program's records
 // where the CADR's are.  Revision 13's device tree reserves from its main
 // memory to the records' end, which is where the CADR's reservation ends too.
-// The CADR's and revision 12's trees reserve from `CADR_BOARD_RESERVED_BASE`
-// to the same end, `CADR_BOARD_RESERVED_BYTES`.
+// The CADR's tree reserves from `CADR_BOARD_RESERVED_BASE` to the same end,
+// `CADR_BOARD_RESERVED_BYTES`.
 #define CADR_BOARD_QUUX13_MAIN_BASE      CADR_BOARD_NUM(CADR_BOARD_QUUX13_MAIN_HEX)
 #define CADR_BOARD_QUUX13_MAIN_BASE_STR  CADR_BOARD_STR(CADR_BOARD_QUUX13_MAIN_HEX)
 #define CADR_BOARD_RECORDS_BYTES         0x00020000u

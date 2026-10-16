@@ -116,13 +116,13 @@ install: all
 # name a home directory that no longer exists.
 #
 # `CHK` names a file for it to write, which is how `build/checkpoint.pass`
-# gets something for muir to open, and `QCHK` the QUUX machine's, which
-# `build/checkpoint.quux.pass` compares with muir's own; `Q13CHK` revision
-# 13's, `Q13HDCHK` revision 13's with the video controller at 1920 by
-# 1080, and `Q14CHK` revision 14's.
+# gets something for muir to open, and `Q13CHK` QUUX revision 13's, which
+# `build/checkpoint.quux.pass` compares with muir's own; `Q13HDCHK`
+# revision 13's with the video controller at 1920 by 1080, and `Q14CHK`
+# revision 14's.
 check: $(WORK)/checkpoint_test
 	$(Q8_VERIFY)
-	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK) $(Q13CHK) $(Q13HDCHK) $(Q14CHK)
+	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(Q13CHK) $(Q13HDCHK) $(Q14CHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \

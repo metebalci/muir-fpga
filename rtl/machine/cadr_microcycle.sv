@@ -488,12 +488,12 @@ module cadr_microcycle #(
   // rotator and masker, its jump conditions, its dispatch memory, its
   // location counter and its map come with the word, as muir's
   // `Geometry::wide` keys them.  Each is behind `WIDE` below, and each is
-  // revision 12's text at 32 bits.
+  // the CADR's text at 32 bits; revision 12, QUUX at 32 bits, is retired.
   localparam bit          WIDE      = WORD_BITS > 32;
   // The map (A1.7): level 1 8,192 entries of 7 bits at `VA<27:15>`, level
-  // 2 4,096 entries of 28 bits at `{L1, VA<14:10>}`; revision 12's 2,048 of
-  // 6 bits at `VMA<23:13>` and 2,048 of 24 at `{L1, VMA<12:8>}`.
-  localparam int unsigned L1_BITS   = WIDE ? 7 : QUUX ? 6 : 5;
+  // 2 4,096 entries of 28 bits at `{L1, VA<14:10>}`; the CADR's 2,048 of
+  // 5 bits and 1,024 of 24.
+  localparam int unsigned L1_BITS   = WIDE ? 7 : 5;
   localparam int unsigned L1_INDEX  = WIDE ? 13 : 11;
   localparam int unsigned L2_WORDS  = 32 << L1_BITS;
   // Revision 14 (A14.4-A14.6): no map levels; `vmo` and the latch at VMEMDR
@@ -2249,15 +2249,6 @@ module cadr_microcycle #(
       assign hw_delta = hw_rot[39:34];
       logic unused_rot;
       assign unused_rot = ^hw_rot[33:10];
-    end else begin : g_rev12_index
-      logic       lcs0b;
-      logic [4:0] ishift;
-      assign lcs0b  = lcs[0] && lc_byte_mode;
-      assign ishift = {lcs[1] ^ lcs0b, !(!lcs[0] && lc_byte_mode), 3'b010};
-      assign hw_rot = (m31_now << ishift) | (m31_now >> (6'd32 - {1'b0, ishift}));
-      assign hw_delta = hw_rot[31:26];
-      logic unused_rot;
-      assign unused_rot = ^hw_rot[25:10];
     end
     logic [17:0] entry;
     assign entry = macro_mem[hw_rot[9:0]];
@@ -2466,13 +2457,9 @@ module cadr_microcycle #(
     assign adr1_w = vma[26] ? {L1_BITS'(0), mapi[4:0]} : adr1;
 
     // The entry a level-1 store writes: `VMA<31:27>`, "VMA<26>=1 writes the
-    // level 1 map from VMA<31-27>" in `mit/cadr/ir.bits`, and on QUUX
-    // `VMA<24>` above them, `Geometry::l1_from_vma`.
-    if (QUUX) begin : g_quux_l1_store
-      assign l1_store = {vma[24], vma[31:27]};
-    end else begin : g_cadr_l1_store
-      assign l1_store = vma[31:27];
-    end
+    // level 1 map from VMA<31-27>" in `mit/cadr/ir.bits`, the CADR's;
+    // revision 12, QUUX at 32 bits, took `VMA<24>` above them.
+    assign l1_store = vma[31:27];
   end
 `ifdef CADR_RDW_POISON
   // A check's variant: see "THE READ-DURING-WRITE WINDOW" at the end of
@@ -2567,9 +2554,6 @@ module cadr_microcycle #(
     // Revision 13's `MAP(MD)` (A1.7): the level-1 entry in `<38:32>`, the
     // fault bits in `<31:30>`, the level-2 entry in `<27:0>`.
     assign mf_map = {1'b0, vmap, !pfw, !pfr, 2'b00, vmo};
-  end else if (QUUX) begin : g_quux_mf_map
-    // QUUX's sixth bit is `MAP(MD)<29>`, where the CADR's 74S240 drives zero.
-    assign mf_map = {!pfw, !pfr, vmap, vmo};
   end else begin : g_cadr_mf_map
   assign mf_map = {!pfw, !pfr, 1'b0, vmap, vmo};
   end

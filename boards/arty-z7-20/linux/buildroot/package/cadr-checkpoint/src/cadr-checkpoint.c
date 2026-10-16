@@ -114,8 +114,7 @@
 // every revision; the most is the room the board keeps for it
 // (`cadr_board.h`), in 64K-word units.
 #define MAX_BOARDS_13 (CADR_BOARD_QUUX13_MAIN_WORDS_MAX >> 16)
-// The most revision 12 has, sixty 64K-word units, 3840KW, as the CADR's
-// backplane.
+// The most the CADR's backplane holds, sixty 64K-word boards.
 #define MAX_BOARDS 60u
 
 // --- the face over /dev/mem ------------------------------------------------
@@ -563,7 +562,7 @@ int main(int argc, char **argv)
 			    "this program knows", IMG_RG_QUUX_ID);
 			return 1;
 		}
-		// Entry 21's <31:24> is K on revisions 12 to 14 and revision
+		// Entry 21's <31:24> is K on revisions 13 and 14 and revision
 		// 15's clock period in units of 0.5 ns, with <23:16> L or 0.
 		{
 			unsigned k = 0, l = 0;
@@ -608,12 +607,7 @@ int main(int argc, char **argv)
 	bind_memory_words(quux, boards, memory, sizeof memory);
 	const int packed = quux && bind_revision_packed((unsigned)revision);
 	if (!packed && boards > MAX_BOARDS) {
-		char most[32];
-		ro_main_amount(MAX_BOARDS, most, sizeof most);
-		if (quux)
-			say("the machine has %s: revision 12 holds at most %s", memory, most);
-		else
-			say("the machine has %s: the backplane holds 1 to %u", memory, MAX_BOARDS);
+		say("the machine has %s: the backplane holds 1 to %u", memory, MAX_BOARDS);
 		return 2;
 	}
 	if (packed && boards > MAX_BOARDS_13) {

@@ -8,8 +8,8 @@
 // CADR's the address is the default slave's and reads "NONE".  Every access
 // is one aligned 32-bit word.  Byte offsets:
 //
-//   0x000 IDENT        RO  "QFD9", 0x51464439, to revision 12; "QF13",
-//                          0x51463133, on revision 13
+//   0x000 IDENT        RO  "QF13", 0x51463133, revision 13's: main memory
+//                          packed storage, the rings' bases 28 bits
 //   0x010 RTC_SECONDS  RW  word 103 as the machine reads it; a write sets the
 //                          seconds, with the fraction staged at 0x014
 //   0x014 RTC_FRACTION RW  ns into the second; a write stages it
@@ -20,7 +20,7 @@
 //                          epoch matches; <0> 0 drops it; reads <0> busy
 //   0x108 CMD_BASE     RO  162      0x10C CMD_LOG2   RO  163
 //   0x110 RESP_BASE    RO  166      0x114 RESP_LOG2  RO  167
-//                          (the bases' <23:0>, and <27:0> on revision 13)
+//                          (the bases' <27:0>)
 //   0x118 CMD_PROD     RO  164, once the processor's write buffer has drained
 //   0x11C RESP_PROD    RW  165 = 170; {epoch, index} completes up to index
 //   0x120 RESP_CONS    RO  171
@@ -57,7 +57,6 @@
 
 #include <stdio.h>
 
-#define QFD_IDENT        0x51464439u
 #define QFD_IDENT_13     0x51463133u	/* "QF13" */
 #define OFF_IDENT        0x000u
 #define OFF_RTC_SECONDS  0x010u
@@ -111,15 +110,15 @@ static void barrier(struct qfd_fabric *fb)
 int qfd_fabric_attach(struct qfd_fabric *fb, char *why, size_t whylen)
 {
 	const uint32_t id = reg_rd(fb, OFF_IDENT);
-	if (id != QFD_IDENT && id != QFD_IDENT_13) {
+	if (id != QFD_IDENT_13) {
 		snprintf(why, whylen,
-			 "the file device's page reads 0x%08x where QUUX's reads 0x%08x (\"QFD9\") or, "
-			 "on revision 13, 0x%08x (\"QF13\")%s", id, QFD_IDENT, QFD_IDENT_13,
-			 id == 0x4E4F4E45u ? ": \"NONE\", a bitstream without it, the CADR's" : "");
+			 "the file device's page reads 0x%08x where QUUX's reads 0x%08x (\"QF13\")%s", id,
+			 QFD_IDENT_13,
+			 id == 0x4E4F4E45u ? ": \"NONE\", a bitstream without it, the CADR's"
+			 : id == 0x51464439u ? ": \"QFD9\", revision 12's, which is retired" : "");
 		return -1;
 	}
-	const int r13 = id == QFD_IDENT_13;
-	const uint32_t most = r13 ? QFD_MAX_MEM_WORDS_13 : QFD_MAX_MEM_WORDS;
+	const uint32_t most = QFD_MAX_MEM_WORDS_13;
 	const uint32_t words = reg_rd(fb, OFF_MEM_WORDS);
 	if (words == 0 || words > most) {
 		snprintf(why, whylen, "the file device's page says main memory is %u words, which is not "
@@ -127,7 +126,6 @@ int qfd_fabric_attach(struct qfd_fabric *fb, char *why, size_t whylen)
 		return -1;
 	}
 	fb->mem_words = words;
-	fb->revision_13 = r13;
 	// **THE CLAIM A PROGRAM BEFORE THIS ONE MAY HAVE LEFT.**  Busy outlasts a
 	// reset of the machine, so that a completion from before the reset can
 	// never land after it, and nothing but this program clears it.  One that
@@ -147,7 +145,7 @@ static void f_state(void *ctx, struct qfd_state *s)
 	s->work = (st >> 4) & 1;
 	s->refused = (st >> 5) & 1;
 	s->epoch = (uint16_t)(st >> 16);
-	const uint32_t bases = fb->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu;
+	const uint32_t bases = 0x0FFFFFFFu;
 	s->cmd_base = reg_rd(fb, OFF_CMD_BASE) & bases;
 	s->cmd_log2 = reg_rd(fb, OFF_CMD_LOG2) & 0xFu;
 	s->resp_base = reg_rd(fb, OFF_RESP_BASE) & bases;
@@ -191,9 +189,7 @@ void qfd_fabric_face(struct qfd_fabric *fb, volatile void *main, struct qfd_face
 {
 	*out = (struct qfd_face){
 		.ctx = fb,
-		.mem = { fb->revision_13 ? NULL : (volatile uint32_t *)main,
-			 fb->revision_13 ? (volatile uint8_t *)main : NULL, fb->mem_words,
-			 fb->revision_13, NULL, NULL },
+		.mem = { (volatile uint8_t *)main, fb->mem_words, NULL, NULL },
 		.state = f_state,
 		.claim = f_claim,
 		.release = f_release,

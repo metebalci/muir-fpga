@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's revision 9 from both of its sides: `rtl/plumbing/quux_fd_face.sv`,
-// the page Linux reaches over the processor's port, with the machine's
-// register page behind it (`rtl/machine/quux_feature_page.sv`, which holds
-// the real-time clock and the file device), as `cadr_machine.sv` joins them.
+// QUUX's file device and clock at revision 13 from both of their sides:
+// `rtl/plumbing/quux_fd_face.sv`, the page Linux reaches over the
+// processor's port, with the machine's register page behind it
+// (`rtl/machine/quux_feature_page.sv`, which holds the real-time clock and
+// the file device), as `cadr_machine.sv` joins them.
 // The testbench drives the face over AXI as Linux's server does and the page
 // as the processor does, through the same held decode and `-XBUS.RQ` the
 // machine gives it, so every rule of the host's side is held against what
@@ -68,7 +69,7 @@ module quux_fd_face_harness (
     output var logic        irq,
 
     // --- main memory, and the port's write buffer empty
-    input  var logic [22:0] mem_words,
+    input  var logic [27:0] mem_words,
     input  var logic        drained,
     output var logic        fd_invalidate,
 
@@ -84,7 +85,7 @@ module quux_fd_face_harness (
   logic [3:0]  host_widx, host_ridx;
   logic [31:0] host_wdata, host_rdata;
 
-  quux_fd_face face (
+  quux_fd_face #(.IDENT(32'h5146_3133)) face (
       .clk(clk), .rst(rst),
       .s_awaddr(m_awaddr), .s_awlen(m_awlen), .s_awid(m_awid),
       .s_awvalid(m_awvalid), .s_awready(m_awready),
@@ -113,10 +114,12 @@ module quux_fd_face_harness (
   logic [23:0] tm_wdata;
   /* verilator lint_on UNUSEDSIGNAL */
 
-  // The MACHINE-ID is `cadr_machine.sv`'s, revision 12; nothing here reads
-  // word 0, but the page takes no default.
-  quux_feature_page #(.MACHINE_ID(32'h5155_00C4)) page (
-      // Revision 14's words 220-227, which revision 12 has not got.
+  // The MACHINE-ID is `cadr_machine.sv`'s, revision 13's; nothing here
+  // reads word 0, but the page takes no default.  Its file device at
+  // revision 13's width: 28-bit ring bases on 8-word lines and main
+  // memory's size in 28 bits.
+  quux_feature_page #(.MACHINE_ID(32'h5155_00D4), .WORD_BITS(40)) page (
+      // Revision 14's words 220-227, which revision 13 has not got.
       /* verilator lint_off PINCONNECTEMPTY */
       .ms_we (), .ms_idx (), .ms_wdata (),
       /* verilator lint_on PINCONNECTEMPTY */

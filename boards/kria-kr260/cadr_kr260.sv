@@ -1090,7 +1090,7 @@ module cadr_kr260 #(
     // setter, as on the Arty Z7-20: revision 13's page says so by its IDENT,
     // "QF13".
     if (MACHINE == "quux") begin : g_fd_face
-      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439),
+      quux_fd_face #(.IDENT(32'h5146_3133),
                      .ID_W(16), .LEN_W(8)) u_fd_face (
           .clk(clk), .rst(gp0_rst_s),
           .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),

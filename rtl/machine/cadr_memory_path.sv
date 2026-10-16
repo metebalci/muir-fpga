@@ -1135,14 +1135,9 @@ module cadr_memory_path #(
   // address nothing answers failing at once.  `quux_mem_port.sv` says the rest.  The
   // bridge below then carries block-disk's transfers alone, and asks main
   // memory through the port as its uncached requester.  The CADR keeps its
-  // bus interface, untouched.
-  //
-  // **THE FRAME BUFFER IS TOLD FROM THE REGISTERS BY THE VIDEO CONTROLLER'S
-  // OWN HELD MATCH**, `video_fb`, which the decode's `device` contains: it
-  // has the grant's address from the first tick after the grant, which is
-  // when the port reads which of the two a cycle is.  In the tick that takes the
-  // request only their OR is read, to find an address nothing answers, and
-  // the OR is `is_memory || device` whatever `video_fb` holds then.
+  // bus interface, untouched.  Revision 13's decode puts the frame buffer
+  // window on the memory bus, so the port tells memory from a register by
+  // the decode's `is_memory` and `device` alone.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
   logic [WORD_BITS-1:0] br_word;   // the port's word for the uncached requester
@@ -1163,8 +1158,8 @@ module cadr_memory_path #(
         .phys       (phys),
         .wdata      (wdata),
         // Revision 13's decode puts the window on the memory bus itself.
-        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb))),
-        .is_device  (REV13 ? device : (device && !video_fb)),
+        .is_memory  (is_memory),
+        .is_device  (device),
         .n_memgrant (n_memgrant),
         .n_memack   (n_memack),
         .n_loadmd   (n_loadmd),
@@ -1183,7 +1178,7 @@ module cadr_memory_path #(
         // port packs from `u_phys` (`quux_mem_port.sv`): the channel's word
         // and address reach it past the bridge's 32 bits and 22, and the
         // bridge carries the handshake.
-        .u_wdata    (REV13 ? ch_wdata : WORD_BITS'(br_wdata)),
+        .u_wdata    (ch_wdata),
         .u_main     (ch_own && ch_memory),
         .u_phys     (ch_addr),
         .u_done     (br_done),
@@ -1254,8 +1249,11 @@ module cadr_memory_path #(
     // instant, so nothing waits for a register's acknowledgment.
     logic unused_quux_port;
     // QUUX's port has no NXM timer on memory at all (`quux_mem_port.sv`), so
-    // it has no use for `mem_answers` either.
-    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack, mem_answers};
+    // it has no use for `mem_answers` either.  Nor for the video
+    // controller's frame buffer select, `video_fb`, which told revision 12's
+    // buffer from a register: revision 13's decode puts the window on the
+    // memory bus itself.
+    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack, mem_answers, video_fb};
   end else begin : g_cadr_busint
     // No memory system of revision 14's on the CADR.
     assign sd_ready     = 1'b0;

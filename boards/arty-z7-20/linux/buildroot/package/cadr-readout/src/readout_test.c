@@ -655,7 +655,7 @@ int main(void)
 			fail("an image of QUUX 1900 wide, taken", 1900, 0);
 			img_free(&hd);
 		}
-		if (img_alloc_video(&hd, 1, 0, 12, 0, 0) != 0 || hd.tv_words != IMG_TV_WORDS || hd.video_width != 0)
+		if (img_alloc_video(&hd, 1, 0, 0, 0, 0) != 0 || hd.tv_words != IMG_TV_WORDS || hd.video_width != 0)
 			fail("the CADR's image, its buffer's words", hd.tv_words, IMG_TV_WORDS);
 		else
 			img_free(&hd);
@@ -798,14 +798,15 @@ int main(void)
 			    strcmp(n15[IMG_RG15_ID], "ID") || strcmp(n15[IMG_RG15_COMMITTED], "COMMITTED"))
 				fail("revision 15's register table named as another's", 1, 0);
 		}
-		for (int rv = 0; rv <= 14; rv += rv ? 1 : 12) {
+		for (int rv = 0; rv <= 14; rv += rv ? 1 : 13) {
 			const int mc = ro_machine_of(rv);
 			if (mc < 0 || strcmp(ro_reg_names(mc)[IMG_RG_PC], "PC") ||
 			    strcmp(ro_reg_names(mc)[IMG_RG_FLAGS], "FLAGS"))
 				fail("the CADR's register table names, on revision", (unsigned long long)rv, 0);
 		}
 		// And a revision with no layout is none, never another's.
-		const int none[] = { -1, 1, 11, 16, 255 };
+		// Revision 12, retired, among them.
+		const int none[] = { -1, 1, 11, 12, 16, 255 };
 		for (unsigned i = 0; i < sizeof none / sizeof none[0]; ++i)
 			if (ro_machine_of(none[i]) != -1)
 				fail("a layout for a revision that has none, revision",

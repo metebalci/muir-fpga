@@ -151,14 +151,12 @@ module cadr_arty #(
     // sets it, and `build/machine_param.pass` holds that it arrives.
     parameter string MACHINE = "cadr",
 
-    // **QUUX'S MICROCYCLE ON THIS BOARD**: four ticks, 40 ns, to revision
-    // 12, and five, 50 ns, at revision 13, and no more for an `ILONG`
-    // instruction (H1a, muir's `--timing-model sync --sync-cycle-ticks K`).
-    // The fit at each K is what entitles it: revision 12's longest paths,
-    // the map into the next address and the multiplier out of the A memory,
-    // settle inside four ticks, and revision 13's map through both levels
-    // into the memory path's decode misses four by a nanosecond and meets
-    // five.  **THE MICROCYCLE IS LONGER AND THE TICK IS NOT**: the machine's
+    // **QUUX'S MICROCYCLE ON THIS BOARD**: five ticks, 50 ns, at revision
+    // 13, and no more for an `ILONG` instruction (H1a, muir's
+    // `--timing-model sync --sync-cycle-ticks K`).  The fit is what entitles
+    // it: revision 13's map through both levels into the memory path's
+    // decode misses four by a nanosecond and meets five.  **THE MICROCYCLE
+    // IS LONGER AND THE TICK IS NOT**: the machine's
     // clock stays at 100 MHz, so the microsecond clock, the timers and the
     // sixty-cycle clock, which count ticks, still count true time.  The
     // flow reads the K a build takes from here (`vivado/tick.tcl`) and
@@ -167,7 +165,6 @@ module cadr_arty #(
     // TLB's registered read takes the map chain's place, which is what kept
     // revision 13 at five.  The fit at K=4 is what entitles it, and five
     // the fallback if it misses (`docs/fits.md`).
-    parameter int unsigned SYNC_K = 4,
     parameter int unsigned SYNC_K13 = 5,
     parameter int unsigned SYNC_K14 = 4,
     parameter int unsigned SYNC_L = 0,
@@ -960,7 +957,7 @@ module cadr_arty #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
       .MACHINE(MACHINE),
-      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
+      .SYNC_K(PAGED14 ? SYNC_K14 : SYNC_K13),
       .SYNC_L(SYNC_L),
       .WORD_BITS(WORD_BITS),
       .REVISION(REVISION),
@@ -2112,7 +2109,7 @@ module cadr_arty #(
     // server knows main memory is packed storage and the rings' bases 28
     // bits (`docs/file-device.md`).
     if (MACHINE == "quux") begin : g_fd_face
-      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
+      quux_fd_face #(.IDENT(32'h5146_3133)) u_fd_face (
           .clk(clk), .rst(gp0_rst_s),
           .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
           .s_awvalid(gp0f_awvalid), .s_awready(gp0f_awready),

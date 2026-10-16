@@ -104,7 +104,7 @@ const uint32_t INPUT_PAGE = GP_PORT_BASE + 0x3000u;
 #define GP_HAS_FD 0
 #endif
 const uint32_t FD_PAGE = GP_PORT_BASE + 0x4000u;
-const uint32_t W_QFD9 = 0x51464439u;   // "QFD9"
+const uint32_t W_QF13 = 0x51463133u;   // "QF13"
 // The words of the fifth page the face maps onto the machine's host side,
 // and the index each is: 0x010 and 0x014 the clock's, 0x100 to 0x128 the
 // file device's.  Anything else reads zero.
@@ -791,9 +791,9 @@ int main(int argc, char **argv) {
                    got, W_INPT);
           break;
         case kFd:
-          if (got != W_QFD9)
+          if (got != W_QF13)
             FailAt(addr, (std::string("the word at QUUX's fifth page") + when).c_str(),
-                   got, W_QFD9);
+                   got, W_QF13);
           break;
         case kPack:
           // The pack side's word 0 is its ADDR register, which holds
@@ -858,7 +858,7 @@ int main(int argc, char **argv) {
           if (resp != 0)
             FailAt(addr, (std::string("RRESP from QUUX's fifth page") + when).c_str(), resp, 0);
           const int idx = FdIndex(word);
-          const uint32_t want = word == 0 ? W_QFD9
+          const uint32_t want = word == 0 ? W_QF13
                                 : idx >= 0 ? (0x5A5A5A50u | static_cast<uint32_t>(idx)) : 0u;
           if (got != want)
             FailAt(addr, (std::string("a word of QUUX's fifth page") + when).c_str(), got, want);
@@ -994,7 +994,7 @@ int main(int argc, char **argv) {
     // The fifth page: QUUX's clock and file device on a QUUX build, the
     // default's on the CADR's; and the first page past it the default's.
     const uint32_t fifth = b.Read(GP0_BASE + 0x4000, &resp);
-    const uint32_t want_fifth = GP_HAS_FD ? W_QFD9 : W_NONE;
+    const uint32_t want_fifth = GP_HAS_FD ? W_QF13 : W_NONE;
     if (fifth != want_fifth)
       FailAt(GP0_BASE + 0x4000, GP_HAS_FD ? "QUUX's fifth page's IDENT" : "the default slave's word",
              fifth, want_fifth);

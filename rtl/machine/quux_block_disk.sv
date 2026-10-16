@@ -62,7 +62,7 @@
 // them; or 4-byte, 4 blocks, `<31:0>` of each word, a read writing tag `005`.
 // The command list pointer, word 201 and the channel's address are 28 bits.
 // Its walk, `g_walk13` below, says the rest; the store, the seam and the face
-// are revision 12's.
+// are revision 12's, whose own walk, a block an entry, is retired with it.
 //
 // What holds it: `build/quux13_block_disk.quux.pass`, the module against
 // muir's `BlockDisk` over a script of register reads and writes at muir's
@@ -79,12 +79,12 @@ module quux_block_disk #(
     parameter int unsigned SLOTS = 24,
     // muir's `block_disk::BLOCK_NS`, 100 us, on the grid.
     parameter int unsigned BLOCK_T = cadr_tick_pkg::ticks(100_000),
-    // 32, QUUX to revision 12; 40, revision 13's pages of 40-bit words (the
-    // header's last section), which widens the channel: a 28-bit address
-    // and a whole word.
-    parameter int unsigned WORD_BITS = 32,
+    // 40, revision 13's pages of 40-bit words (the header's last section),
+    // which widens the channel: a 28-bit address and a whole word.  The
+    // 32-bit QUUX, revision 12, is retired, and refused below.
+    parameter int unsigned WORD_BITS = 40,
     localparam bit          WIDE      = WORD_BITS > 32,
-    localparam int unsigned PHYS_BITS = WIDE ? 28 : 22
+    localparam int unsigned PHYS_BITS = 28
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -153,6 +153,11 @@ module quux_block_disk #(
     output var logic [6:0]  ro_flags,
     output var logic [31:0] ro_since_done
 );
+
+  // Revision 13's 40-bit words alone; revision 12's 32 are retired.
+  if (WORD_BITS != 40) begin : g_bad_word
+    $error("quux_block_disk: WORD_BITS is %0d; QUUX's word is 40 bits, revision 12 being retired", WORD_BITS);
+  end
 
   localparam logic [19:0] REGS_PAGE   = 20'd1048544;   // 0o17777600 >> 2
   localparam int unsigned BLOCK_WORDS = 256;
@@ -311,233 +316,7 @@ module quux_block_disk #(
   logic [15:0] clp_n;
   assign clp_n = clp[15:0] + n;
 
-  // **REVISION 12'S WALK**, a block an entry.
-  if (!WIDE) begin : g_walk12
-  typedef enum logic [2:0] {
-    W_IDLE, W_CCW, W_LOOK, W_WAIT, W_READ, W_WRITE, W_END
-  } walk_e;
-  walk_e       state;
-  logic [13:0] page;
-  assign ch_active  = state != W_IDLE && state != W_END;
-  assign ch_waiting = state == W_WAIT;
-
-  always_ff @(posedge clk) begin
-    if (rst || xbus_init) begin
-      taken       <= 1'b0;
-      cmd         <= 32'd0;
-      past_end    <= 1'b0;
-      nxm         <= 1'b0;
-      bad_command <= 1'b0;
-      walking     <= 1'b0;
-      walked      <= 1'b0;
-      busy_ticks  <= 32'd0;
-      due         <= 32'd0;
-      state       <= W_IDLE;
-      ch_req      <= 1'b0;
-      ch_write    <= 1'b0;
-      ch_addr     <= 22'd0;
-      ch_wdata    <= 32'd0;
-      chb_we      <= 1'b0;
-      chb_d       <= 32'd0;
-      chb_a       <= 13'd0;
-      ch_slot     <= 5'd0;
-      ch_w        <= 8'd0;
-      req_valid   <= 1'b0;
-      req_post    <= 1'b0;
-      ch_wrote    <= 1'b0;
-      ch_hit      <= 1'b0;
-      store_miss  <= 1'b0;
-      writing     <= 1'b0;
-      n           <= 16'd0;
-      lba         <= 28'd0;
-      page        <= 14'd0;
-      more        <= 1'b0;
-      rd_valid    <= 1'b0;
-      look_age    <= 2'd0;
-      if (rst) begin
-        // The disk address, the pointer and the last memory address have no
-        // pin on `-XBUS INIT`; zero at power-on is this fabric's convention.
-        clp <= 32'd0;
-        da  <= 32'd0;
-        lma <= 32'd0;
-      end
-    end else begin
-      req_post <= 1'b0;
-      ch_wrote <= 1'b0;
-      ch_hit   <= 1'b0;
-      chb_we   <= 1'b0;
-      if (busy_ticks != 32'hFFFF_FFFF) busy_ticks <= busy_ticks + 32'd1;
-      if (look_age != 2'd2) look_age <= look_age + 2'd1;
-
-      if (store_now) taken <= 1'b1;
-      else if (!(mine && dev_rq)) taken <= 1'b0;
-
-      // --- a register written ---------------------------------------------
-      if (store_now) begin
-        unique case (which)
-          2'd0: begin
-            cmd         <= wdata;
-            past_end    <= 1'b0;
-            nxm         <= 1'b0;
-            bad_command <= 1'b0;
-          end
-          2'd1: clp <= wdata;
-          2'd2: da  <= {4'd0, wdata[27:0]};
-          default: begin
-            // START.  A command it does not do stops by error and moves
-            // nothing; with no pack nothing happens at all; a transfer
-            // walks.  One at a time: a START while a walk runs is not
-            // taken, where muir would run the second at once.
-            past_end    <= 1'b0;
-            nxm         <= 1'b0;
-            bad_command <= 1'b0;
-            if (cmd[3:0] != 4'o00 && cmd[3:0] != 4'o11) begin
-              bad_command <= 1'b1;
-            end else if (drive_present[0] && state == W_IDLE) begin
-              writing    <= cmd[3:0] == 4'o11;
-              walking    <= 1'b1;
-              walked     <= 1'b1;
-              // One at the tick after the START: in the tick `m` after it,
-              // `m` have passed, and muir's instant is `due` of them on.
-              busy_ticks <= 32'd1;
-              due        <= 32'd0;
-              n          <= 16'd0;
-              lba        <= da[27:0];
-              look_age   <= 2'd0;
-              state      <= W_CCW;
-            end
-          end
-        endcase
-      end
-
-      unique case (state)
-        W_IDLE: ;
-        // --- a command list word, at the pointer counted in its low sixteen
-        W_CCW: begin
-          if (!ch_req) begin
-            lma <= {clp[31:16], clp_n};
-            if (clp[31:22] != 10'd0) begin
-              // No main memory answers above twenty-two bits.
-              nxm   <= 1'b1;
-              state <= W_END;
-            end else begin
-              ch_req   <= 1'b1;
-              ch_write <= 1'b0;
-              ch_addr  <= {clp[21:16], clp_n};
-            end
-          end else if (ch_done) begin
-            ch_req <= 1'b0;
-            if (ch_nxm) begin
-              nxm   <= 1'b1;
-              state <= W_END;
-            end else begin
-              page     <= ch_rdata[21:8];
-              more     <= ch_rdata[0];
-              look_age <= 2'd0;
-              state    <= W_LOOK;
-            end
-          end
-        end
-        // --- the block, in the store or asked for
-        W_LOOK: begin
-          if (look_age == 2'd2) begin
-            if (any_hit && !(store_busy && store_busy_slot == hit_slot)) begin
-              ch_slot  <= hit_slot;
-              ch_hit   <= 1'b1;
-              ch_w     <= 8'd0;
-              rd_valid <= 1'b0;
-              state    <= writing ? W_WRITE : W_READ;
-            end else if (!any_hit) begin
-              req_valid <= 1'b1;
-              req_post  <= 1'b1;
-              state     <= W_WAIT;
-            end
-          end
-        end
-        W_WAIT: begin
-          if (store_deny) begin
-            // The pack side cannot give it: past the end of the pack.
-            req_valid <= 1'b0;
-            past_end  <= 1'b1;
-            state     <= W_END;
-          end else if (store_we && store_addr == 9'd259 && !store_wdata[31]
-                       && store_wdata[30:0] == {3'b0, lba}) begin
-            req_valid <= 1'b0;
-            look_age  <= 2'd0;
-            state     <= W_LOOK;
-          end
-        end
-        // --- a read: the slot's words into memory, a bus cycle each
-        W_READ: begin
-          if (!ch_req) begin
-            if (rd_valid) begin
-              ch_req   <= 1'b1;
-              ch_write <= 1'b1;
-              ch_addr  <= {page, ch_w};
-              ch_wdata <= chb_q;
-              rd_valid <= 1'b0;
-            end else begin
-              rd_valid <= 1'b1;   // `chb_q` takes word `ch_w` this tick
-            end
-          end else if (ch_done) begin
-            ch_req <= 1'b0;
-            if (ch_nxm) begin
-              nxm   <= 1'b1;
-              state <= W_END;
-            end else if (ch_w == 8'd255) begin
-              state <= W_END;   // replaced below, the block done
-            end else begin
-              ch_w <= ch_w + 8'd1;
-            end
-          end
-        end
-        // --- a write: memory's words into the slot, a bus cycle each
-        W_WRITE: begin
-          if (!ch_req) begin
-            ch_req   <= 1'b1;
-            ch_write <= 1'b0;
-            ch_addr  <= {page, ch_w};
-          end else if (ch_done) begin
-            ch_req <= 1'b0;
-            if (ch_nxm) begin
-              nxm   <= 1'b1;
-              state <= W_END;
-            end else begin
-              chb_we <= 1'b1;
-              chb_d  <= ch_rdata;
-              chb_a  <= ch_word;
-              if (ch_w == 8'd255) begin
-                ch_wrote <= 1'b1;
-                state    <= W_END;   // replaced below, the block done
-              end else begin
-                ch_w <= ch_w + 8'd1;
-              end
-            end
-          end
-        end
-        default: begin
-          // W_END: the disk address where the walk left it, and the time.
-          da      <= {4'd0, lba};
-          walking <= 1'b0;
-          state   <= W_IDLE;
-        end
-      endcase
-
-      // --- a block moved whole: the time it owes, and the next ------------
-      if ((state == W_READ || state == W_WRITE) && ch_req && ch_done && !ch_nxm
-          && ch_w == 8'd255) begin
-        lma <= {10'd0, page, 8'd255};
-        due <= due + 32'(BLOCK_T);
-        if (more) begin
-          n        <= n + 16'd1;
-          lba      <= lba + 28'd1;
-          look_age <= 2'd0;
-          state    <= W_CCW;
-        end
-      end
-    end
-  end
-  end else begin : g_walk13
+  if (WIDE) begin : g_walk13
   // **REVISION 13'S WALK** (contract G2 §4.2, appendix A1.11; muir's
   // `BlockDisk::write`): an entry moves a 1024-word page, `<27:10>`, and
   // command `<12>` chooses how its words lie on the disk.  Packed, 5 blocks
@@ -891,7 +670,7 @@ module quux_block_disk #(
   assign ro_since_done = busy_ticks - due;
 
   logic unused;
-  assign unused = ^{cmd[31:13], cmd[10:4], WIDE ? 1'b0 : cmd[12]};
+  assign unused = ^{cmd[31:13], cmd[10:4], 1'b0};
 
 endmodule
 

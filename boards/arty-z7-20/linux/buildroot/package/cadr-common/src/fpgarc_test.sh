@@ -4241,7 +4241,7 @@ done
 echo bitstream > "$WORK/lay/the.bit"
 # One board's copy, run the way the script runs it: the board's facts, then the
 # copy block, each lifted on its own anchors.  $1 the board, $2 its tree, $3
-# the revision (REVISION), empty for the CADR and revision 12.
+# the revision (REVISION), empty for the CADR.
 lay_out() {
 	rm -rf "$WORK/lay/out"; mkdir -p "$WORK/lay/out"
 	( set -eu

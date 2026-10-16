@@ -398,9 +398,9 @@ static void help(void)
 	say("main-memory-size [<n>MW]  QUUX's: how much main memory, in whole megawords with");
 	say("                the unit written, such as 32MW: 1MW to what the board keeps for");
 	say("                revision 13 (32MW on the Arty Z7-20 and the Kria KR260, 64MW on the");
-	say("                DE25-Nano), 32MW by default; 1MW to 3MW on revision 12, 2MW by");
-	say("                default.  --main-memory-size.  Set it before the band boots.  With");
-	say("                no word it reports.  Exits 0 when the fabric holds what was asked");
+	say("                DE25-Nano), 32MW by default.  --main-memory-size.  Set it before");
+	say("                the band boots.  With no word it reports.  Exits 0 when the");
+	say("                fabric holds what was asked");
 	say("blinking-leds [on|off]  whether the board's activity lamps blink, or hold a level:");
 	say("                off is --no-blinking-leds.  With no word it reports.  Exits 0");
 	say("                when the lamps do what the words say: blinking with no word or");

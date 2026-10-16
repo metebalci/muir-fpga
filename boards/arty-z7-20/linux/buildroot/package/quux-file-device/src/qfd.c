@@ -762,22 +762,16 @@ static void rd_run(struct qfd_mem *m, size_t k, size_t n, uint32_t *out)
 		if (m->touch)
 			for (size_t i = 0; i < c; ++i)
 				m->touch(m->ctx);
-		if (m->revision_13) {
-			uint8_t img[5 * PACK_RUN];
-			packed_load(m->b, 5 * k, 5 * (k + c), img);
-			for (size_t i = 0; i < c; ++i)
-				out[i] = (uint32_t)img[5 * i] | (uint32_t)img[5 * i + 1] << 8 |
-					 (uint32_t)img[5 * i + 2] << 16 | (uint32_t)img[5 * i + 3] << 24;
-		} else {
-			for (size_t i = 0; i < c; ++i)
-				out[i] = m->w[k + i];
-		}
+		uint8_t img[5 * PACK_RUN];
+		packed_load(m->b, 5 * k, 5 * (k + c), img);
+		for (size_t i = 0; i < c; ++i)
+			out[i] = (uint32_t)img[5 * i] | (uint32_t)img[5 * i + 1] << 8 |
+				 (uint32_t)img[5 * i + 2] << 16 | (uint32_t)img[5 * i + 3] << 24;
 		k += c, n -= c, out += c;
 	}
 }
 
-// `n` words from word `k`, each `<31:0>` from `in` and, on revision 13, the
-// tag a fixnum's.
+// `n` words from word `k`, each `<31:0>` from `in` and the tag a fixnum's.
 static void wr_run(struct qfd_mem *m, size_t k, size_t n, const uint32_t *in)
 {
 	while (n) {
@@ -785,18 +779,13 @@ static void wr_run(struct qfd_mem *m, size_t k, size_t n, const uint32_t *in)
 		if (m->touch)
 			for (size_t i = 0; i < c; ++i)
 				m->touch(m->ctx);
-		if (m->revision_13) {
-			uint8_t img[5 * PACK_RUN];
-			for (size_t i = 0; i < c; ++i) {
-				img[5 * i] = (uint8_t)in[i], img[5 * i + 1] = (uint8_t)(in[i] >> 8);
-				img[5 * i + 2] = (uint8_t)(in[i] >> 16), img[5 * i + 3] = (uint8_t)(in[i] >> 24);
-				img[5 * i + 4] = QFD_TAG_FIXNUM;
-			}
-			packed_store(m->b, 5 * k, 5 * (k + c), img);
-		} else {
-			for (size_t i = 0; i < c; ++i)
-				m->w[k + i] = in[i];
+		uint8_t img[5 * PACK_RUN];
+		for (size_t i = 0; i < c; ++i) {
+			img[5 * i] = (uint8_t)in[i], img[5 * i + 1] = (uint8_t)(in[i] >> 8);
+			img[5 * i + 2] = (uint8_t)(in[i] >> 16), img[5 * i + 3] = (uint8_t)(in[i] >> 24);
+			img[5 * i + 4] = QFD_TAG_FIXNUM;
 		}
+		packed_store(m->b, 5 * k, 5 * (k + c), img);
 		k += c, n -= c, in += c;
 	}
 }

@@ -195,11 +195,11 @@ void bind_halt_unmark(const char *path);
 void bind_memory_words(int quux, unsigned units, char *out, size_t n);
 
 // **THE REVISIONS OF QUUX A CHECKPOINT IS WRITTEN OF**, the register table's
-// entry 21: 12, and 13 and 14, whose words are 40 bits in packed main memory
+// entry 21: 13, 14 and 15, whose words are 40 bits in packed main memory
 // (contract G2 appendix A1.13; revision 14 has revision 13's main memory, its
 // checkpoint version 50 with the revision in the geometry, contract G3
-// revision 14 A14.14).  `bind_revision_known` is 1 for those three, and
-// `bind_revision_packed` 1 for the two with packed storage.
+// revision 14 A14.14; revision 15's is version 51).  Revision 12 is retired.
+// `bind_revision_known` and `bind_revision_packed` are 1 for those three.
 int bind_revision_known(unsigned revision);
 int bind_revision_packed(unsigned revision);
 

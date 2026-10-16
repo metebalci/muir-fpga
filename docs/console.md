@@ -215,8 +215,8 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  most in bits 10 to 0 and bits 15 to 11 clear, is a new count;
                  it must strobe all four lanes, and any other count, 0 and one
                  past the most among them, is refused and the count stands.
-                 The most is 60 on the CADR and QUUX to revision 12, and on
-                 QUUX revision 13 what the board keeps for its main memory,
+                 The most is 60 on the CADR, and on QUUX revision 13 what
+                 the board keeps for its main memory,
                  512 boards on the Arty Z7-20 and 1,024 on the DE25-Nano.  It
                  reads back a marker of `BD` in the top half and the count in
                  bits 10 to 0.  The count goes to the machine's address
@@ -1892,11 +1892,12 @@ never ran. Every board run prints this line beside each result.
 
 The machine and its microcycle come from the readout window, the register
 table's entry 21. QUUX answers it with its signature `0x5155`, K and L, and
-MACHINE-ID's low half on revision 13. Revision 12's bitstreams answer 0 in
-that half, and the CADR answers with the window's "no memory" word. The
-entry is a constant of the bitstream, so it reads true while the machine
-runs. The word's width follows the revision: 32 bits on the CADR and on QUUX
-to revision 12, 40 bits on revision 13. The build is page 2's word 32, as in
+MACHINE-ID's low half on revision 13, and the CADR answers with the window's
+"no memory" word. Revision 12's bitstreams answered 0 in that half; that
+revision is retired, and the program names such an entry a QUUX of no
+revision it knows. The entry is a constant of the bitstream, so it reads true
+while the machine runs. The word's width follows the revision: 32 bits on the
+CADR, 40 bits on revision 13 and later. The build is page 2's word 32, as in
 `status`. The line reads like one of these:
 
     machine: CADR, 32-bit words; build e7aaa180 (commit e7aaa18, tree clean)
@@ -1924,11 +1925,12 @@ with `--list` it says what the window reaches. It compares the echo on every
 word and refuses any word whose echo is not the address it asked for.
 
 **The memories' depths and widths are the machine's.** The program asks the
-register table's entry 21 which machine the bitstream is: the CADR, QUUX to
-revision 12, or QUUX revision 13, whose entry carries MACHINE-ID's `<15:0>`.
-On revision 13 A, M and the pushdown buffer are 40 bits. The dispatch memory
-has 4,096 entries, level 1 of the map 8,192 of 7 bits and level 2 4,096 of 28.
-`--list` gives all three machines' shapes.
+register table's entry 21 which machine the bitstream is: the CADR, or QUUX
+revision 13, 14 or 15, whose entry carries MACHINE-ID's `<15:0>`; a
+bitstream of the retired revision 12 is refused by name. On revision 13 A, M
+and the pushdown buffer are 40 bits. The dispatch memory has 4,096 entries,
+level 1 of the map 8,192 of 7 bits and level 2 4,096 of 28. `--list` gives
+every machine's shape.
 
 **It is not the debugger and is not meant to become one.** The debugger for
 this machine is CC over the debug cable, which reads the scratchpads and the

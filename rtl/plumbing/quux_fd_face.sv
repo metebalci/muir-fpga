@@ -7,9 +7,9 @@
 // `quux-file-device` and the init script that sets the clock are its users;
 // `docs/file-device.md` is their manual.
 //
-//     0x000  IDENT, read only: "QFD9", 0x5146_4439; on revision 13, whose
+//     0x000  IDENT, read only: "QF13", 0x5146_3133, revision 13's, whose
 //            main memory is packed storage and whose rings' bases are 28
-//            bits, "QF13", 0x5146_3133, which the board's top level gives
+//            bits, which the board's top level gives
 //     0x010  RTC_SECONDS: read, what word 103 reads now; written, the seconds,
 //            from the fraction staged at 0x014 (0 if none), at once
 //     0x014  RTC_FRACTION: read, nanoseconds into the second; written, the
@@ -57,8 +57,10 @@
 `default_nettype none
 
 module quux_fd_face #(
-    // "QFD9": QUUX's file device, revision 9.
-    parameter logic [31:0] IDENT = 32'h5146_4439,
+    // IDENT: the board's top level gives it, "QF13" on revision 13 and
+    // later; no default, so no instance can carry a stale one, as
+    // revision 12's "QFD9" was.
+    parameter logic [31:0] IDENT,
     parameter int unsigned ID_W  = 12,
     parameter int unsigned LEN_W = 4
 ) (
