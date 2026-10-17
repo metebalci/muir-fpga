@@ -70,11 +70,12 @@ if {$fault && $machine ne "cadr"} {
 # Revision 15 is its own top level, `quux15_de25.sv` (`build.sh` says
 # what it takes), and the sections below say what it changes of each.
 set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
-if {$revision ni {13 14 15}} {
-    puts "project: REVISION is '$revision', which is not 13, 14 or 15"
+if {$revision ni {13 14 15 16}} {
+    puts "project: REVISION is '$revision', which is not 13, 14, 15 or 16"
     exit 1
 }
-set rev15 [expr {$revision eq "15"}]
+# Revision 16 is revision 15's top level with the Ethernet device.
+set rev15 [expr {$revision in {15 16}}]
 if {$rev15 && (!$ddr || !$hdmi || $probe_depth > 0 || $fault || $machine ne "quux")} {
     puts "project: REVISION 15 is QUUX's whole board: DDR and HDMI, no probe, no fault bitstream"
     exit 1
@@ -359,6 +360,7 @@ if {$rev15} {
     # no sync PROM, and the period is its top level's parameter.
     set_parameter -name PROM_HEX [file join $root $prom]
     set_parameter -name PERIOD $period
+    set_parameter -name REVISION $revision
 } elseif {!$fault} {
     # QUUX boots from its own PROM, version 2001, revision 13's (`WORD_BITS`
     # 40), as `build.sh` requires and reads back.

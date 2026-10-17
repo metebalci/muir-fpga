@@ -95,6 +95,17 @@
 // seam out (`chaos_*`), which `cadr_chaos_cable.sv` takes on a board; its
 // interrupt is word 100's `<6>`.
 //
+// **REVISION 16** (QUUX's Ethernet contract, §10): MACHINE-ID's revision
+// field 16, which `ETHERNET` below is taken from, and feature word 15 reading
+// 7; the Ethernet device's words 240-257 and word 100's `<8>` in
+// `quux16_ethernet.sv`, through `quux15_devices.sv`, its host's side out
+// (`eth_*`), which `quux_ed_face.sv` takes on a board; the writes of 244 and
+// 250 held, as CMD_PROD's is, until every write before them is answered
+// (§2.5), one held write at a time, a second of the same word replacing
+// the first and one of another word waiting behind it (muir's
+// `register_write_now`); and the cache swept when RX_CONS lands, as at a
+// file device completion.  Everything else is revision 15's.
+//
 // **WHAT IS NOT BUILT** --- a word that writes the PDL buffer and fetches
 // inside it in one clock, which would want the RAM's second port twice ---
 // stops a simulation at the word that needs it, naming it (`unbuilt`),
@@ -105,7 +116,8 @@
 module quux15_core #(
     // The PROM image, a 64-bit word a line (`quux15_store.sv`).
     parameter string PROM_HEX = "",
-    // MACHINE-ID, functional source 16: `0x5155`, revision 15, processor 4.
+    // MACHINE-ID, functional source 16: `0x5155`, revision 15, processor 4;
+    // revision 16's, `{16'h5155, 12'd16, 4'd4}`, builds the Ethernet device.
     parameter logic [31:0] MACHINE_ID = {16'h5155, 12'd15, 4'd4},
     // Main memory's words: QUUX's 32 boards, 2M words.
     parameter int unsigned MAIN_WORDS = 32'h0020_0000,
@@ -237,6 +249,18 @@ module quux15_core #(
     input  var logic [31:0] host_wdata,
     input  var logic [3:0]  host_ridx,
     output var logic [31:0] host_rdata,
+    // Revision 16's Ethernet device's host (`quux16_ethernet.sv`): its side
+    // by index, `quux_ed_face.sv`'s, one write and one read a clock, a
+    // read's word the clock after its index; and 244 and 250 as the clock
+    // leaves them, what the host's side reads.  Below revision 16 the reads
+    // are 0 and the writes go nowhere.
+    input  var logic        eth_we,
+    input  var logic [4:0]  eth_widx,
+    input  var logic [31:0] eth_wdata,
+    input  var logic [4:0]  eth_ridx,
+    output var logic [31:0] eth_rdata,
+    output var logic [15:0] eth_tx_prod,
+    output var logic [15:0] eth_rx_prod,
     // The keyboard and the mouse (`quux15_input.sv`): the cable's word, in
     // at this clock's edge; the mouse's seven lines; and `KBD READY` for the
     // host's handshake (`cadr_input_cables.sv`'s `card_csr<5>`).
@@ -784,9 +808,12 @@ module quux15_core #(
   assign errstop = mode[2];
   logic [31:0] posted_errors;
   // CMD_PROD's write, taken from the register write and held until every
-  // write before it is answered (`Back::cmd_prod`; A15b.5).
-  logic        cprod_v, rw_take, take_cmd_prod;
+  // write before it is answered (`Back::cmd_prod`; A15b.5), and on revision
+  // 16 the Ethernet device's 244 and 250 the same way (`cprod_k` the word;
+  // §2.5).
+  logic        cprod_v, rw_take, take_cmd_prod, rw_behind;
   logic [31:0] cprod_word;
+  logic [7:0]  cprod_k;
   // The PDL buffer redirect's copies of A 430 and 431 (A14.7).
   logic [31:0] pdl_base;
   logic [13:0] pdl_head;
@@ -1527,9 +1554,10 @@ module quux15_core #(
   logic [28:0] bd_fin_da;
   logic [31:0] bd_st_cmd;
   logic [39:0] bd_wdata, bd_rdata;
-  // A completion the file device's host made, landing this clock: the
-  // whole cache swept (`quux15_devices.sv`).
-  logic        fd_complete;
+  // A completion the file device's host made, landing this clock, or on
+  // revision 16 an RX_CONS move of the Ethernet device's host: the whole
+  // cache swept (`quux15_devices.sv`).
+  logic        fd_complete, eth_sweep;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(core_rst), .hard(rst),
@@ -1541,7 +1569,7 @@ module quux15_core #(
       .d_req(bd_req), .d_write(bd_write), .d_addr(bd_addr), .d_wdata(bd_wdata),
       .d_done(bd_done), .d_rdata(bd_rdata), .d_start(bd_start), .d_busy(bd_busy),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
-      .empty(port_empty), .sweep_go(fd_complete),
+      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
       .hold(port_hold), .quiet(port_quiet),
       .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
@@ -1594,16 +1622,26 @@ module quux15_core #(
   // Words 11 and 12 are the video controller's size, the width in <31:16>
   // and the height in <15:0>, and one bit a pixel in <31:16> with the
   // words a line in <15:0> (muir's `Geometry::feature_word`).
+  // Word 0 is MACHINE-ID; word 15 the optional devices, `<0>` the real-time
+  // clock, `<1>` the file device and on revision 16 `<2>` the Ethernet
+  // device.
+  localparam bit ETHERNET = MACHINE_ID[15:4] >= 12'd16;
   localparam logic [31:0] FEATURES [0:15] = '{
-      32'h515500f4, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
-      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1, 32'h3,
-      32'h3, 32'h400};
+      MACHINE_ID, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
+      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1,
+      {29'd0, ETHERNET, 2'b11}, 32'h3, 32'h400};
+  // The register-page words whose write waits for every write before it:
+  // CMD_PROD, and on revision 16 244 and 250 (muir's `waits_for_writes`).
+  function automatic logic held_word(input logic [7:0] k);
+    return k == 8'o164 || (ETHERNET && (k == 8'o244 || k == 8'o250));
+  endfunction
   logic [31:0] posted_now;
   // The words `quux15_devices.sv` answers, a clock after the grant.
   function automatic logic dev_word(input logic [7:0] k);
     return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
         || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171)
-        || (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147);
+        || (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147)
+        || (ETHERNET && k >= 8'o240 && k <= 8'o257);
   endfunction
   // The words of the devices not built: none now.
   /* verilator lint_off UNUSEDSIGNAL */
@@ -1654,12 +1692,14 @@ module quux15_core #(
       .d_done(bd_done), .d_rdata(bd_rdata));
   assign obs_transfer = bd_walking || bd_busy;
 
-  quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
+  quux15_devices #(.MAIN_WORDS(MAIN_WORDS), .ETHERNET(ETHERNET)) devices (
       .clk(clk), .rst(core_rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
-      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
+      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_k(cprod_k), .prod_data(cprod_word),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
+      .eth_we(eth_we), .eth_widx(eth_widx), .eth_wdata(eth_wdata), .eth_ridx(eth_ridx),
+      .eth_rdata(eth_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod), .eth_sweep(eth_sweep),
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
       .rd_word(dev_rd_word), .rd_built(dev_rd_built), .rd_release(n_rgr_rel),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
@@ -2379,9 +2419,13 @@ module quux15_core #(
   always_comb begin
     wb_nxm = at_grant && s_nothing;
     // --- The register's write taken now (`register_write_now`); CMD_PROD's
-    // --- held for the port.
-    rw_take  = rgw_v && rgw_rel;
-    take_cmd_prod = rw_take && rgw_bus[7:0] == 8'o164;
+    // --- held for the port, and revision 16's 244 and 250: one at a time,
+    // --- a write of another such word waiting behind the one held until it
+    // --- lands, one of the same word replacing it.
+    rw_behind = rgw_v && rgw_rel && held_word(rgw_bus[7:0]) && cprod_v && !port_empty
+             && cprod_k != rgw_bus[7:0];
+    rw_take  = rgw_v && rgw_rel && !rw_behind;
+    take_cmd_prod = rw_take && held_word(rgw_bus[7:0]);
     rw_v     = rw_take && rgw_bus[7:0] >= 8'o220 && rgw_bus[7:0] <= 8'o224;
     rw_k     = rgw_bus[7:0];
     rw_data  = rgw_word[31:0];
@@ -3153,6 +3197,7 @@ module quux15_core #(
       if (take_cmd_prod) begin
         cprod_v    <= 1'b1;
         cprod_word <= rgw_word[31:0];
+        cprod_k    <= rgw_bus[7:0];
       end else if (cprod_v && port_empty) begin
         cprod_v <= 1'b0;
       end

@@ -2833,6 +2833,38 @@ for _p in QUUX15_CORE:
         golden=["quux15_%s.quux.p%d.b2.golden" % (_p, _q)
                 for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
 
+# **AND AT REVISION 16** (the Makefile's `QUUX16_GROUPS`,
+# `quux15_<group>.quux.r16.pass`): the core built with revision 16's
+# MACHINE-ID, and so with the Ethernet device, its testbench refusing a
+# trace of another revision.
+QUUX16_GROUPS = ("ethernet", "filedev", "network")
+QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
+for _p in QUUX16_GROUPS:
+    CHECKS["quux15_%s_quux_r16" % _p] = dict(
+        CHECKS["quux15_alu_quux"],
+        sources=CHECKS["quux15_alu_quux"]["sources"] + ["rtl/machine/quux16_ethernet.sv"],
+        flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GMACHINE_ID=1364525316", "-CFLAGS", "-DQUUX15_REVISION=16"],
+        golden=["quux15_%s.quux.p%d.r16.golden" % (_p, _q)
+                for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
+
+# **REVISION 16's ETHERNET DEVICE FROM BOTH OF ITS SIDES** (the Makefile's
+# `quux16_ethernet_module.quux.pass`): the register page's devices with the
+# device in them and the face before them, against muir's `EthernetDevice`
+# over `golden/src/quux16_ethernet.rs`'s scripts and the host's side's rules,
+# the face driven by `quux-ethernet-device`'s own `qed_face_fabric.c`.
+_QED_PKG = _Q15CHK_PKG + "quux-ethernet-device/src"
+CHECKS["quux16_ethernet_module_quux"] = {
+    "sources": ["rtl/machine/quux16_ethernet.sv", "rtl/machine/quux15_devices.sv", "rtl/plumbing/quux_ed_face.sv"],
+    "extra": ["rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv", "rtl/plumbing/cadr_gp_regs.sv",
+              "tb/quux16_ethernet_harness.sv"],
+    "top": "quux16_ethernet_harness",
+    "tb": "tb/quux16_ethernet_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],
+    "golden": ["quux16_ethernet_rules.golden", "quux16_ethernet_random.golden"],
+    "machine": "quux",
+    "clib": {"sources": [_QED_PKG + "/qed_face_fabric.c"], "include": [_QED_PKG], "cflags": ["-DQED_TEST_HOOKS"]},
+}
+
 # And at the Kria's 32M words of main memory (the Makefile's
 # `quux15_mainsize.quux.pass`): the core built with `MAIN_WORDS` at 32M and
 # the testbench's memory as large, held to the `mainsize` group.
@@ -3641,7 +3673,8 @@ def build_and_run(args, work, check, build_fails=False):
         lib_dir = os.path.join(work, "clib_" + check)
         os.makedirs(lib_dir, exist_ok=True)
         inc = ["-I" + os.path.join(work, d) for d in spec["clib"]["include"]]
-        rc, out = run(["cc", "-O2", "-Wall", "-Wextra", "-Werror", "-std=gnu11"] + inc + ["-c"]
+        rc, out = run(["cc", "-O2", "-Wall", "-Wextra", "-Werror", "-std=gnu11"] + inc
+                      + spec["clib"].get("cflags", []) + ["-c"]
                       + [os.path.join(work, s) for s in spec["clib"]["sources"]], lib_dir)
         if rc != 0:
             return BROKEN, first_problem(out)
@@ -3650,7 +3683,7 @@ def build_and_run(args, work, check, build_fails=False):
         rc, out = run(["ar", "rcs", lib] + objs, lib_dir)
         if rc != 0:
             return BROKEN, first_problem(out)
-        for i in inc:
+        for i in inc + spec["clib"].get("cflags", []):
             cmd += ["-CFLAGS", i]
         cmd += ["-LDFLAGS", lib]
     if spec.get("gprom_path"):

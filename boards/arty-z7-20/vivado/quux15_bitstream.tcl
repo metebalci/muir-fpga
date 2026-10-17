@@ -21,7 +21,14 @@
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xc7z020clg400-1"}]
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 48}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
-set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-arty-quux15"}]
+# `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
+# (QUUX's Ethernet contract, §10), the top's generic and the output's name.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 15}]
+if {$revision ni {15 16}} {
+    puts "Q15ARTY: FAILED --- REVISION=$revision is not 15 or 16"
+    exit 1
+}
+set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-arty-quux$revision"}]
 if {[info exists ::env(VIVADO_THREADS)]} { set_param general.maxThreads $::env(VIVADO_THREADS) }
 # The core's `period` is seven bits of 0.5 ns, up to 63.5 ns, and the MMCM
 # divides a 1,000 MHz VCO by a whole number here.
@@ -42,7 +49,7 @@ set sources [list \
     rtl/machine/quux15_exec.sv rtl/machine/quux_muldiv.sv rtl/plumbing/quux15_axi_master.sv \
     rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/machine/quux15_devices.sv \
     rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv rtl/machine/quux15_core.sv rtl/machine/quux15_mdmem.sv rtl/machine/quux15_dmem.sv \
-    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
     rtl/plumbing/cadr_input_cables.sv rtl/plumbing/quux15_axi3.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -56,7 +63,8 @@ read_xdc -unmanaged boards/arty-z7-20/vivado/quux15_ram.xdc
 set t0 [clock seconds]
 synth_design -top quux15_arty -part $part -include_dirs rtl/machine \
     -generic PROM_HEX=[file normalize $prom] \
-    -generic PERIOD_NS=$period
+    -generic PERIOD_NS=$period \
+    -generic REVISION=$revision
 puts "Q15ARTY: synthesis took [expr {[clock seconds] - $t0}] s"
 report_utilization -file $outdir/util_synth.rpt
 

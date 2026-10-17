@@ -30717,9 +30717,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note before it is answered (muir's `NoCmdProdWait`): the host would read a
 @note ring entry still in the posted writes.
 @old
-      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
+      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_k(cprod_k), .prod_data(cprod_word),
 @new
-      .prod_v(cprod_v && errhalt == 2'd0), .prod_data(cprod_word),
+      .prod_v(cprod_v && errhalt == 2'd0), .prod_k(cprod_k), .prod_data(cprod_word),
 @end
 
 @mutation quux15-sweep-misses-a-set
@@ -30830,9 +30830,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A completion the host made drops nothing of the cache: the response
 @note read over a line read before the command reads the old word.
 @old
-      .empty(port_empty), .sweep_go(fd_complete),
+      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
 @new
-      .empty(port_empty), .sweep_go(fd_complete && 1'b0),
+      .empty(port_empty), .sweep_go((fd_complete && 1'b0) || eth_sweep),
 @end
 
 @mutation quux15-fd-host-refusal-not-sticky
@@ -31953,9 +31953,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note the board's 1920 by 1080: the band would draw a screen of the old size
 @note into a buffer laid out for the new one.
 @old
-      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1, 32'h3,
+      32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1,
 @new
-      32'h1, 32'h5000400, 32'h10028, 32'he0000000, 32'h1, 32'h3,
+      32'h1, 32'h5000400, 32'h10028, 32'he0000000, 32'h1,
 @end
 
 @mutation quux15-frame-buffer-left-at-1280x1024
@@ -32224,8 +32224,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note `reset_devices` resets the I/O board's.
 @old
       .clk(clk), .rst(rst), .dev_reset(wr_reset),
+      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
 @new
       .clk(clk), .rst(rst), .dev_reset(1'b0 & wr_reset),
+      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
 @end
 
 @mutation quux15-net-reset-keeps-the-enables
@@ -33709,9 +33711,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file boards/de25-nano/quartus/build.sh
 @note The DE25-Nano's build taking REVISION=15 beside the CADR.
 @old
-if [ "$revision" = 15 ] && [ "$machine" != quux ]; then
+if [ "$revision" -ge 15 ] && [ "$machine" != quux ]; then
 @new
-if [ "$revision" = 15 ] && [ "$machine" = nothing ]; then
+if [ "$revision" -ge 15 ] && [ "$machine" = nothing ]; then
 @end
 
 @mutation machine-param-the-de25-takes-revision-15-under-ten-nanoseconds
@@ -33802,9 +33804,9 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @note The top's own period left at the provisional 27 ns, not the binding
 @note fit's 22.5 ns.
 @old
-    parameter int unsigned PERIOD = 45
+    parameter int unsigned PERIOD = 45,
 @new
-    parameter int unsigned PERIOD = 54
+    parameter int unsigned PERIOD = 54,
 @end
 
 @mutation quux15-de25-own-period-left-at-27-console
@@ -33813,9 +33815,9 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @note The top's own period left at the provisional 27 ns: the console's
 @note word 40 reads 54.
 @old
-    parameter int unsigned PERIOD = 45
+    parameter int unsigned PERIOD = 45,
 @new
-    parameter int unsigned PERIOD = 54
+    parameter int unsigned PERIOD = 54,
 @end
 
 # **AND ON THE ZYNQ BOARDS, THE MACHINE HELD UNTIL ITS MEMORY PORT IS LIVE**
@@ -34051,12 +34053,12 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @note The cache cleared a hundred clocks after the hard reset ends, the core
 @note running: lookups are granted before the clear lands.
 @old
-  logic        fd_complete;
+  logic        fd_complete, eth_sweep;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(core_rst), .hard(rst),
 @new
-  logic        fd_complete;
+  logic        fd_complete, eth_sweep;
   logic [6:0]  hard_late;
   always_ff @(posedge clk) hard_late <= rst ? 7'd1 : (hard_late != 7'd0 ? hard_late + 7'd1 : 7'd0);
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
@@ -34656,4 +34658,601 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
             problems += compare(Disk(f, size), files.get("ucadr.mcr"), say)
 @new
             compare(Disk(f, size), files.get("ucadr.mcr"), say)
+@end
+
+# --- QUUX revision 16's Ethernet device (QUUX's Ethernet contract, §2):
+# `rtl/machine/quux16_ethernet.sv` and its face against muir's
+# `EthernetDevice` and the host's rules (`quux16_ethernet_module_quux`), and
+# its place in the core against muir's pipeline at revision 16
+# (`quux15_ethernet_quux_r16`).
+
+@mutation eth-enable-checks-one-ring
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The enable checks the transmit ring alone: a receive ring off a line,
+@note over 8 or past main memory is taken.
+@old
+        if (fits(tx_base_w, tx_log2_w) && fits(rx_base_w, rx_log2_w)) begin
+@new
+        if (fits(tx_base_w, tx_log2_w) && fits(rx_base_w, 4'd0)) begin
+@end
+
+@mutation eth-fit-takes-nine
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A ring of 2^9 entries is taken at the enable.
+@old
+    return base[2:0] == 3'd0 && log2 <= 4'd8
+@new
+    return base[2:0] == 3'd0 && log2 <= 4'd9
+@end
+
+@mutation eth-fit-half-line
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A base four words into a line is taken.
+@old
+    return base[2:0] == 3'd0 && log2 <= 4'd8
+@new
+    return base[1:0] == 2'd0 && log2 <= 4'd8 && base[2] == base[2]
+@end
+
+@mutation eth-fit-a-line-past-the-end
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A ring one line past main memory's end is taken.
+@old
+        && 32'(base) + (32'd8 << log2) <= 32'(MAIN_WORDS);
+@new
+        && 32'(base) + (32'd8 << log2) <= 32'(MAIN_WORDS) + 32'd8;
+@end
+
+@mutation eth-refusal-not-shown
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A refused enable leaves status <2> clear.
+@old
+          refused_w = 1'b1;
+@new
+          refused_w = 1'b0;
+@end
+
+@mutation eth-control-keeps-the-fault
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A write of 240 leaves the index fault up.
+@old
+      fault_w   = 1'b0;
+@new
+      fault_w   = fault;
+@end
+
+@mutation eth-enable-drops-the-interrupt-enable
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The enable takes no interrupt enable from its own write.
+@old
+          on_w = 1'b1; ie_w = wdata[8];
+@new
+          on_w = 1'b1; ie_w = 1'b0;
+@end
+
+@mutation eth-disable-keeps-the-receive-indexes
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A disable by 240 leaves 250, 251 and 252 where they were.
+@old
+        on_w = 1'b0; ie_w = 1'b0;
+        tx_prod_w = '0; tx_cons_w = '0; rx_prod_w = '0; rx_cons_w = '0; rx_taken_w = '0;
+      end else if (on_w) begin
+@new
+        on_w = 1'b0; ie_w = 1'b0;
+        tx_prod_w = '0; tx_cons_w = '0;
+      end else if (on_w) begin
+@end
+
+@mutation eth-reset-keeps-the-faults
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note RESET-DEVICES leaves status <2> and <3> up.
+@old
+      on_w = 1'b0; ie_w = 1'b0; refused_w = 1'b0; fault_w = 1'b0;
+@new
+      on_w = 1'b0; ie_w = 1'b0;
+@end
+
+@mutation eth-bases-written-while-enabled
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 242, 243, 246 and 247 are written while the device is enabled.
+@old
+    if (wr && !on_w) begin
+@new
+    if (wr) begin
+@end
+
+@mutation eth-base-27-bits
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The transmit ring's base keeps 27 bits, not 28.
+@old
+      if (wr_k == R_TX_BASE) tx_base_w = wdata[27:0];
+@new
+      if (wr_k == R_TX_BASE) tx_base_w = {1'b0, wdata[26:0]};
+@end
+
+@mutation eth-full-transmit-ring-refused
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 244 making 244 - 245 the ring's size is refused, one short.
+@old
+      if (held_data - tx_cons_w > 16'd1 << tx_log2_w || held_data - tx_cons_w < tx_prod_w - tx_cons_w)
+@new
+      if (held_data - tx_cons_w >= 16'd1 << tx_log2_w || held_data - tx_cons_w < tx_prod_w - tx_cons_w)
+@end
+
+@mutation eth-transmit-producer-backwards
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 244 judged backwards by its raw value, not mod 2^16 from 245: a move
+@note across the top is refused.
+@old
+      if (held_data - tx_cons_w > 16'd1 << tx_log2_w || held_data - tx_cons_w < tx_prod_w - tx_cons_w)
+@new
+      if (held_data - tx_cons_w > 16'd1 << tx_log2_w || held_data < tx_prod_w)
+@end
+
+@mutation eth-buffers-counted-from-251
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 250's room is counted from 251, not 252: a filled entry not taken back
+@note frees its place.
+@old
+      if (held_data - rx_taken_w > 16'd1 << rx_log2_w || held_data - rx_taken_w < rx_prod_w - rx_taken_w)
+@new
+      if (held_data - rx_cons_w > 16'd1 << rx_log2_w || held_data - rx_taken_w < rx_prod_w - rx_taken_w)
+@end
+
+@mutation eth-receive-producer-backwards
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 250 judged backwards by its raw value, not mod 2^16 from 252: a move
+@note across the top is refused.
+@old
+      if (held_data - rx_taken_w > 16'd1 << rx_log2_w || held_data - rx_taken_w < rx_prod_w - rx_taken_w)
+@new
+      if (held_data - rx_taken_w > 16'd1 << rx_log2_w || held_data < rx_prod_w)
+@end
+
+@mutation eth-held-250-taken-as-244
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A held write of 250 moves 244 too.
+@old
+    if (held && on_w && !held_rx) begin
+@new
+    if (held && on_w) begin
+@end
+
+@mutation eth-taken-past-251
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 252 may pass 251, up to 250.
+@old
+      if (wdata[15:0] - rx_taken_w > rx_cons_w - rx_taken_w) fault_w = 1'b1;
+@new
+      if (wdata[15:0] - rx_taken_w > rx_prod_w - rx_taken_w) fault_w = 1'b1;
+@end
+
+@mutation eth-taken-while-disabled
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A write of 252 while disabled is judged, and faults.
+@old
+    if (wr && on_w && wr_k == R_RX_TAKEN) begin
+@new
+    if (wr && wr_k == R_RX_TAKEN) begin
+@end
+
+@mutation eth-interrupt-without-its-enable
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Word 100's <8> rises with a frame waiting whatever 240 <8> says.
+@old
+  assign irq       = ie_w && rx_cons_w != rx_taken_w;
+@new
+  assign irq       = (ie_w || !ie_w) && rx_cons_w != rx_taken_w;
+@end
+
+@mutation eth-interrupt-on-buffers-given
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Word 100's <8> read up for buffers given, not frames filled.
+@old
+  assign irq_state = ie && rx_cons != rx_taken;
+@new
+  assign irq_state = ie && rx_prod != rx_taken;
+@end
+
+@mutation eth-status-waiting-on-buffers
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Status <8> up for buffers given, not frames filled.
+@old
+      4'o01: rd_word = {counts[31:9], rx_cons != rx_taken, counts[7:4], fault, refused, !on && !busy, on};
+@new
+      4'o01: rd_word = {counts[31:9], rx_prod != rx_taken, counts[7:4], fault, refused, !on && !busy, on};
+@end
+
+@mutation eth-status-quiet-ignores-the-claim
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Status <1> reads quiet while the host holds its claim.
+@old
+      4'o01: rd_word = {counts[31:9], rx_cons != rx_taken, counts[7:4], fault, refused, !on && !busy, on};
+@new
+      4'o01: rd_word = {counts[31:9], rx_cons != rx_taken, counts[7:4], fault, refused, !on && (busy || !busy), on};
+@end
+
+@mutation eth-state-quiet-ignores-the-claim
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note STATE's <3> reads quiet while the claim is held.
+@old
+      H_STATE:     host_rdata <= {epoch, 12'd0, !on && !busy, busy, ie, on};
+@new
+      H_STATE:     host_rdata <= {epoch, 12'd0, !on, busy, ie, on};
+@end
+
+@mutation eth-epoch-not-at-a-reset
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A reset of the machine that finds the device enabled leaves the epoch.
+@old
+    if (rst ? on : on && !on_w) epoch <= epoch + 16'd1;
+@new
+    if (rst ? 1'b0 : on && !on_w) epoch <= epoch + 16'd1;
+@end
+
+@mutation eth-epoch-at-every-reset
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Every reset of the machine moves the epoch, the device disabled or not.
+@old
+    if (rst ? on : on && !on_w) epoch <= epoch + 16'd1;
+@new
+    if (rst ? 1'b1 : on && !on_w) epoch <= epoch + 16'd1;
+@end
+
+@mutation eth-claim-in-any-epoch
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A claim under a stale epoch is taken.
+@old
+      else if (in_epoch && !rst) busy <= 1'b1;
+@new
+      else if (on && !rst) busy <= 1'b1;
+@end
+
+@mutation eth-release-only-in-the-epoch
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A release carrying another epoch keeps the claim.
+@old
+      if (!host_wdata[0]) busy <= 1'b0;
+@new
+      if (!host_wdata[0] && in_epoch) busy <= 1'b0;
+@end
+
+@mutation eth-transmit-move-any-epoch
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note TX_CONS under a stale epoch moves 245.
+@old
+  assign tx_ok    = in_epoch && h_index - tx_chost <= tx_prod - tx_chost;
+@new
+  assign tx_ok    = on && h_index - tx_chost <= tx_prod - tx_chost;
+@end
+
+@mutation eth-transmit-move-past-244
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note TX_CONS may take 245 past 244.
+@old
+  assign tx_ok    = in_epoch && h_index - tx_chost <= tx_prod - tx_chost;
+@new
+  assign tx_ok    = in_epoch && h_index - tx_chost <= tx_prod - tx_chost + 16'd1;
+@end
+
+@mutation eth-delivery-by-nothing
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note RX_CONS moving 251 by nothing is taken, and sweeps the cache.
+@old
+  assign rx_ok    = in_epoch && h_index != rx_chost && h_index - rx_chost <= rx_prod - rx_chost;
+@new
+  assign rx_ok    = in_epoch && h_index - rx_chost <= rx_prod - rx_chost;
+@end
+
+@mutation eth-delivery-past-250
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note RX_CONS may take 251 past 250.
+@old
+  assign rx_ok    = in_epoch && h_index != rx_chost && h_index - rx_chost <= rx_prod - rx_chost;
+@new
+  assign rx_ok    = in_epoch && h_index != rx_chost && h_index - rx_chost <= rx_prod - rx_chost + 16'd1;
+@end
+
+@mutation eth-delivery-lands-disabled
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A delivery a disable overtook still lands, and sweeps.
+@old
+  assign rx_land = rx_pub && on;
+@new
+  assign rx_land = rx_pub;
+@end
+
+@mutation eth-transmit-move-lands-disabled
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A move of 245 a disable overtook still lands.
+@old
+  assign tx_land = tx_pub && on;
+@new
+  assign tx_land = tx_pub;
+@end
+
+@mutation eth-no-sweep
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A delivery makes nothing coherent.
+@old
+    sweep = rx_land;
+@new
+    sweep = rx_land && !rx_land;
+@end
+
+@mutation eth-sweep-a-clock-early
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The sweep at RX_CONS's write, a clock before 251's landing.
+@old
+    sweep = rx_land;
+@new
+    sweep = h_rx && rx_ok && rx_land == rx_land;
+@end
+
+@mutation eth-core-no-sweep
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux16_ethernet.sv
+@note A delivery makes nothing coherent: the core reads the line it held.
+@old
+    sweep = rx_land;
+@new
+    sweep = rx_land && !rx_land;
+@end
+
+@mutation eth-counts-unmasked
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note COUNTS keeps the bits that are not counters'.
+@old
+    if (host_we && host_widx == H_COUNTS)   counts   <= host_wdata & COUNTS_MASK;
+@new
+    if (host_we && host_widx == H_COUNTS)   counts   <= host_wdata & (COUNTS_MASK | 32'h0000_010F);
+@end
+
+@mutation eth-mac-default
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 253 comes up with its bytes the wrong way round.
+@old
+  logic [15:0] mac_high = 16'h0200;
+@new
+  logic [15:0] mac_high = 16'h0002;
+@end
+
+@mutation eth-address-default
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note 255 comes up as the gateway's address.
+@old
+  logic [31:0] ip       = {8'd169, 8'd254, 8'd100, 8'd2};
+@new
+  logic [31:0] ip       = {8'd169, 8'd254, 8'd100, 8'd1};
+@end
+
+@mutation eth-gateway-from-netmask
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The host's netmask is written into 257.
+@old
+    if (host_we && host_widx == H_GATEWAY)  gateway  <= host_wdata;
+@new
+    if (host_we && host_widx == H_NETMASK)  gateway  <= host_wdata;
+@end
+
+@mutation eth-245-reads-244
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Word 245 reads 244.
+@old
+      4'o05: rd_word = {16'd0, tx_cons};
+@new
+      4'o05: rd_word = {16'd0, tx_prod};
+@end
+
+@mutation ed-face-no-gateway
+@check quux16_ethernet_module_quux
+@file rtl/plumbing/quux_ed_face.sv
+@note The page stops at 0x13C: GATEWAY reads 0 and takes no write.
+@old
+    if (word >= 10'h040 && word <= 10'h050) return 6'h20 | 6'(word - 10'h040);
+@new
+    if (word >= 10'h040 && word <= 10'h04F) return 6'h20 | 6'(word - 10'h040);
+@end
+
+@mutation ed-face-mem-words-is-state
+@check quux16_ethernet_module_quux
+@file rtl/plumbing/quux_ed_face.sv
+@note 0x004 reads STATE, not MEM_WORDS.
+@old
+    if (word == 10'h001) return 6'h31;
+@new
+    if (word == 10'h001) return 6'h20;
+@end
+
+@mutation ed-face-takes-part-words
+@check quux16_ethernet_module_quux
+@file rtl/plumbing/quux_ed_face.sv
+@note A write of fewer than four bytes reaches the device.
+@old
+      host_we <= wr && w_idx[5] && wr_mask == 32'hFFFF_FFFF;
+@new
+      host_we <= wr && w_idx[5] && wr_mask != 32'd0;
+@end
+
+@mutation ed-face-ident
+@check quux16_ethernet_module_quux
+@file rtl/plumbing/quux_ed_face.sv
+@note IDENT reads "QE15".
+@old
+    parameter logic [31:0] IDENT = 32'h5145_3136,
+@new
+    parameter logic [31:0] IDENT = 32'h5145_3135,
+@end
+
+@mutation eth-word-100-without-the-device
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux15_devices.sv
+@note Word 100's <8> reads 0: a poll on it never sees a frame.
+@old
+    if (rq_k == 8'o100) rd_word[8] = ed_irq_state;
+@new
+    if (rq_k == 8'o100) rd_word[8] = 1'b0 & ed_irq_state;
+@end
+
+@mutation eth-interrupt-not-the-machines
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_devices.sv
+@note The device's level never reaches conditions 5 and 6.
+@old
+                || ed_irq;
+@new
+                || (ed_irq && 1'b0);
+@end
+
+@mutation eth-writes-of-250-257-lost
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux15_devices.sv
+@note Only writes of 240-247 reach the device; 252's is lost.
+@old
+        .wr(wr_v && wr_k[7:4] == 4'o12), .wr_k(wr_k[3:0]), .wdata(wr_data),
+@new
+        .wr(wr_v && wr_k[7:4] == 4'o12 && !wr_k[3]), .wr_k(wr_k[3:0]), .wdata(wr_data),
+@end
+
+@mutation eth-every-held-write-the-devices
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_devices.sv
+@note CMD_PROD's held write lands on the Ethernet device as 244.
+@old
+        .held(prod_v && (prod_k == 8'o244 || prod_k == 8'o250)), .held_rx(prod_k == 8'o250),
+@new
+        .held(prod_v), .held_rx(prod_k == 8'o250),
+@end
+
+@mutation eth-every-held-write-cmd-prod
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_devices.sv
+@note A held write of 244 or 250 lands on the file device as CMD_PROD.
+@old
+    if (prod_v && prod_k == 8'o164 && fd_on_w) begin
+@new
+    if (prod_v && (prod_k == 8'o164 || prod_k == 8'o244) && fd_on_w) begin
+@end
+
+@mutation eth-feature-word-15-without-the-device
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note Feature word 15 reads 3 on revision 16.
+@old
+      {29'd0, ETHERNET, 2'b11}, 32'h3, 32'h400};
+@new
+      {29'd0, ETHERNET && 1'b0, 2'b11}, 32'h3, 32'h400};
+@end
+
+@mutation eth-machine-id-word-reads-15
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note Feature word 0 keeps revision 15's MACHINE-ID.
+@old
+      MACHINE_ID, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
+@new
+      {MACHINE_ID[31:16], 12'd15, MACHINE_ID[3:0]}, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
+@end
+
+@mutation eth-244-not-held
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note A write of 244 is taken at once, before the writes ahead of it are
+@note answered: the host could read an entry still in the posted writes.
+@old
+    return k == 8'o164 || (ETHERNET && (k == 8'o244 || k == 8'o250));
+@new
+    return k == 8'o164 || (ETHERNET && k == 8'o250);
+@end
+
+@mutation eth-held-other-word-replaces
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note A held write of another word replaces the one held, and one of the
+@note same word waits behind it.
+@old
+             && cprod_k != rgw_bus[7:0];
+@new
+             && cprod_k == rgw_bus[7:0];
+@end
+
+@mutation eth-words-240-257-not-decoded
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note Words 250-257 read 0 as reserved words.
+@old
+        || (ETHERNET && k >= 8'o240 && k <= 8'o257);
+@new
+        || (ETHERNET && k >= 8'o240 && k <= 8'o247);
+@end
+
+@mutation eth-delivery-not-swept
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note RX_CONS's landing does not reach the port's sweep.
+@old
+      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
+@new
+      .empty(port_empty), .sweep_go(fd_complete || (eth_sweep && 1'b0)),
+@end
+
+@mutation eth-held-word-forgotten
+@check quux15_ethernet_quux_r16
+@file rtl/machine/quux15_core.sv
+@note The held write keeps no word of its own: every one lands as CMD_PROD.
+@old
+        cprod_k    <= rgw_bus[7:0];
+@new
+        cprod_k    <= 8'o164 | (rgw_bus[7:0] & 8'd0);
+@end
+
+@mutation eth-de25-face-a-page-off
+@check quux15_de25_faces
+@file boards/de25-nano/quux15_de25.sv
+@note Revision 16's Ethernet page a page above the pack side's + 0x5000,
+@note where `quux-ethernet-device` looks.
+@old
+      .CHAOS_BASE(ETHERNET ? 32'h0000_5000 : 32'h0000_1000),
+@new
+      .CHAOS_BASE(ETHERNET ? 32'h0000_6000 : 32'h0000_1000),
 @end

@@ -123,6 +123,8 @@ module quux15_reset_harness #(
       .period(7'd20), .rtc_start(32'd0),
       .fd_doorbell(), .fd_prod(), .fd_enabled(),
       .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd2), .host_rdata(),
+      .eth_we(1'b0), .eth_widx(5'd0), .eth_wdata(32'd0), .eth_ridx(5'd0), .eth_rdata(),
+      .eth_tx_prod(), .eth_rx_prod(),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'h7f), .kbd_busy(),
       .chaos_address(16'd0), .chaos_tx_go(), .chaos_tx_len(), .chaos_tx_valid(), .chaos_tx_word(),
       .chaos_tx_clear(), .chaos_reset(), .chaos_csr(),

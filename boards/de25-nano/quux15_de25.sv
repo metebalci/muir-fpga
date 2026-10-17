@@ -120,7 +120,12 @@ module quux15_de25 #(
     // this board, which `build.sh` sets from `PERIOD_NS` and asks the PLL
     // for.  22.5 ns, the board's binding fit's and its period in the
     // goldens.
-    parameter int unsigned PERIOD = 45
+    parameter int unsigned PERIOD = 45,
+    // **THE REVISION**, QUUX's, 15 or 16 (QUUX's Ethernet contract, §10):
+    // MACHINE-ID's revision field, and on 16 the Ethernet device, its page
+    // at the pack side's base + 0x5000 for `quux-ethernet-device`.  One
+    // design for both, the flow choosing it.
+    parameter int unsigned REVISION = 15
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -508,8 +513,24 @@ module quux15_de25 #(
   logic [7:0]  qm_wstrb;
   logic [1:0]  qm_bresp, qm_rresp;
 
+  // **REVISION 16's ETHERNET DEVICE** (`rtl/machine/quux16_ethernet.sv`),
+  // its host's side through `quux_ed_face.sv` on the split's second page,
+  // which on revision 16 is at the pack side's base + 0x5000: QUUX has no
+  // Chaosnet cable, so that page has nothing else to carry.  Below 16 the
+  // page is the network's, answered with a constant as before, and the
+  // host's side is idle.
+  localparam bit ETHERNET = REVISION >= 16;
+  if (REVISION != 15 && REVISION != 16) begin : g_revision
+    $error("REVISION is %0d; this board builds QUUX revision 15 or 16", REVISION);
+  end
+  logic        eth_we;
+  logic [4:0]  eth_widx, eth_ridx;
+  logic [31:0] eth_wdata, eth_rdata;
+  logic [15:0] eth_tx_prod, eth_rx_prod;
+
   quux15_core #(
       .PROM_HEX(PROM_HEX),
+      .MACHINE_ID({16'h5155, 12'(REVISION), 4'd4}),
       .MAIN_WORDS(MAIN_WORDS), .CACHE_WORDS(CACHE_WORDS),
       .VIDEO_W(VIDEO_W), .VIDEO_H(VIDEO_H), .BOARD_NAME(BOARD),
       .MAIN_BASE(MAIN_BASE),
@@ -537,6 +558,8 @@ module quux15_de25 #(
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata),
+      .eth_we(eth_we), .eth_widx(eth_widx), .eth_wdata(eth_wdata), .eth_ridx(eth_ridx),
+      .eth_rdata(eth_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines), .kbd_busy(kbd_busy),
       .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
       .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
@@ -688,7 +711,7 @@ module quux15_de25 #(
 
   cadr_gp0_split #(
       .PACK_BASE (32'h0000_0000),
-      .CHAOS_BASE(32'h0000_1000),
+      .CHAOS_BASE(ETHERNET ? 32'h0000_5000 : 32'h0000_1000),
       .SER_BASE  (32'h0000_2000),
       .INPUT_BASE(32'h0000_3000),
       // QUUX's fifth page, the clock and the file device.
@@ -815,17 +838,41 @@ module quux15_de25 #(
   );
 
   // The network's page and the serial line's, which QUUX has not got.
-  cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_chaos (
-      .clk(clk), .rst(h2f_rst),
-      .s_awvalid(h2fc_awvalid), .s_awid(h2fc_awid), .s_awready(h2fc_awready),
-      .s_wlast(h2fc_wlast), .s_wvalid(h2fc_wvalid), .s_wready(h2fc_wready),
-      .s_bresp(h2fc_bresp), .s_bid(h2fc_bid), .s_bvalid(h2fc_bvalid),
-      .s_bready(h2fc_bready),
-      .s_arlen(h2fc_arlen), .s_arid(h2fc_arid), .s_arvalid(h2fc_arvalid),
-      .s_arready(h2fc_arready),
-      .s_rdata(h2fc_rdata), .s_rresp(h2fc_rresp), .s_rid(h2fc_rid),
-      .s_rlast(h2fc_rlast), .s_rvalid(h2fc_rvalid), .s_rready(h2fc_rready)
-  );
+  // The split's second page: on revision 16 the Ethernet device's face,
+  // "QE16", onto the core's Ethernet host side; below it the network's,
+  // which QUUX has not got, answered with a constant.
+  if (ETHERNET) begin : g_ed_face
+    quux_ed_face #(.IDENT(32'h5145_3136), .ID_W(4), .LEN_W(8)) u_ed_face (
+        .clk(clk), .rst(h2f_rst),
+        .s_awaddr(h2fc_awaddr), .s_awlen(h2fc_awlen), .s_awid(h2fc_awid),
+        .s_awvalid(h2fc_awvalid), .s_awready(h2fc_awready),
+        .s_wdata(h2fc_wdata), .s_wstrb(h2fc_wstrb), .s_wlast(h2fc_wlast),
+        .s_wvalid(h2fc_wvalid), .s_wready(h2fc_wready),
+        .s_bresp(h2fc_bresp), .s_bid(h2fc_bid), .s_bvalid(h2fc_bvalid), .s_bready(h2fc_bready),
+        .s_araddr(h2fc_araddr), .s_arlen(h2fc_arlen), .s_arid(h2fc_arid),
+        .s_arvalid(h2fc_arvalid), .s_arready(h2fc_arready),
+        .s_rdata(h2fc_rdata), .s_rresp(h2fc_rresp), .s_rid(h2fc_rid),
+        .s_rlast(h2fc_rlast), .s_rvalid(h2fc_rvalid), .s_rready(h2fc_rready),
+        .host_we(eth_we), .host_widx(eth_widx), .host_wdata(eth_wdata),
+        .host_ridx(eth_ridx), .host_rdata(eth_rdata)
+    );
+  end else begin : g_no_ed_face
+    cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_chaos (
+        .clk(clk), .rst(h2f_rst),
+        .s_awvalid(h2fc_awvalid), .s_awid(h2fc_awid), .s_awready(h2fc_awready),
+        .s_wlast(h2fc_wlast), .s_wvalid(h2fc_wvalid), .s_wready(h2fc_wready),
+        .s_bresp(h2fc_bresp), .s_bid(h2fc_bid), .s_bvalid(h2fc_bvalid),
+        .s_bready(h2fc_bready),
+        .s_arlen(h2fc_arlen), .s_arid(h2fc_arid), .s_arvalid(h2fc_arvalid),
+        .s_arready(h2fc_arready),
+        .s_rdata(h2fc_rdata), .s_rresp(h2fc_rresp), .s_rid(h2fc_rid),
+        .s_rlast(h2fc_rlast), .s_rvalid(h2fc_rvalid), .s_rready(h2fc_rready)
+    );
+    assign eth_we = 1'b0;
+    assign eth_widx = 5'd0;
+    assign eth_wdata = 32'd0;
+    assign eth_ridx = 5'd0;
+  end
   cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_ser (
       .clk(clk), .rst(h2f_rst),
       .s_awvalid(h2fs_awvalid), .s_awid(h2fs_awid), .s_awready(h2fs_awready),
@@ -1179,7 +1226,7 @@ module quux15_de25 #(
   // here).
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = ^{obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
+  assign unused = ^{eth_tx_prod, eth_rx_prod, eth_rdata, obs_cs, obs_rd, obs_ex, obs_wb, obs_commit[14:0], obs_pdlptr, obs_pdlidx,
                     obs_spcptr, obs_q, obs_vma, obs_md, obs_lc, obs_ic, obs_opnd, obs_ea, obs_em,
                     obs_ob, obs_oalow, obs_oahigh, obs_grant, obs_gaddr, obs_mdl, obs_mdword,
                     obs_reg, obs_raddr, obs_queue, obs_inflight, ro_word,

@@ -302,14 +302,17 @@ QUUX15_FACES = [
     ("u_h2f_split", "SER_BASE", "h2f", "SERIAL"),
     ("u_h2f_split", "INPUT_BASE", "h2f", "INPUT"),
     ("u_h2f_split", "FD_BASE", "h2f", "FD"),
+    # And on revision 16 the second page is the Ethernet device's face, at
+    # the pack side's + 0x5000 (`quux-ethernet-device`'s QED_FACE_OFFSET).
+    ("u_h2f_split", "CHAOS_BASE@16", "h2f", "PACK+0x5000"),
     ("u_pack", "REG_BASE", "h2f", "PACK"),
     ("u_lw_split", "CON_BASE", "lw", "CONSOLE"),
     ("u_lw_split", "DBG_BASE", "lw", "CONSOLE+0x1000"),
 ]
-QUUX15_SHAPED = ["u_h2f_split", "u_pack", "u_h2f_chaos", "u_h2f_ser", "u_input",
+QUUX15_SHAPED = ["u_h2f_split", "u_pack", "u_h2f_chaos", "u_ed_face", "u_h2f_ser", "u_input",
                  "u_fd_face", "u_h2f_rest", "u_lw_split", "u_face",
                  "u_lw_dbg_rest", "u_lw_rest"]
-QUUX15_ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_h2f_chaos": "h2f",
+QUUX15_ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_h2f_chaos": "h2f", "u_ed_face": "h2f",
                     "u_h2f_ser": "h2f", "u_input": "h2f", "u_fd_face": "h2f",
                     "u_h2f_rest": "h2f", "u_lw_split": "lw", "u_face": "lw",
                     "u_lw_dbg_rest": "lw", "u_lw_rest": "lw"}
@@ -347,6 +350,14 @@ def instance_parameters(text, instance):
     out = {}
     for name, value in re.findall(r"\.(\w+)\s*\(\s*([^()]*?)\s*\)", m.group(2)):
         v = value.replace("_", "").strip()
+        # A page chosen by the revision, `ETHERNET ? <16's> : <15's>`
+        # (`quux15_de25.sv`'s second page): the name for revision 15's and
+        # `<name>@16` for revision 16's.
+        n = re.match(r"^ETHERNET\s*\?\s*(?:\d+)'h([0-9a-fA-F]+)\s*:\s*(?:\d+)'h([0-9a-fA-F]+)$", v)
+        if n:
+            out[name + "@16"] = int(n.group(1), 16)
+            out[name] = int(n.group(2), 16)
+            continue
         n = re.match(r"^(?:\d+)'h([0-9a-fA-F]+)$", v)
         if n:
             out[name] = int(n.group(1), 16)

@@ -360,6 +360,18 @@ QUUX15_PERIODS_bdmix := 36
 QUUX15_PERIODS_input := 20 17 36
 QUUX15_PERIODS_network := 20 17 36
 QUUX15_PERIODS_regread := 20 36
+# **REVISION 16** (QUUX's Ethernet contract, §10): revision 15 with the
+# Ethernet device, words 240-257 and word 100's `<8>`.  `QUUX16_GROUPS` are
+# traced with `--revision 16` (`quux15_<group>.quux.p<P>.r16.golden`) and
+# held on the core built at revision 16 (`obj_quux15_core_r16`), whose
+# testbench refuses a trace of another revision: the `ethernet` group
+# (`golden/src/quux15_ethernet.rs`), the registers, the held writes of 244
+# and 250, transmits and deliveries with the testbench as the device's
+# host, the sweep and the interrupt; and revision 15's file device and
+# network groups again at revision 16, whose 140-157 and 160-171 are
+# revision 15's.
+QUUX16_GROUPS := ethernet filedev network
+QUUX15_PERIODS_ethernet := 20 17 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at
@@ -440,6 +452,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_kr260_probe.pass \
        $(BUILD)/quux15_reset_axi.quux.pass \
        $(BUILD)/quux15_fd_face.pass \
+       $(QUUX16_GROUPS:%=$(BUILD)/quux15_%.quux.r16.pass) $(BUILD)/quux16_ethernet_module.quux.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1630,7 +1643,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
-                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs golden/src/quux15_regread.rs \
+                 golden/src/quux15_blockdisk.rs golden/src/quux15_input.rs golden/src/quux15_network.rs golden/src/quux15_regread.rs golden/src/quux15_ethernet.rs \
                  golden/src/trace15.rs golden/src/chaos_state.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 # A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
@@ -1640,6 +1653,7 @@ $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
 	QUUX15_CHECKPOINTS=$(abspath $(BUILD))/quux15_ckpt \
 	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
 	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) $(if $(filter b2,$(subst ., ,$*)),--bubbles 2) \
+	    $(if $(filter r16,$(subst ., ,$*)),--revision 16) \
 	    $(addprefix --board ,$(filter $(QUUX15_BOARDS),$(subst ., ,$*))) > $@
 $(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program $* --prom > $@
@@ -1667,7 +1681,8 @@ QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_mdmem.sv rtl/ma
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv \
-                   rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv
+                   rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
+                   rtl/machine/quux16_ethernet.sv
 # **AND THE BOARD'S CHECKPOINT WRITER** (A15b.13): a run that ends in a
 # checkpoint (the checkpoints group) is read through the core's readout by
 # `cadr-readout`'s reader and written by `cadr-checkpoint`'s `chk_rtl.c`,
@@ -1715,6 +1730,16 @@ $$(BUILD)/quux15_$(1).quux$(3).pass: $$(BUILD)/obj_quux15_core$(2)/Vquux15_core 
 endef
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),,)))
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),_b2,.b2)))
+
+# **AND AT REVISION 16** (`QUUX16_GROUPS`, above): the core built with
+# revision 16's MACHINE-ID, `{16'h5155, 12'd16, 4'd4}`, 1364525316, and so
+# with the Ethernet device, its testbench refusing a trace of another
+# revision (`QUUX15_REVISION`).
+$(BUILD)/obj_quux15_core_r16/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GMACHINE_ID=1364525316 -CFLAGS -DQUUX15_REVISION=16 \
+	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_r16 \
+	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
+$(foreach p,$(QUUX16_GROUPS),$(eval $(call QUUX15_CORE_RULE,$(p),_r16,.r16)))
 
 # **THE HALT A CHECKPOINT IS TAKEN IN, ON THE CORE ITSELF**: `cadr-readout`'s
 # `ro_found`, as `cadr-checkpoint` calls it, through the testbench's face on
@@ -3426,6 +3451,41 @@ $(BUILD)/quux15_fd_face.pass: $(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harnes
 	$(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness
 	@touch $@
 
+# **REVISION 16's ETHERNET DEVICE FROM BOTH OF ITS SIDES**
+# (`rtl/machine/quux16_ethernet.sv`): the page `rtl/plumbing/quux_ed_face.sv`
+# with revision 16's register-page devices behind it
+# (`tb/quux16_ethernet_harness.sv`), driven over AXI by
+# `quux-ethernet-device`'s own page code, `qed_face_fabric.c`, built here for
+# this host, and on the machine's side as the core drives it
+# (`tb/quux16_ethernet_tb.cpp`): muir's `EthernetDevice` over
+# `golden/src/quux16_ethernet.rs`'s scripts, the rules one by one and
+# programs at random, every register after every step held to muir's, the
+# host's moves made through the face as the program makes them; then every
+# rule of the host's side, which muir has not got, with the case just
+# outside it.
+QED16_SRC := boards/arty-z7-20/linux/buildroot/package/quux-ethernet-device/src
+QED_FACE_LIB := $(abspath $(BUILD))/qedface/libqedface.a
+$(BUILD)/qedface/libqedface.a: $(QED16_SRC)/qed_face_fabric.c $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_host.h \
+        $(QED16_SRC)/qed_mem.h | $(BUILD)
+	mkdir -p $(BUILD)/qedface
+	cd $(BUILD)/qedface && cc -O2 -Wall -Wextra -Werror -std=gnu11 -DQED_TEST_HOOKS \
+	    -c $(abspath $(QED16_SRC)/qed_face_fabric.c) && rm -f libqedface.a && ar rcs libqedface.a qed_face_fabric.o
+QUUX16_ETH_SRC := rtl/machine/quux15_devices.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
+                  rtl/machine/quux16_ethernet.sv rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/quux_ed_face.sv \
+                  tb/quux16_ethernet_harness.sv
+$(BUILD)/obj_quux16_ethernet/Vquux16_ethernet_harness: $(QUUX16_ETH_SRC) tb/quux16_ethernet_tb.cpp \
+        $(BUILD)/qedface/libqedface.a | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -DQED_TEST_HOOKS -CFLAGS -I$(abspath $(QED16_SRC)) \
+	    -LDFLAGS $(QED_FACE_LIB) -Irtl/machine -Irtl/plumbing -Mdir $(BUILD)/obj_quux16_ethernet \
+	    --top-module quux16_ethernet_harness $(QUUX16_ETH_SRC) $(abspath tb/quux16_ethernet_tb.cpp)
+$(BUILD)/quux16_ethernet_%.golden: golden/src/quux16_ethernet.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux16_ethernet -- $* > $@
+$(BUILD)/quux16_ethernet_module.quux.pass: $(BUILD)/obj_quux16_ethernet/Vquux16_ethernet_harness \
+        $(BUILD)/quux16_ethernet_rules.golden $(BUILD)/quux16_ethernet_random.golden
+	$(BUILD)/obj_quux16_ethernet/Vquux16_ethernet_harness $(BUILD)/quux16_ethernet_rules.golden \
+	    $(BUILD)/quux16_ethernet_random.golden
+	@touch $@
+
 # **REVISION 15 ON THE KRIA KR260** (`boards/kria-kr260/quux15_kr260.sv`): its
 # own top level, the pipelined core behind its console face, linted as its
 # flow builds it, with the same stubs.
@@ -3434,14 +3494,15 @@ QUUX15_KR260_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) r
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/quux15_mem_probe.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
-    rtl/plumbing/quux_fd_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
+    rtl/plumbing/quux_fd_face.sv rtl/plumbing/quux_ed_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_axi_rd128.sv \
     boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
 $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                             boards/kria-kr260/vivado/quux15_bitstream.tcl | $(BUILD)
-	$(VERILATOR) --lint-only -Wall -DCADR_DDR_MAP_KR260 -Irtl/machine -Irtl/plumbing \
-	    -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 --top-module quux15_kr260 \
-	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv $(QUUX15_KR260_SRC)
+	@# At revision 15 and at revision 16, with the Ethernet device's face.
+	for r in 15 16; do $(VERILATOR) --lint-only -Wall -DCADR_DDR_MAP_KR260 -Irtl/machine -Irtl/plumbing \
+	    -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 --top-module quux15_kr260 -GREVISION=$$r \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv $(QUUX15_KR260_SRC) || exit 1; done
 	@# The flow reads the same files: every one of them in its list.
 	@for f in $(filter-out tb/%,$(QUUX15_KR260_SRC)); do \
 	   grep -q "$$f" boards/kria-kr260/vivado/quux15_bitstream.tcl \
@@ -3470,14 +3531,15 @@ QUUX15_ARTY_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) rt
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
     rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_disk_pack.sv \
     rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
-    rtl/plumbing/quux_fd_face.sv $(DISPLAY_SRC) \
+    rtl/plumbing/quux_fd_face.sv rtl/plumbing/quux_ed_face.sv $(DISPLAY_SRC) \
     rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
     tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv boards/arty-z7-20/quux15_arty.sv
 $(BUILD)/quux15_arty.pass: $(QUUX15_ARTY_SRC) $(BOARD_STUBS) \
                            boards/arty-z7-20/vivado/quux15_bitstream.tcl | $(BUILD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
-	    -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --top-module quux15_arty \
-	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)
+	@# At revision 15 and at revision 16, with the Ethernet device's face.
+	for r in 15 16; do $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+	    -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --top-module quux15_arty -GREVISION=$$r \
+	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC) || exit 1; done
 	@# The flow reads the same files: every one of them in its list.
 	@for f in $(filter-out tb/%,$(QUUX15_ARTY_SRC)); do \
 	   grep -q "$$f" boards/arty-z7-20/vivado/quux15_bitstream.tcl \
@@ -3524,7 +3586,7 @@ QUUX15_F2SDRAM := rtl/plumbing/quux15_axi3.sv rtl/plumbing/cadr_mem_count.sv rtl
 QUUX15_DE25_FACES := rtl/plumbing/cadr_input_cables.sv rtl/plumbing/cadr_gp0_default.sv \
                      rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/cadr_gp1_split.sv \
                      rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/quux15_face.sv rtl/plumbing/quux_fd_face.sv \
-                     rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv \
+                     rtl/plumbing/quux_ed_face.sv rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv \
                      rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv
 QUUX15_DE25_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_DE25_CORE_SRC) $(QUUX15_F2SDRAM) \
                    $(QUUX15_DE25_FACES) boards/de25-nano/quux15_de25.sv
@@ -3554,8 +3616,9 @@ $(BUILD)/obj_quux15_de25_top/Vquux15_de25: $(QUUX15_DE25_SIM) tb/quux15_de25_top
 
 $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
                            $(BUILD)/obj_quux15_de25_top/Vquux15_de25 | $(BUILD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
-	    --top-module quux15_de25 $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
+	@# At revision 15 and at revision 16, with the Ethernet device's face.
+	for r in 15 16; do $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    --top-module quux15_de25 -GREVISION=$$r $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC) || exit 1; done
 	@$(MAKE) -s -n -o $(BUILD)/boot_prom.quux15.hex de25 MACHINE=quux WORD_BITS=40 REVISION=15 DDR=1 HDMI=1 \
 	   > $(BUILD)/quux15_de25.flow 2>&1 \
 	   || { echo "quux15_de25: make -n de25 REVISION=15 failed; see $(BUILD)/quux15_de25.flow"; exit 1; }
@@ -3889,16 +3952,16 @@ DE25_MACHINE_SRC = $(filter-out rtl/plumbing/quux_keep_net.sv,$(MACHINE_SRC)) rt
 # PROM 2002's image goes to `build.sh` with its digest, `PROM_SHA256`, so that
 # a file of that name holding anything else is refused rather than fitted.
 QUUX15_DE25_PROM = $(or $(PROM),$(BUILD)/boot_prom.quux15.hex)
-DE25_SRC = $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC),$(DE25_MACHINE_SRC) $(DE25_TOP) \
+DE25_SRC = $(if $(filter 15 16,$(REVISION)),$(QUUX15_DE25_SRC),$(DE25_MACHINE_SRC) $(DE25_TOP) \
              $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
              $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
              $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI)))
-de25: $(if $(filter 15,$(REVISION)),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(BUILD)/sync_prom.hex,\
+de25: $(if $(filter 15 16,$(REVISION)),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(BUILD)/sync_prom.hex,\
       $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
       $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex))
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
 	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) $(if $(REVISION),REVISION=$(REVISION)) \
-	    $(if $(filter 15,$(REVISION)),PERIOD_NS=$(PERIOD_NS) PROM=$(QUUX15_DE25_PROM) \
+	    $(if $(filter 15 16,$(REVISION)),PERIOD_NS=$(PERIOD_NS) PROM=$(QUUX15_DE25_PROM) \
 	        $(if $(filter $(BUILD)/boot_prom.quux15.hex,$(QUUX15_DE25_PROM)),PROM_SHA256=$(QUUX15_PROM_2002_SHA256))) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(DE25_SRC)
@@ -4270,7 +4333,10 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden \
               $(foreach p,$(QUUX15_CORE) mainsize,$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                 $(BUILD)/quux15_$(p).quux.p$(q).golden)) \
-              $(QUUX15_BOARD_TRACES)
+              $(QUUX15_BOARD_TRACES) \
+              $(foreach p,$(QUUX16_GROUPS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+                $(BUILD)/quux15_$(p).quux.p$(q).r16.golden)) \
+              $(BUILD)/quux16_ethernet_rules.golden $(BUILD)/quux16_ethernet_random.golden
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

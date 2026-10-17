@@ -133,21 +133,25 @@ fi
 # revision's build removes the other's.
 revision=${REVISION:-13}
 case $revision in
-    13|14|15) ;;
-    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, 14 or 15" ;;
+    13|14|15|16) ;;
+    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, 14, 15 or 16" ;;
 esac
 if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
     refuse "REVISION=14 is QUUX's, and MACHINE=$machine"
 fi
-if [ "$revision" = 15 ] && [ "$machine" != quux ]; then
-    refuse "REVISION=15 is QUUX's, and MACHINE=$machine"
+if [ "$revision" -ge 15 ] && [ "$machine" != quux ]; then
+    refuse "REVISION=$revision is QUUX's, and MACHINE=$machine"
 fi
+# **REVISION 16 IS REVISION 15'S TOP LEVEL** with the Ethernet device
+# (QUUX's Ethernet contract, §10): `quux15_de25.sv` at `REVISION` 16, its
+# flow, its period, its PROM 2002 and its microcode revision 15's, into
+# `build/de25-quux16-ddr-hdmi/`.
 # **REVISION 15'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked
 # for it and the timing check reads it back.  Ten to 63.5, the core's
 # `period` being seven bits of 0.5 ns.  Revisions 13 and 14 run at the tick.
 period_ns=${PERIOD_NS:-22.5}
 period_half=0
-if [ "$revision" = 15 ]; then
+if [ "$revision" -ge 15 ]; then
     case $period_ns in
         [0-9]|[0-9][0-9]|[0-9].5|[0-9][0-9].5) ;;
         *) refuse "PERIOD_NS is '$period_ns'; it is a period in nanoseconds, whole or a half" ;;
@@ -156,7 +160,7 @@ if [ "$revision" = 15 ]; then
     if [ "$period_half" -lt 20 ] || [ "$period_half" -gt 127 ]; then
         refuse "PERIOD_NS is $period_ns; revision 15 runs at 10 to 63.5 ns"
     fi
-    say "revision 15 at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
+    say "revision $revision at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
 fi
 
 # **THE BOOT PROM.**  The CADR's is MIT's; QUUX revision 13 boots from
@@ -171,7 +175,7 @@ fi
 # Synthesis's parameter table is read back below.
 prom_image=build/boot_prom.hex
 [ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
-if [ "$revision" = 15 ]; then
+if [ "$revision" -ge 15 ]; then
     prom_image=${PROM:-build/boot_prom.quux15.hex}
 elif [ -n "${PROM:-}" ]; then
     refuse "PROM=$PROM names revision 15's boot PROM, and this build is not revision 15's: it boots from $prom_image"
@@ -321,7 +325,7 @@ if [ "$depth" -gt 0 ]; then
 fi
 # **REVISION 15 IS ALWAYS THE WHOLE BOARD**: `quux15_de25.sv` has the
 # processor, its memory and the display in its port list, and no probe.
-if [ "$revision" = 15 ]; then
+if [ "$revision" -ge 15 ]; then
     [ "$ddr" -eq 1 ] && [ "$hdmi" -eq 1 ] || refuse "REVISION=15 is the whole board: give DDR=1 HDMI=1"
     [ "$depth" -eq 0 ] || refuse "REVISION=15 takes no probe"
 fi
@@ -407,7 +411,7 @@ say "build stamp $userid"
 # file.  `sta_check.tcl` then reads the period back from the timing analyzer.
 # **REVISION 15'S IS AT ITS PERIOD**: 2,000 / the period in 0.5 ns, MHz.
 machine_mhz=100.0
-[ "$revision" = 15 ] && machine_mhz=$(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }')
+[ "$revision" -ge 15 ] && machine_mhz=$(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }')
 step 1-ip-deploy "$qsys/ip-deploy" --component-name=altera_iopll \
     --output-name=cadr_de25_pll --output-directory="$out/ip" \
     --family="Agilex 5" --part=A5EB013BB23BE4SCS \
@@ -526,7 +530,7 @@ if [ "$fault" -eq 1 ]; then
             || refuse "synthesis has no default slave at $slave; see $dir/$rpt"
     done
     say "the processor system and both bridges' default slaves are in, and no machine"
-elif [ "$revision" = 15 ]; then
+elif [ "$revision" -ge 15 ]; then
     # **REVISION 15'S RAMS, AS THE TRIAL OF ITS MACRO DISPATCH MEMORY AND ITS
     # TRUE DUAL-PORT RAM FOUND THEM** (MP8, the core's own RAMs on this part):
     #
@@ -726,7 +730,7 @@ q15_param() {
         inside && $0 ~ "^; " name " *;" { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
     ' "$rpt" | awk '{ if ($0 ~ /^[01]+$/ && length($0) > 8) { n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n } else print }'
 }
-if [ "$fault" -eq 0 ] && [ "$revision" = 15 ]; then
+if [ "$fault" -eq 0 ] && [ "$revision" -ge 15 ]; then
     got=$(q15_param quux15_de25 '|' PERIOD)
     [ -n "$got" ] || got=$(sed -n 's/^; PERIOD *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1 \
                            | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }')
@@ -736,7 +740,9 @@ if [ "$fault" -eq 0 ] && [ "$revision" = 15 ]; then
     got=$(q15_param quux15_core u_core PROM_HEX)
     [ "${got##*/}" = "${prom_image##*/}" ] \
         || refuse "synthesis gave u_core PROM_HEX '${got:-nothing}', wanting $prom_image; see $dir/$rpt"
-    say "synthesis gave the top level PERIOD $period_half, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
+    got=$(q15_param quux15_de25 '|' REVISION)
+    [ "$got" = "$revision" ] || refuse "synthesis gave the top level REVISION '${got:-nothing}', wanting $revision; see $dir/$rpt"
+    say "synthesis gave the top level PERIOD $period_half, REVISION $revision, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
 elif [ "$fault" -eq 0 ]; then
     got_machine=$(awk '
         /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
@@ -823,7 +829,7 @@ step 6-sta "$bin/quartus_sta" cadr_de25
 say "6-sta-check"
 if [ "$fault" -eq 1 ]; then
     sta_script=$here/fault_sta.tcl
-elif [ "$revision" = 15 ]; then
+elif [ "$revision" -ge 15 ]; then
     sta_script=$here/quux15_sta_check.tcl
 else
     sta_script=$here/sta_check.tcl
@@ -865,7 +871,7 @@ if [ "$fault" -eq 1 ]; then
     if [ "$alms" -gt 3000 ] || [ "$m20k" -gt 0 ]; then
         refuse "the fault bitstream fits in $alms ALMs and $m20k M20K blocks, which is not a design without a machine; see $dir/$summary"
     fi
-elif [ "$revision" = 15 ]; then
+elif [ "$revision" -ge 15 ]; then
     # **REVISION 15'S FLOOR**, half its trial fit (MP8: 30,600 ALMs and 156
     # M20K at the 16K cache), so that a datapath optimized away is refused.
     if [ "$alms" -lt 15000 ] || [ "$m20k" -lt 78 ]; then

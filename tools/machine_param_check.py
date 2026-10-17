@@ -1071,9 +1071,18 @@ def main():
                  dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
                  ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])
         cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
-        flow("the DE25-Nano's build.sh refuses REVISION=16", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="16"), 1,
-             ["de25: REFUSED: REVISION is '16'"], [])
+        flow("the DE25-Nano's build.sh refuses REVISION=17", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="17"), 1,
+             ["de25: REFUSED: REVISION is '17'"], [])
+        # Revision 16 is revision 15's top level with the Ethernet device,
+        # QUUX's alone, at revision 15's period and from its PROM 2002.
+        flow("the DE25-Nano's build.sh refuses REVISION=16 on the CADR", cmd,
+             dict(nowhere, MACHINE="cadr", REVISION="16"), 1,
+             ["de25: REFUSED: REVISION=16 is QUUX's, and MACHINE=cadr"], [])
+        flow("the DE25-Nano's build.sh builds revision 16 at %s ns from PROM 2002 by default"
+             % DE25_Q15_PERIOD_NS, cmd, dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="16"), 1,
+             ["de25: revision 16 at %s ns:" % DE25_Q15_PERIOD_NS,
+              "de25: the boot PROM is %s\n" % DE25_Q15_PROM], ["REFUSED: REVISION"])
         # Revision 15 is its own top level (`quux15_de25.sv`), QUUX's alone,
         # taken as far as the missing Quartus.
         flow("the DE25-Nano's build.sh refuses REVISION=15 on the CADR", cmd,

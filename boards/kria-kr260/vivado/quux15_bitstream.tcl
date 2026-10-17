@@ -17,7 +17,14 @@
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xck26-sfvc784-2LV-c"}]
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 13}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
-set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-kr260-quux15"}]
+# `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
+# (QUUX's Ethernet contract, §10), the top's generic and the output's name.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 15}]
+if {$revision ni {15 16}} {
+    puts "Q15BIT: FAILED --- REVISION=$revision is not 15 or 16"
+    exit 1
+}
+set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-kr260-quux$revision"}]
 if {[info exists ::env(VIVADO_THREADS)]} { set_param general.maxThreads $::env(VIVADO_THREADS) }
 if {![string is integer -strict $period] || $period < 8 || $period > 40} {
     puts "Q15BIT: FAILED --- PERIOD_NS=$period is not a period in whole nanoseconds from 8 to 40"
@@ -36,7 +43,7 @@ set sources [list \
     rtl/machine/quux15_exec.sv rtl/machine/quux_muldiv.sv rtl/plumbing/quux15_axi_master.sv \
     rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/machine/quux15_devices.sv \
     rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv rtl/machine/quux15_core.sv rtl/machine/quux15_mdmem.sv rtl/machine/quux15_dmem.sv \
-    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv \
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
     rtl/plumbing/cadr_input_cables.sv \
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
@@ -51,7 +58,8 @@ set t0 [clock seconds]
 synth_design -top quux15_kr260 -part $part -include_dirs rtl/machine \
     -verilog_define CADR_DDR_MAP_KR260=1 \
     -generic PROM_HEX=[file normalize $prom] \
-    -generic PERIOD_NS=$period
+    -generic PERIOD_NS=$period \
+    -generic REVISION=$revision
 puts "Q15BIT: synthesis took [expr {[clock seconds] - $t0}] s"
 report_utilization -file $outdir/util_synth.rpt
 read_xdc boards/kria-kr260/quux15_kr260.xdc

@@ -267,13 +267,19 @@ card's values at its start. No reset changes them.
 are written through an uncached mapping of DDR, and RX_CONS is written after
 `__sync_synchronize()` and a `dsb sy`, as the file device's completion is.
 
-**The fabric's side of this page is not built yet.** It belongs with revision
-16's machine side. Besides the offsets above, the fabric owes the rules of
-muir's device that are the machine's: the configuration and its refusal at
-the enable, the index rules and their fault, the indexes reading 0 while
-disabled, status `<8>` and word 100 `<8>`, and the cache's coherence when
-RX_CONS moves. The program's check runs against a model of exactly those
-rules (below).
+**The fabric's side** is `rtl/machine/quux16_ethernet.sv`, inside revision
+16's register-page devices, and `rtl/plumbing/quux_ed_face.sv`, the page. It
+holds the rules of muir's device that are the machine's: the configuration
+and its refusal at the enable, the index rules and their fault, the indexes
+reading 0 while disabled, status `<8>` and word 100 `<8>`. The core holds a
+write of 244 or 250 until every write before it is answered, as it holds the
+file device's 164. A TX_CONS or RX_CONS write is accepted when the device is
+enabled, the epoch is the current one and the index moves forward no further
+than its producer, and RX_CONS by at least one. It lands the clock after its
+write, as a file device completion does, and a disable in the clock between
+drops it. At RX_CONS's landing the fabric sweeps the whole cache, as at a file
+device completion, before the machine sees 251 move. A COUNTS write lands at
+its edge.
 
 ## What holds it
 
@@ -309,5 +315,15 @@ it compares every call the script makes to a list, line for line and in order:
 a host-only card's start, a LAN card's start and its stop. A mixed card, and a
 LAN card on an image with no DHCP line or with two, must make no call at all.
 
-The model of the page is what the fabric owes, written from muir's device. The
-fabric itself is held to muir with the rest of revision 16's machine side.
+The model of the page is what the fabric owes, written from muir's device.
+
+`make check`'s `quux16_ethernet_module.quux.pass` holds the fabric's side. It
+drives the page over AXI through the program's own `qed_face_fabric.c`, with
+revision 16's register-page devices behind it, over scripts of muir's
+`EthernetDevice` (`golden/src/quux16_ethernet.rs`). After each step every
+register 240 to 257 must read as muir's. Then it checks each rule of the
+host's side with the case just outside it. The core's `ethernet` group at
+revision 16 (`golden/src/quux15_ethernet.rs`, `quux15_ethernet.quux.r16.pass`)
+holds the rest clock for clock to muir's pipeline: the registers, the held
+writes, transmits and deliveries with the testbench as the program, the
+sweep and the interrupt.

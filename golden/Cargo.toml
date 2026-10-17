@@ -105,6 +105,10 @@ name = "quux_ethernet_device"
 path = "src/quux_ethernet_device.rs"
 
 [[bin]]
+name = "quux16_ethernet"
+path = "src/quux16_ethernet.rs"
+
+[[bin]]
 name = "quux13"
 path = "src/quux13.rs"
 

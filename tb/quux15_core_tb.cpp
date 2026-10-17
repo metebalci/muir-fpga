@@ -226,6 +226,13 @@ constexpr uint64_t kVideoW = QUUX15_VIDEO_W, kVideoH = QUUX15_VIDEO_H;
 #define QUUX15_CACHE_WORDS 65536
 #endif
 constexpr uint64_t kCacheWords = QUUX15_CACHE_WORDS;
+// QUUX's revision, as the core's `MACHINE_ID` is built: 15 unless the build
+// says 16 (`QUUX15_REVISION`; the Makefile's `quux16_<group>.quux.pass`),
+// whose traces say so in their `# revision 16` line.
+#ifndef QUUX15_REVISION
+#define QUUX15_REVISION 15
+#endif
+constexpr uint64_t kRevision = QUUX15_REVISION;
 constexpr uint64_t kFbWords = kVideoW / 32 * kVideoH;
 constexpr uint64_t kDisplayBase = 0x0A000000;
 
@@ -328,6 +335,20 @@ struct Run {
   // The cache's words, the Kria's 65,536 unless its `# cache` line says
   // otherwise (another board's).
   uint64_t cache_words = 65536;
+  // QUUX's revision, 15 unless its `# revision` line says 16.
+  uint64_t revision = 15;
+  // Revision 16's Ethernet device's host (`golden/src/quux15_ethernet.rs`):
+  // 244 and 250 as the host's side reads them, from a clock on; 245 and
+  // 251 moved at a clock; the words a delivery wrote; the counters.
+  struct EdProd {
+    uint64_t clock, tx, rx;
+  };
+  std::vector<EdProd> ed_prod;
+  std::vector<std::pair<uint64_t, uint64_t>> ed_tx, ed_rx, ed_counts;
+  struct EdWord {
+    uint64_t clock, addr, word;
+  };
+  std::vector<EdWord> ed_words;
   // The video controller's size, 1280 by 1024 unless its `# video` line
   // says otherwise; and muir's mode and frame buffer at the end, where the
   // trace gives them (`# endbow`, `# endfb`).
@@ -593,6 +614,27 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         runs.back().skip_sweep = true;
         continue;
       }
+      if (w.size() == 2 && w[0] == "revision") {
+        runs.back().revision = std::strtoull(w[1].c_str(), nullptr, 10);
+        continue;
+      }
+      if (w.size() == 4 && w[0] == "edprod") {
+        runs.back().ed_prod.push_back({std::strtoull(w[1].c_str(), nullptr, 16),
+                                       std::strtoull(w[2].c_str(), nullptr, 16),
+                                       std::strtoull(w[3].c_str(), nullptr, 16)});
+        continue;
+      }
+      if (w.size() == 3 && (w[0] == "edtx" || w[0] == "edrx" || w[0] == "edcounts")) {
+        (w[0] == "edtx" ? runs.back().ed_tx : w[0] == "edrx" ? runs.back().ed_rx : runs.back().ed_counts)
+            .emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() == 4 && w[0] == "edword") {
+        runs.back().ed_words.push_back({std::strtoull(w[1].c_str(), nullptr, 16),
+                                        std::strtoull(w[2].c_str(), nullptr, 16),
+                                        std::strtoull(w[3].c_str(), nullptr, 16)});
+        continue;
+      }
       if (w.size() == 2 && w[0] == "main-units") {
         runs.back().main_units = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
@@ -716,6 +758,58 @@ class Bench {
     return ((x * 0x2545f4914f6cdd1dull) >> 33) % most + 1;
   }
 
+  // **REVISION 16's ETHERNET DEVICE'S HOST** (`quux_ed_face.sv`'s side, as
+  // `quux-ethernet-device` drives it): STATE read every clock for the
+  // epoch; a move of 245 or 251 muir's device made at clock k written
+  // {epoch, index} at k - 1, so that it lands at k, the delivery's words
+  // into main memory at k, before anything reads them; the counters
+  // written at the clock muir's moved, landing at that clock's edge.  One
+  // write a clock, as the face gives them.
+  void eth_drive(Top *d, uint64_t t) {
+    enum : unsigned { kEState = 0, kETxCons = 7, kERxCons = 9, kECounts = 11 };
+    const uint32_t seen = d->eth_rdata;
+    d->eth_we = 0;
+    d->eth_widx = 0;
+    d->eth_wdata = 0;
+    d->eth_ridx = kEState;
+    if (t > 0) eth_epoch_ = seen >> 16;
+    auto put = [&](unsigned idx, uint32_t v) {
+      if (d->eth_we && host_why_.empty())
+        host_why_ = "the testbench's Ethernet host has two writes in clock " + std::to_string(t);
+      d->eth_we = 1;
+      d->eth_widx = idx & 0x1Fu;
+      d->eth_wdata = v;
+    };
+    for (const auto &m : run_.ed_tx)
+      if (t + 1 == m.first) put(kETxCons, eth_epoch_ << 16 | (m.second & 0xFFFFu));
+    for (const auto &m : run_.ed_rx)
+      if (t + 1 == m.first) put(kERxCons, eth_epoch_ << 16 | (m.second & 0xFFFFu));
+    for (const auto &c : run_.ed_counts)
+      if (t == c.first) put(kECounts, static_cast<uint32_t>(c.second));
+    for (const Run::EdWord &w : run_.ed_words)
+      if (t == w.clock) image(w.addr, w.word);
+  }
+
+  // 244 and 250 on the host's side, as muir's device has them from the
+  // clock muir's took them.
+  bool eth_take(const Top *d, uint64_t t, std::string &why) {
+    uint64_t tx = 0, rx = 0;
+    for (const Run::EdProd &p : run_.ed_prod)
+      if (p.clock <= t) {
+        tx = p.tx;
+        rx = p.rx;
+      }
+    if (d->eth_tx_prod != tx || d->eth_rx_prod != rx) {
+      char b[160];
+      std::snprintf(b, sizeof b, "244 and 250 on the Ethernet device's host side are %x and %x, muir's %" PRIx64
+                    " and %" PRIx64, static_cast<unsigned>(d->eth_tx_prod), static_cast<unsigned>(d->eth_rx_prod),
+                    tx, rx);
+      why = b;
+      return false;
+    }
+    return true;
+  }
+
   // The host's write of index `idx` in this clock: one a clock, as the
   // face gives them.
   void host_write(Top *d, unsigned idx, uint32_t v, uint64_t t) {
@@ -736,6 +830,7 @@ class Bench {
     d->host_widx = 0;
     d->host_wdata = 0;
     d->host_ridx = kState;
+    eth_drive(d, t);
     for (const Run::FdDone &f : run_.fd_done) {
       if (t + 3 == f.clock) {
         host_epoch_ = seen >> 16;
@@ -870,6 +965,7 @@ class Bench {
       why = host_why_;
       return false;
     }
+    if (!eth_take(d, t, why)) return false;
     // The doorbell: the fabric's, at the clocks and values the host saw.
     bool want = false;
     uint64_t value = 0;
@@ -1008,7 +1104,7 @@ class Bench {
   const Run &run_;
   // The host's server: the epoch and RESP_PROD as it read them, and why it
   // could not do its part.
-  uint32_t host_epoch_ = 0, host_index_ = 0;
+  uint32_t host_epoch_ = 0, host_index_ = 0, eth_epoch_ = 0;
   std::string host_why_;
   std::vector<uint8_t> mem_, fb_;
   std::vector<Line> lines_;
@@ -1470,6 +1566,14 @@ int run_trace(const char *path, const Run &run, int seed) {
                  static_cast<unsigned long long>(run.cache_words), static_cast<unsigned long long>(kCacheWords));
     return 1;
   }
+  // **AND A TRACE OF ANOTHER REVISION**: the core's MACHINE-ID, feature
+  // words and register page are built for this testbench's.
+  if (run.revision != kRevision) {
+    std::fprintf(stderr, "FAIL: %s run %s is of revision %llu, and this testbench and its core are built for "
+                 "%llu (QUUX15_REVISION, MACHINE_ID)\n", path, run.name.c_str(),
+                 static_cast<unsigned long long>(run.revision), static_cast<unsigned long long>(kRevision));
+    return 1;
+  }
   // **AND A TRACE OF ANOTHER VIDEO CONTROLLER**: the core's feature words
   // and frame buffer are built for this testbench's size.
   if (run.video_w != kVideoW || run.video_h != kVideoH) {
@@ -1511,6 +1615,7 @@ int run_trace(const char *path, const Run &run, int seed) {
   };
   auto quiet = [&]() {
     dut->host_we = 0; dut->host_widx = 0; dut->host_wdata = 0; dut->host_ridx = 2;
+    dut->eth_we = 0; dut->eth_widx = 0; dut->eth_wdata = 0; dut->eth_ridx = 0;
     dut->m_awready = 0; dut->m_wready = 0; dut->m_arready = 0;
     dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;

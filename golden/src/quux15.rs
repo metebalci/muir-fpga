@@ -84,6 +84,7 @@ mod machine_axis;
 mod quux15_blockdisk;
 mod quux15_console;
 mod quux15_devices;
+mod quux15_ethernet;
 mod quux15_input;
 mod quux15_main;
 mod quux15_network;
@@ -109,6 +110,20 @@ use muir::tlb;
 
 /// Revision 15.
 const REV15: Geometry = Geometry::QUUX_15;
+
+/// **The revision a trace is of**, `--revision`'s: 15, every trace's unless
+/// it names 16, whose trace says so in its `# revision 16` line, which a
+/// testbench built for another revision refuses (QUUX's Ethernet contract,
+/// §10: revision 16 is revision 15 with the Ethernet device).
+static REVISION: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+
+fn revision() -> u8 {
+    *REVISION.get().unwrap_or(&15)
+}
+
+fn geometry() -> Geometry {
+    if revision() == 16 { Geometry::QUUX_16 } else { REV15 }
+}
 
 /// **A board revision 15 runs on**: its port's memory timing and its
 /// cache's words, `--board`'s.  The Kria KR260's are muir's defaults and
@@ -1029,6 +1044,9 @@ struct Case {
     net: Option<quux15_network::NetRun>,
     /// What a register access's run must end with (`quux15_regread.rs`).
     calls: Option<Calls>,
+    /// Revision 16's Ethernet frames arriving as the run goes, and its host's
+    /// side written down for the testbench (`quux15_ethernet.rs`).
+    eth: Option<quux15_ethernet::EthRun>,
 }
 
 /// **The two checks' calls a register access's run ends with**, M 26 and
@@ -1076,6 +1094,7 @@ impl Case {
             disk: None,
             input: Vec::new(),
             net: None,
+            eth: None,
             calls: None,
         }
     }
@@ -1141,6 +1160,9 @@ impl Case {
         if let Some((w, h)) = self.video {
             out.push(format!("# video {w:x} {h:x}"));
         }
+        if revision() != 15 {
+            out.push(format!("# revision {}", revision()));
+        }
         if let Some(d) = &self.disk {
             out.extend(d.lines());
         }
@@ -1153,7 +1175,7 @@ impl Case {
 fn machine(case: &Case) -> Machine {
     let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
     let mut m = Which::Quux.machine(&prom);
-    m.geometry = REV15;
+    m.geometry = geometry();
     m.main = vec![0; case.main_words.unwrap_or(MAIN)];
     if let Some((w, h)) = case.video {
         muir::tv::check_video_size(w, h, false).expect("a video controller muir takes");
@@ -1253,10 +1275,13 @@ struct FileHost {
     prod: u32,
     cons: u16,
     lines: Vec<String>,
+    /// And revision 16's Ethernet device's host (`quux15_ethernet.rs`).
+    eth: quux15_ethernet::Watch,
 }
 
 impl FileHost {
     fn watch(&mut self, e: &Pipeline) {
+        self.eth.watch(e);
         use muir::file_device::{CMD_BASE, CMD_PROD, CMD_SIZE, CONTROL, RESP_BASE, RESP_SIZE};
         let m = e.machine();
         let fd = &m.file_device;
@@ -1365,6 +1390,12 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         e.mutation = f;
     }
     e.port.model = case.late;
+    if let Some(r) = &case.eth {
+        if revision() != 16 {
+            return Err((2, format!("{name}: a run with the Ethernet device is revision 16's: --revision 16")));
+        }
+        quux15_ethernet::attach(&mut e, r);
+    }
     let mut t = trace15::Trace15::start(&mut e);
     e.boot();
     if case.skip_sweep {
@@ -1485,7 +1516,8 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 // board's apart from the Kria's.
                 let b2 = if bubbles == 2 { ".b2" } else { "" };
                 let board = board_suffix();
-                let file = format!("{dir}/{name}.p{period}{b2}{board}.chk");
+                let rev = if revision() == 16 { ".r16" } else { "" };
+                let file = format!("{dir}/{name}.p{period}{b2}{board}{rev}.chk");
                 // A file device with a handle open or a command queued holds
                 // what no checkpoint carries: muir refuses, and so must the
                 // board's writer.  And block-disk's transfer in flight, which
@@ -1514,7 +1546,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     std::path::Path::new(&file),
                     "rtl",
                     e.machine().memory_boards(),
-                    muir::checkpoint::VERSION_15,
+                    if revision() == 16 { muir::checkpoint::VERSION_16 } else { muir::checkpoint::VERSION_15 },
                     &body,
                 )
                 .map_err(|x| (2, format!("{name}: {file}: {x}")))?;
@@ -1538,6 +1570,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     if checkpointed {
         let mut memory = memory;
         memory.extend(host.lines);
+        memory.extend(host.eth.lines);
         memory.extend(feed.lines);
         memory.extend(net.lines);
         let summary = format!("{name}: checkpoint at clock {}", e.clock());
@@ -1629,6 +1662,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     }
     let mut memory = memory;
     memory.extend(host.lines);
+    memory.extend(host.eth.lines);
     memory.extend(feed.lines);
     memory.extend(net.lines);
     memory.extend(disk.lines);
@@ -1699,6 +1733,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "network" => quux15_network::network(period),
         "regread" => quux15_regread::regread(period),
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "ethernet" => quux15_ethernet::ethernet(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],
@@ -1762,6 +1797,21 @@ fn main() {
                     std::process::exit(2);
                 }
             }
+            "--revision" => {
+                let v = it.next().unwrap_or_default();
+                let r = match v.as_str() {
+                    "15" => 15,
+                    "16" => 16,
+                    _ => {
+                        eprintln!("quux15: --revision is `{v}`; it is 15 or 16");
+                        std::process::exit(2);
+                    }
+                };
+                if REVISION.set(r).is_err() {
+                    eprintln!("quux15: --revision is given twice");
+                    std::process::exit(2);
+                }
+            }
             "--bubbles" => {
                 let v = it.next().unwrap_or_default();
                 match v.as_str() {
@@ -1822,7 +1872,8 @@ fn main() {
         out.push(trace15::COLUMNS.to_string());
         out.push(format!(
             "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, \
-             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {} words{}{}",
+             revision {}, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {} words{}{}",
+            revision(),
             period / 2,
             if period % 2 == 1 { 5 } else { 0 },
             timing(),

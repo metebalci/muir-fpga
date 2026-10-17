@@ -40,8 +40,9 @@
 //                         defaults, 02:00:00:00:00:01 and 169.254.100.2/30 by
 //                         169.254.100.1, and no reset changes them
 //
-// **THE FABRIC'S SIDE IS NOT BUILT YET (F1)**: this is what it owes, and
-// what `qed_test.c`'s model of the page does.  Besides the offsets, the
+// **THE FABRIC'S SIDE** (`rtl/machine/quux16_ethernet.sv` behind
+// `rtl/plumbing/quux_ed_face.sv`) is what `qed_test.c`'s model of the page
+// does.  Besides the offsets, the
 // fabric owes the rules of muir's device that are the machine's and not this
 // program's: the configuration and its refusal at the enable (status <2>);
 // the index rules and their fault (status <3>), a second held write of 244

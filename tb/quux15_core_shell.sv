@@ -111,6 +111,13 @@ module quux15_core #(
     input var logic [31:0] host_wdata,
     input var logic [3:0] host_ridx,
     output var logic [31:0] host_rdata,
+    input var logic eth_we,
+    input var logic [4:0] eth_widx,
+    input var logic [31:0] eth_wdata,
+    input var logic [4:0] eth_ridx,
+    output var logic [31:0] eth_rdata,
+    output var logic [15:0] eth_tx_prod,
+    output var logic [15:0] eth_rx_prod,
     input var logic kbd_strobe,
     input var logic [23:0] kbd_code,
     input var logic [6:0] mouse_lines,
@@ -319,6 +326,20 @@ module quux15_core #(
   assign tbi_host_ridx = host_ridx;
   logic [31:0] tbo_host_rdata /*verilator public_flat_rw*/;
   assign host_rdata = tbo_host_rdata;
+  logic tbi_eth_we /*verilator public_flat_rw*/;
+  assign tbi_eth_we = eth_we;
+  logic [4:0] tbi_eth_widx /*verilator public_flat_rw*/;
+  assign tbi_eth_widx = eth_widx;
+  logic [31:0] tbi_eth_wdata /*verilator public_flat_rw*/;
+  assign tbi_eth_wdata = eth_wdata;
+  logic [4:0] tbi_eth_ridx /*verilator public_flat_rw*/;
+  assign tbi_eth_ridx = eth_ridx;
+  logic [31:0] tbo_eth_rdata /*verilator public_flat_rw*/;
+  assign eth_rdata = tbo_eth_rdata;
+  logic [15:0] tbo_eth_tx_prod /*verilator public_flat_rw*/;
+  assign eth_tx_prod = tbo_eth_tx_prod;
+  logic [15:0] tbo_eth_rx_prod /*verilator public_flat_rw*/;
+  assign eth_rx_prod = tbo_eth_rx_prod;
   logic tbi_kbd_strobe /*verilator public_flat_rw*/;
   assign tbi_kbd_strobe = kbd_strobe;
   logic [23:0] tbi_kbd_code /*verilator public_flat_rw*/;

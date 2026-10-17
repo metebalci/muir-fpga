@@ -107,16 +107,22 @@ module quux15_fd_face_harness #(
   logic [8:0]  chaos_tx_len;
   logic [15:0] chaos_tx_word, chaos_csr;
   logic [11:0] chaos_bits;
+  logic [31:0] eth_rdata;
+  logic [15:0] eth_tx_prod, eth_rx_prod;
+  logic        eth_sweep;
   /* verilator lint_on UNUSEDSIGNAL */
 
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) dev (
       .clk(clk), .rst(mach_rst), .timers_rst(1'b0), .period(period), .rtc_start(rtc_start),
       .rd_v(rd_v), .rd_k(rd_k), .rd_word(rd_word), .rd_built(rd_built), .rd_release(1'b1),
       .wr_v(wr_v), .wr_k(wr_k), .wr_data(wr_data), .wr_built(wr_built),
-      .prod_v(prod_v), .prod_data(prod_data),
+      .prod_v(prod_v), .prod_k(8'o164), .prod_data(prod_data),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
+      // Revision 15's: no Ethernet device.
+      .eth_we(1'b0), .eth_widx(5'd0), .eth_wdata(32'd0), .eth_ridx(5'd0), .eth_rdata(eth_rdata),
+      .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod), .eth_sweep(eth_sweep),
       .bd_present(1'b0), .bd_start(bd_start), .bd_st_cmd(bd_st_cmd), .bd_st_clp(bd_st_clp),
       .bd_st_da(bd_st_da), .bd_walking(1'b0), .bd_charge(1'b0), .bd_fin(1'b0),
       .bd_fin_lma(28'd0), .bd_fin_da(29'd0), .bd_fin_past_end(1'b0), .bd_fin_nxm(1'b0),
