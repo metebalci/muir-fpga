@@ -33029,7 +33029,8 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @check quux15_bdisk_quux
 @file rtl/machine/quux15_devices.sv
 @note Each block's 100 us is rounded up to the clock, where muir rounds
-@note DONE once: at 8.5 ns and 18 ns not-active comes clocks late.
+@note DONE once: at 8.5 ns and 18 ns not-active comes clocks late
+@note (`donephase`, polled at DONE's own clock).
 @old
     bd_rem_n = (bd_go ? 48'sd0 : bd_rem) + ((bd_charge && bd_on && !bd_go) ? 48'(BLOCK_UNITS) : 48'sd0)
 @new

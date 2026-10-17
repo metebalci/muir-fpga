@@ -1685,6 +1685,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "bdisk" => {
             let mut v: Vec<Case> = quux15_blockdisk::bdisk().into_iter().map(|(n, p)| p.case(&n)).collect();
             v.push(quux15_blockdisk::midckpt());
+            v.extend(quux15_blockdisk::done_phase(period));
             v
         }
         "bdmix" => quux15_blockdisk::bdmix().into_iter().map(|(n, p)| p.case(&n)).collect(),

@@ -37,6 +37,11 @@
 //!               page whole all the same
 //!     midckpt   a checkpoint taken while the walk runs, which the board's
 //!               writer refuses (A15b.13)
+//!     donephase a 4-byte read of four blocks polled until not active, its
+//!               poll moved a clock at a time until one reads the status at
+//!               the first clock at or after DONE, chosen on muir for each
+//!               bubble count, so that a DONE even a clock late shows
+//!               whatever the port's timing puts START at
 //!   bdmix     **JUDGED BY THE RESULTS**: the processor uses the port while the walk runs, so no
 //!             row is held to muir's; the pages and the blocks named are, and
 //!             the processor's reads after DONE, which the program writes
@@ -478,6 +483,56 @@ pub fn midckpt() -> super::Case {
     ];
     c.micro_check = false;
     c
+}
+
+/// **DONE AT THE CLOCK IT FALLS IN, POLLED THERE.**  A 4-byte read of
+/// blocks 40-43 into page T, polled until not active from START with `j`
+/// fillers before the poll.  DONE is START's instant plus four blocks'
+/// 100 us, rounded to the clock once: at P = 17 the first clock at or after
+/// it is 47,059 clocks on, where each block rounded on its own gives 47,060,
+/// and at P = 36 22,223 against 22,224.  The other runs' polls fall where
+/// START does, which the port's timing moves, so whether one of them reads
+/// the status in that clock is chance.  Here each filler moves the poll a
+/// clock later, the loop's exit moving with it, until the poll a whole loop
+/// later is the one that sees not active: the run after that drop polls at
+/// DONE's own clock.  That run is chosen on muir, for one bubble and for
+/// two, and the trace carries both.
+pub fn done_phase(period: u64) -> Vec<super::Case> {
+    let program = |j: usize| {
+        let mut p = run(DiskRun { pages: vec![T], ..DiskRun::default() });
+        p.main.push((CL as usize, Word::from(T)));
+        p.bd_setup(CL, 40, READ | FOUR);
+        p.bd_start();
+        p.fill(j);
+        p.bd_wait();
+        p.bd_registers(0o27);
+        p.stop();
+        p
+    };
+    let mut picked: Vec<usize> = Vec::new();
+    for bubbles in [1u8, 2] {
+        let mut last: Option<usize> = None;
+        let mut found = None;
+        for j in 0..32 {
+            let clocks = super::run_case(&program(j).case("donephase"), period, bubbles, None)
+                .unwrap_or_else(|(_, x)| panic!("donephase: {x}"))
+                .lines
+                .len();
+            if let Some(l) = last {
+                if clocks < l {
+                    found = Some(j);
+                    break;
+                }
+                assert_eq!(clocks, l + 1, "donephase: a filler moves the poll's exit by one clock, at {j}");
+            }
+            last = Some(clocks);
+        }
+        let j = found.expect("donephase: no poll fell at DONE's clock within 32 fillers");
+        if !picked.contains(&j) {
+            picked.push(j);
+        }
+    }
+    picked.into_iter().map(|j| program(j).case(&format!("donephase-{j}"))).collect()
 }
 
 /// A results-only run at the Kria's memory timing but for `timing`.
