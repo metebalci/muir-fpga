@@ -74,7 +74,8 @@ deliver to QUUX:
 
 1. The flags are checked and the LAN interface is found. On any failure the
    script refuses and touches nothing.
-2. `quux0` is made, if it is not there.
+2. `quux0` is made, if it is not there, and then the link-local rule below,
+   before any forwarding is turned on.
 3. On `quux0`: IPv6 off, `arp_ignore` 0, `arp_filter` 1, `rp_filter` 1,
    `proxy_arp` 1, `forwarding` 1, and the proxy delay 0.
 4. The tap's MAC address and MTU as above, its addresses flushed, and **no
@@ -102,10 +103,25 @@ DHCP lease and its routes. It never gets `proxy_arp`, which would answer for
 every address routed out of another interface. The global `ip_forward` is
 never written, because writing it resets every interface's settings.
 
+With a LAN tap, packets for link-local destinations (169.254.x.y) arriving
+on the LAN interface or from QUUX's tap are dropped. Routers never forward a
+link-local address (RFC 3927, section 2.7), so nothing on the LAN, and no QUUX
+on a LAN tap, reaches a host-only tap's machine through the board. Two routing
+rules of type blackhole do it, `iif` the LAN interface and `iif quux0`, at
+priority 1169. That is after the local table's rule at priority 0, so the
+board's own link-local addresses still answer, and the board's own traffic is
+not touched, since each rule names an input interface. The start first
+removes every rule at priority 1169, which belongs to these two alone, and a
+host-only start removes them and adds none. The rules need the kernel's
+policy routing (`CONFIG_IP_ADVANCED_ROUTER` and `CONFIG_IP_MULTIPLE_TABLES`,
+which every board's kernel sets). Without it `ip rule add` fails, and the
+script undoes the tap, says so, naming `CONFIG_IP_MULTIPLE_TABLES`, and starts
+nothing.
+
 The stop undoes the start in reverse: it stops the program, removes the proxy
 entry the start made, puts the LAN interface's `forwarding` and proxy delay
-back to the values the start found, and removes the tap, which takes its
-route and its settings with it.
+back to the values the start found, removes the rules at priority 1169, and
+removes the tap, which takes its route and its settings with it.
 
 ### The LAN interface on each board
 

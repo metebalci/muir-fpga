@@ -6275,9 +6275,14 @@ $(BUILD)/br_force.pass: tools/br_force_check.py $(BR_DEFCONFIGS) Makefile \
 # that absence as a missing source line stopped the other boards' builds.
 # `tools/br_kconfig_check.py` writes the lines Kconfig would write for this
 # tree's symbols from each defconfig, with no Buildroot, and runs the real
-# `post-build.sh` against them.
+# `post-build.sh` against them.  It also asks each defconfig's kernel
+# configuration for the tap and the policy routing S82's link-local rule
+# needs.
 BR_POST_BUILD := $(BR_EXTERNAL)/board/arty-z7-20/post-build.sh
 $(BUILD)/br_kconfig.pass: tools/br_kconfig_check.py $(BR_POST_BUILD) $(BR_DEFCONFIGS) Makefile \
+                          $(wildcard boards/*/linux/buildroot/external.desc) \
+                          $(wildcard boards/*/linux/buildroot/board/*/linux/linux.config) \
+                          $(wildcard boards/*/linux/buildroot/board/*/linux/linux.fragment) \
                           $(wildcard $(BR_EXTERNAL)/package/*/*.mk) \
                           $(wildcard $(BR_EXTERNAL)/package/*/Config.in) | $(BUILD)
 	python3 tools/br_kconfig_check.py $(BR_POST_BUILD) $(BR_EXTERNAL)/package $(BUILD)/br_kconfig $(BR_DEFCONFIGS)

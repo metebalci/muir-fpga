@@ -39,6 +39,16 @@ package symbol Kconfig does write there is taken out of the `.config` in turn,
 as an unsourced Config.in leaves it, and the script must refuse every one of
 them by name.  The check passes when the script accepts each board's `.config`
 and refuses each of those controls.
+
+**AND THE KERNEL OPTIONS QUUX's ETHERNET DEVICE NEEDS**, asked of the kernel
+configuration each defconfig names (the Arty Z7-20's and the Cora Z7-07S's
+`linux.config`, the Kria KR260's and the DE25-Nano's `linux.fragment`):
+`CONFIG_TUN=y` for the tap, and `CONFIG_IP_ADVANCED_ROUTER=y` and
+`CONFIG_IP_MULTIPLE_TABLES=y` for S82's link-local rule, whose `ip rule add`
+fails without policy routing.  A built kernel's `.config` is held against a
+fragment by the boards' `buildroot_check.py configs`; this asks it before any
+build, of all four boards.  Its control: each option taken out of the file in
+turn must be refused by name.
 """
 import os
 import re
@@ -153,6 +163,62 @@ def package_symbols(pkgdir):
     return out
 
 
+KERNEL_OPTIONS = ('CONFIG_TUN', 'CONFIG_IP_ADVANCED_ROUTER', 'CONFIG_IP_MULTIPLE_TABLES')
+KERNEL_FILES = ('BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE', 'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES')
+
+
+def kernel_files(defconfig):
+    """The kernel configuration files a defconfig names, with each
+    $(BR2_EXTERNAL_<name>_PATH) read as the external tree of that name."""
+    boards = os.path.abspath(os.path.join(os.path.dirname(defconfig), '..', '..', '..', '..'))
+    trees = {}
+    for b in sorted(os.listdir(boards)):
+        desc = os.path.join(boards, b, 'linux', 'buildroot', 'external.desc')
+        if os.path.isfile(desc):
+            m = re.search(r'^name:\s*(\S+)', open(desc).read(), re.M)
+            if m:
+                trees[m.group(1)] = os.path.dirname(desc)
+    out = []
+    for line in open(defconfig):
+        m = re.match(r'^(%s)="(.*)"\s*$' % '|'.join(KERNEL_FILES), line)
+        if not m:
+            continue
+        for f in m.group(2).split():
+            e = re.match(r'^\$\(BR2_EXTERNAL_(\w+)_PATH\)/(.*)$', f)
+            if not e or e.group(1) not in trees:
+                raise SystemExit(f'br_kconfig_check: {defconfig}: {m.group(1)} names {f}, '
+                                 'which is not in an external tree of this repository')
+            out.append(os.path.join(trees[e.group(1)], e.group(2)))
+    return out
+
+
+def kernel_missing(lines):
+    """The options of KERNEL_OPTIONS that the lines do not set to y."""
+    return [o for o in KERNEL_OPTIONS if f'{o}=y' not in lines]
+
+
+def kernel_check(defconfig):
+    """The faults of one defconfig's kernel configuration, and the number of
+    controls refused."""
+    board = os.path.basename(defconfig)
+    files = kernel_files(defconfig)
+    if not files:
+        return [f'{board}: names no kernel configuration file ({" or ".join(KERNEL_FILES)})'], 0
+    lines = []
+    for f in files:
+        lines += [l.strip() for l in open(f)]
+    faults = [f'{board}: the kernel configuration ({", ".join(os.path.relpath(f) for f in files)}) '
+              f'does not set {o}=y' for o in kernel_missing(lines)]
+    refused = 0
+    if not faults:
+        for o in KERNEL_OPTIONS:
+            if kernel_missing([l for l in lines if l != f'{o}=y']) == [o]:
+                refused += 1
+            else:
+                faults.append(f'{board}: with {o}=y taken out, the kernel check does not refuse it')
+    return faults, refused
+
+
 def run_post_build(script, config, target):
     os.makedirs(target, exist_ok=True)
     env = dict(os.environ, BR2_CONFIG=config)
@@ -192,6 +258,13 @@ def main():
         for f in faults:
             print(f'br_kconfig_check: {board}: {f}')
             bad += 1
+        kfaults, krefused = kernel_check(defconfig)
+        for f in kfaults:
+            print(f'br_kconfig_check: {f}')
+            bad += 1
+        if not kfaults:
+            print(f'br_kconfig_check: {board}: the kernel sets {", ".join(o + "=y" for o in KERNEL_OPTIONS)}; '
+                  f'{krefused} control(s) with one taken out, each refused')
         rc, out = run_post_build(script, config, os.path.join(d, 'target'))
         if rc != 0:
             print(f'br_kconfig_check: {board}: post-build.sh refuses the .config Kconfig writes '

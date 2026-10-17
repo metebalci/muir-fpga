@@ -86,3 +86,9 @@ CONFIG_ARM_SMMU_V3=y
 # (`quux-ethernet-device`), which `defconfig` builds in already: said here so
 # that the build asserts it.
 CONFIG_TUN=y
+# Policy routing, for S82quux-ethernet-device's link-local rule: with a LAN
+# tap, two rules of type blackhole drop what arrives on the LAN interface or
+# on the tap for a link-local destination (169.254.x.y).  `ip rule add`
+# fails without CONFIG_IP_MULTIPLE_TABLES, and a LAN tap is then refused.
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y

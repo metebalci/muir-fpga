@@ -334,6 +334,33 @@ echo "\$*" >> "$WORK/ip.calls"
 # **THE TAP quux0 IS THERE WHEN tunctl MADE IT**, which is how the Ethernet
 # device's script asks before it makes one; every other word about it goes
 # into the tap's record too, in order.
+#
+# **AND \`ip rule\`, AS A KERNEL WITH POLICY ROUTING ANSWERS IT**, in the tap's
+# record: the rules are kept in \$WORK/ip.rules, one a line; \`del priority
+# N\` removes the first at N and fails when there is none.  \$WORK/ip.rule.adds
+# is how many adds succeed before every later one fails, as a kernel without
+# CONFIG_IP_MULTIPLE_TABLES fails them all at 0.
+if [ "\$1" = rule ]; then
+	echo "ip \$*" >> "$WORK/tap.calls"
+	case "\$2" in
+	add)
+		if [ -f "$WORK/ip.rule.adds" ]; then
+			_left=\$(cat "$WORK/ip.rule.adds")
+			[ "\$_left" -gt 0 ] || { echo "RTNETLINK answers: Operation not supported" >&2; exit 2; }
+			echo \$((_left - 1)) > "$WORK/ip.rule.adds"
+		fi
+		shift 2
+		echo "\$*" >> "$WORK/ip.rules"
+		exit 0 ;;
+	del)
+		_n=\$(grep -n -- " priority \$4 " "$WORK/ip.rules" 2>/dev/null | head -1 | cut -d: -f1)
+		[ -n "\$_n" ] || { echo "RTNETLINK answers: No such file or directory" >&2; exit 2; }
+		sed -i "\${_n}d" "$WORK/ip.rules"
+		exit 0 ;;
+	esac
+	cat "$WORK/ip.rules" 2>/dev/null
+	exit 0
+fi
 case "\$*" in
 *quux0*) echo "ip \$*" >> "$WORK/tap.calls" ;;
 esac
@@ -504,7 +531,8 @@ EOF
 	# tap, so that the order the tap was made in can be read; \`tunctl -t\`
 	# makes the tap and \`-d\` removes it.
 	: > "$WORK/tap.calls"
-	rm -f "$WORK/tap.made" "$WORK/ip.routes"
+	rm -f "$WORK/tap.made" "$WORK/ip.routes" "$WORK/ip.rule.adds"
+	: > "$WORK/ip.rules"
 	cat > "$WORK/bin/tunctl" <<EOF
 #!/bin/sh
 echo "tunctl \$*" >> "$WORK/tap.calls"
@@ -7291,9 +7319,18 @@ refused_untouched() {
 	fi
 }
 
-# The LAN tap's start, for QUUX at 192.0.2.50/24 on eth0, IPv6 present.
+# The link-local block (169.254.x.y) as the link-local rule names it, written
+# here independently of the script.
+LL_NET=$(printf '169.254.%d.%d/%d' 0 0 16)
+
+# The LAN tap's start, for QUUX at 192.0.2.50/24 on eth0, IPv6 present: the
+# link-local rule's old rules removed (none) and its two made, right after
+# the tap and before any forwarding.
 LAN_START_LIST="ip link show dev quux0
 tunctl -t quux0
+ip rule del priority 1169
+ip rule add iif eth0 to $LL_NET priority 1169 blackhole
+ip rule add iif quux0 to $LL_NET priority 1169 blackhole
 sysctl -q -w net.ipv6.conf.quux0.disable_ipv6=1
 sysctl -q -w net.ipv4.conf.quux0.arp_ignore=0
 sysctl -q -w net.ipv4.conf.quux0.arp_filter=1
@@ -7312,10 +7349,14 @@ sysctl -q -w net.ipv4.conf.eth0.forwarding=1
 sysctl -q -w net.ipv4.neigh.eth0.proxy_delay=0
 arp -i eth0 -Ds 192.0.2.50 eth0 pub"
 
-# And its stop, which puts eth0's forwarding 0 and proxy_delay 80 back.
+# And its stop, which puts eth0's forwarding 0 and proxy_delay 80 back, then
+# removes the two rules (the third `del` is the one that fails) before the tap.
 LAN_STOP_LIST="arp -i eth0 -d 192.0.2.50 pub
 sysctl -q -w net.ipv4.conf.eth0.forwarding=0
 sysctl -q -w net.ipv4.neigh.eth0.proxy_delay=80
+ip rule del priority 1169
+ip rule del priority 1169
+ip rule del priority 1169
 ip link show dev quux0
 ip link set dev quux0 down
 tunctl -d quux0"
@@ -7336,7 +7377,7 @@ mkdir -p "$WORK/ipv6/quux0"
 if prepare quux-ethernet-device S82quux-ethernet-device; then
 	run_script S82quux-ethernet-device
 	tap_record_is "host-only, muir's defaults" \
-		"ip link show dev quux0" "tunctl -t quux0" \
+		"ip link show dev quux0" "tunctl -t quux0" "ip rule del priority 1169" \
 		"sysctl -q -w net.ipv6.conf.quux0.disable_ipv6=1" \
 		"sysctl -q -w net.ipv4.conf.quux0.arp_ignore=2" \
 		"sysctl -q -w net.ipv4.conf.quux0.rp_filter=1" \
@@ -7352,7 +7393,26 @@ if prepare quux-ethernet-device S82quux-ethernet-device; then
 	fi
 fi
 s82_stop
-tap_record_is "host-only stop" "ip link show dev quux0" "ip link set dev quux0 down" "tunctl -d quux0"
+tap_record_is "host-only stop" "ip rule del priority 1169" "ip link show dev quux0" "ip link set dev quux0 down" \
+	"tunctl -d quux0"
+
+case_head "a host-only start removes every rule left at the link-local rule's priority, and adds none"
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+printf '%s\n' "iif eth0 to $LL_NET priority 1169 blackhole" "iif quux0 to $LL_NET priority 1169 blackhole" \
+	"from all lookup main priority 32766 " > "$WORK/ip.rules"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if [ "$(grep '^ip rule' "$WORK/tap.calls" | tr '\n' '|')" = \
+	     "ip rule del priority 1169|ip rule del priority 1169|ip rule del priority 1169|" ] &&
+	   [ "$(tr '\n' '|' < "$WORK/ip.rules")" = "from all lookup main priority 32766 |" ] &&
+	   [ -s "$WORK/daemon.calls" ]; then
+		ok "host-only: both old rules removed, the other rule kept, none added, the device started"
+	else
+		fail "host-only with old rules: the rule calls [$(grep '^ip rule' "$WORK/tap.calls" | tr '\n' '|')]," \
+		     "the rules left [$(tr '\n' '|' < "$WORK/ip.rules")], the program [$(given)]"
+	fi
+fi
 
 case_head "a LAN card makes a LAN tap: §3.2's list in its order, with no address on the tap and one proxy entry on eth0"
 lan_card
@@ -7515,11 +7575,11 @@ if prepare quux-ethernet-device S82quux-ethernet-device; then
 	run_script S82quux-ethernet-device
 	if [ "$(cat "$WORK/status.S82quux-ethernet-device")" != 0 ] && [ ! -s "$WORK/daemon.calls" ] &&
 	   grep -q "eth0's own" "$WORK/out.S82quux-ethernet-device" &&
-	   [ "$(tail -6 "$WORK/tap.calls" | head -3 | tr '\n' '|')" = \
-	     "arp -i eth0 -d 192.0.2.17 pub|sysctl -q -w net.ipv4.conf.eth0.forwarding=0|sysctl -q -w net.ipv4.neigh.eth0.proxy_delay=80|" ] &&
-	   [ "$(tail -1 "$WORK/tap.calls")" = "tunctl -d quux0" ] &&
+	   [ "$(tail -9 "$WORK/tap.calls" | tr '\n' '|')" = \
+	     "arp -i eth0 -d 192.0.2.17 pub|sysctl -q -w net.ipv4.conf.eth0.forwarding=0|sysctl -q -w net.ipv4.neigh.eth0.proxy_delay=80|ip rule del priority 1169|ip rule del priority 1169|ip rule del priority 1169|ip link show dev quux0|ip link set dev quux0 down|tunctl -d quux0|" ] &&
+	   [ ! -s "$WORK/ip.rules" ] &&
 	   [ ! -e "$WORK/run/quux-ethernet-device.lan" ]; then
-		ok "refused, said why, the program not started, and the proxy entry, eth0 and the tap undone"
+		ok "refused, said why, the program not started, and the proxy entry, eth0, the rules and the tap undone"
 	else
 		fail "Q is eth0's own: status $(cat "$WORK/status.S82quux-ethernet-device"), the program [$(given)]," \
 		     "said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")], the tap [$(tr '\n' '|' < "$WORK/tap.calls")]"
@@ -7592,6 +7652,46 @@ for routes in 'default via 192.0.2.5 dev eth0|192.0.2.50 dev eth0 scope link|192
 		else
 			fail "LAN, routes [$routes]: status $(cat "$WORK/status.S82quux-ethernet-device"), the program [$(given)]," \
 			     "said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")]"
+		fi
+	fi
+done
+
+# **A KERNEL WITHOUT POLICY ROUTING REFUSES THE LINK-LOCAL RULE**, and then a
+# LAN tap is refused: undone, no program, and the kernel option named.  The
+# first add failing is such a kernel; the second failing leaves one rule,
+# which the undo must remove.
+case_head "a failing ip rule add undoes the LAN tap, starts nothing and names CONFIG_IP_MULTIPLE_TABLES"
+for adds in 0 1; do
+	lan_card
+	echo "$adds" > "$WORK/ip.rule.adds"
+	if prepare quux-ethernet-device S82quux-ethernet-device; then
+		run_script S82quux-ethernet-device
+		which="the first add fails"
+		[ "$adds" = 0 ] || which="the second add fails"
+		if [ "$adds" = 0 ]; then
+			made="ip rule add iif eth0 to $LL_NET priority 1169 blackhole"
+			gone="ip rule del priority 1169"
+		else
+			made="ip rule add iif eth0 to $LL_NET priority 1169 blackhole
+ip rule add iif quux0 to $LL_NET priority 1169 blackhole"
+			gone="ip rule del priority 1169
+ip rule del priority 1169"
+		fi
+		_ifs=$IFS; IFS='
+'
+		# shellcheck disable=SC2086
+		set -- "ip link show dev quux0" "tunctl -t quux0" "ip rule del priority 1169" $made $gone \
+			"ip link show dev quux0" "ip link set dev quux0 down" "tunctl -d quux0"
+		IFS=$_ifs
+		tap_record_is "$which" "$@"
+		if [ "$(cat "$WORK/status.S82quux-ethernet-device")" != 0 ] && [ ! -s "$WORK/daemon.calls" ] &&
+		   [ ! -s "$WORK/ip.rules" ] && [ ! -e "$WORK/run/quux-ethernet-device.lan" ] &&
+		   grep -q CONFIG_IP_MULTIPLE_TABLES "$WORK/out.S82quux-ethernet-device" &&
+		   grep -q "not started" "$WORK/out.S82quux-ethernet-device"; then
+			ok "$which: refused, no rule and no run file left, no program, CONFIG_IP_MULTIPLE_TABLES named"
+		else
+			fail "$which: status $(cat "$WORK/status.S82quux-ethernet-device"), the program [$(given)]," \
+			     "rules left [$(tr '\n' '|' < "$WORK/ip.rules")], said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")]"
 		fi
 	fi
 done

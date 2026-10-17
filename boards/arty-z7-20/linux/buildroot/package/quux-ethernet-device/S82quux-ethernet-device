@@ -82,6 +82,17 @@ IPV6_CONF=/proc/sys/net/ipv6/conf
 INTERFACES=/etc/network/interfaces
 PROC_ARP=/proc/net/arp
 LANFILE=/var/run/quux-ethernet-device.lan
+# **THE LINK-LOCAL RULE**: with a LAN tap, a packet that arrives on the LAN
+# interface or on the tap for a link-local destination is dropped, by two
+# routing rules of type blackhole at this priority, which belongs to them
+# alone.  Routers never forward link-local addresses (RFC 3927, section 2.7),
+# so nothing on the LAN and no QUUX on a LAN tap reaches a host-only tap's
+# machine through the board.  The priority is after the local table's rule
+# at 0, so the board's own link-local addresses still answer, and the board's
+# own traffic is not touched, since each rule names an input interface.  The
+# rules need the kernel's policy routing, CONFIG_IP_MULTIPLE_TABLES.
+LINK_LOCAL_NET=169.254.0.0/16
+RULE_PRIORITY=1169
 
 RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
@@ -191,9 +202,29 @@ lan_saved() {
 	sed -n "s/^$1 //p" "$LANFILE" 2>/dev/null
 }
 
-# The tap made, if absent, with IPv6 off where the kernel has it.
+# Every rule at the link-local rule's priority removed: `ip rule del` until
+# it fails, as it does when none is left.  The bound only keeps a broken
+# `ip` from looping for ever.
+rules_removed() {
+	_i=0
+	while [ "$_i" -lt 64 ] && ip rule del priority "$RULE_PRIORITY" 2>/dev/null; do
+		_i=$((_i + 1))
+	done
+}
+
+# The tap made, if absent, with IPv6 off where the kernel has it.  Then any
+# old link-local rule goes, and with $1, the LAN interface, the two rules are
+# made: a host-only tap's start only removes them.
 tap_made() {
 	ip link show dev "$TAP" > /dev/null 2>&1 || tunctl -t "$TAP" > /dev/null || return 1
+	rules_removed
+	if [ -n "${1:-}" ]; then
+		if ! ip rule add iif "$1" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" blackhole ||
+		   ! ip rule add iif "$TAP" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" blackhole; then
+			echo "quux-ethernet-device: the link-local rule could not be made, iif $1 and iif $TAP at priority $RULE_PRIORITY; it needs the kernel's policy routing, CONFIG_IP_MULTIPLE_TABLES."
+			return 1
+		fi
+	fi
 	if [ -d "$IPV6_CONF/$TAP" ]; then
 		sysctl -q -w "net.ipv6.conf.$TAP.disable_ipv6=1" || return 1
 	fi
@@ -229,7 +260,8 @@ make_tap() {
 make_lan_tap() {
 	_q=$1
 	_l=$3
-	tap_made || return 1
+	# The link-local rule, before any forwarding is turned on.
+	tap_made "$_l" || return 1
 	sysctl -q -w "net.ipv4.conf.$TAP.arp_ignore=0" || return 1
 	sysctl -q -w "net.ipv4.conf.$TAP.arp_filter=1" || return 1
 	sysctl -q -w "net.ipv4.conf.$TAP.rp_filter=1" || return 1
@@ -291,8 +323,11 @@ lan_undo() {
 	rm -f "$LANFILE"
 }
 
-# The tap removed, which takes its route and its settings with it.
+# The link-local rule removed, then the tap, which takes its route and its
+# settings with it.  The stop runs this after the LAN interface's forwarding
+# is back, so the rule is never gone while the board forwards.
 tap_removed() {
+	rules_removed
 	if ip link show dev "$TAP" > /dev/null 2>&1; then
 		ip link set dev "$TAP" down
 		tunctl -d "$TAP" > /dev/null
