@@ -349,6 +349,9 @@ struct Run {
     uint64_t clock, addr, word;
   };
   std::vector<EdWord> ed_words;
+  // 253-257 when not muir's defaults, which the host writes in the run's
+  // first clocks.
+  std::vector<uint64_t> ed_host;
   // The video controller's size, 1280 by 1024 unless its `# video` line
   // says otherwise; and muir's mode and frame buffer at the end, where the
   // trace gives them (`# endbow`, `# endfb`).
@@ -627,6 +630,10 @@ int read_trace(const char *path, std::vector<Run> &runs) {
       if (w.size() == 3 && (w[0] == "edtx" || w[0] == "edrx" || w[0] == "edcounts")) {
         (w[0] == "edtx" ? runs.back().ed_tx : w[0] == "edrx" ? runs.back().ed_rx : runs.back().ed_counts)
             .emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() == 6 && w[0] == "edhost") {
+        for (int k = 1; k < 6; ++k) runs.back().ed_host.push_back(std::strtoull(w[k].c_str(), nullptr, 16));
         continue;
       }
       if (w.size() == 4 && w[0] == "edword") {
@@ -1487,7 +1494,8 @@ std::string checkpoint_check(Top *dut, const Run &run, const Bench &bench, const
   r.write = tb_face_write;
   r.ctx = &face;
   struct cadr_image img;
-  if (img_alloc_video(&img, static_cast<unsigned>(kMainWords >> 16), 1, 15, static_cast<unsigned>(kVideoW),
+  if (img_alloc_video(&img, static_cast<unsigned>(kMainWords >> 16), 1, static_cast<int>(kRevision),
+                      static_cast<unsigned>(kVideoW),
                       static_cast<unsigned>(kVideoH)) != 0)
     return "the image could not be made";
   std::string why;
@@ -1732,6 +1740,22 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->clk = 1;
     dut->eval();
   }
+  // 253-257, the host's flags, written as the program writes them at its
+  // start, here while the machine is held in its reset, so that they stand
+  // from the first clock as muir's do: indexes 12 to 16, one a clock.  No
+  // reset reaches them.
+  for (size_t k = 0; k < run.ed_host.size(); ++k) {
+    dut->eth_we = 1;
+    dut->eth_widx = static_cast<uint8_t>(12 + k);
+    dut->eth_wdata = static_cast<uint32_t>(run.ed_host[k]);
+    dut->clk = 0;
+    dut->eval();
+    dut->clk = 1;
+    dut->eval();
+  }
+  dut->eth_we = 0;
+  dut->eth_widx = 0;
+  dut->eth_wdata = 0;
 #else
   for (int k = 0; k < 4; ++k) edge();
 #endif

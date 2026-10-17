@@ -29,6 +29,14 @@
 //   - on the Arty Z7-20, BTN1 is a request and never the hard reset.
 // The processing system's ports are otherwise idle: its general-purpose
 // masters ask only for the face's words and its memory answers nothing.
+//
+// **AND THE ETHERNET DEVICE'S PAGE WHERE ITS PROGRAM LOOKS** (QUUX's
+// Ethernet contract, section 10), at the address `quux-ethernet-device`
+// maps, `cadr_board.h`'s `CADR_BOARD_PACK_BASE` and `qed_face.h`'s
+// `QED_FACE_OFFSET`, both included here: built with `QUUX15_REVISION` 16 the
+// page reads IDENT "QE16" and a COUNTS write there reaches the core's
+// Ethernet host side as index 11 with its word; built at 15 the page is the
+// default slave's, "NONE", and the core's Ethernet side sees nothing.
 
 #include <cstdarg>
 #include <cstdio>
@@ -57,6 +65,16 @@ constexpr unsigned kFace = 0xB0000000u;
 #include "verilated.h"
 #include "svdpi.h"
 
+#define _Static_assert static_assert
+extern "C" {
+#include "cadr/cadr_board.h"
+#include "qed_face.h"
+}
+#undef _Static_assert
+#ifndef QUUX15_REVISION
+#define QUUX15_REVISION 15
+#endif
+
 namespace {
 
 Top *top = nullptr;
@@ -70,11 +88,15 @@ constexpr long kAnswerBound = 131072;
 // Whether the shell plays a core that takes its request: its `rst_on` the
 // hard reset or the request, as a core whose port is empty.
 bool core_takes = true;
+// The core's Ethernet host side as the shell sees it: its writes counted,
+// the last's index and word.
+long eth_writes = 0;
+unsigned eth_idx = 0, eth_word = 0;
 
 // The processing system's store and load on the face's port (GP 1): 0 idle,
 // 1 address and word offered, 2 waiting for B, 3 read offered, 4 waiting for
 // R.  What came back, and the clocks.
-int gp_state = 0;
+int gp_state = 0, gp_port = 1;
 unsigned gp_addr = 0, gp_data = 0, gp_read = 0;
 bool aw_out = false, w_out = false, ar_out = false;
 long gp_wrote = -1, gp_answered = -1;
@@ -105,6 +127,11 @@ void Tick() {
   top->clk25 = 1;
   top->eval();
 #endif
+  if (CORE_I(eth_we)) {
+    ++eth_writes;
+    eth_idx = CORE_I(eth_widx);
+    eth_word = CORE_I(eth_wdata);
+  }
   ++t;
 }
 
@@ -146,7 +173,7 @@ void cadr_sim_gp(int port, svBit awready, svBit wready, svBit bvalid, int, int, 
   *awaddr = *awlen = *awid = *wdata = *wstrb = *araddr = *arlen = *arid = 0;
   *awvalid = *wvalid = *wlast = *arvalid = 0;
   *bready = *rready = 1;
-  if (port != 1) return;
+  if (port != gp_port) return;
   // A handshake: what this side drove from the last edge, and the other
   // side's ready before this one.
   static bool aw_drv = false, w_drv = false, ar_drv = false;
@@ -175,6 +202,28 @@ void cadr_sim_gp(int port, svBit awready, svBit wready, svBit bvalid, int, int, 
   *awvalid = aw_out;
   *wvalid = w_out;
   *arvalid = ar_out;
+}
+
+// A word of the faces' port (GP 0), written and answered, or read.
+void PortWrite(unsigned addr, unsigned v) {
+  gp_port = 0;
+  gp_addr = addr;
+  gp_data = v;
+  aw_out = w_out = true;
+  gp_state = 1;
+  gp_wrote = t;
+  gp_answered = -1;
+  for (int i = 0; i < 200 && gp_state != 0; ++i) Tick();
+  gp_port = 1;
+}
+unsigned PortRead(unsigned addr) {
+  gp_port = 0;
+  gp_addr = addr;
+  ar_out = true;
+  gp_state = 3;
+  for (int i = 0; i < 200 && gp_state != 0; ++i) Tick();
+  gp_port = 1;
+  return gp_read;
 }
 
 // The face's word `k`, written and answered, or read.
@@ -283,6 +332,24 @@ int main(int argc, char **argv) {
   Check(Until([] { return CORE_I(rst_req) == 0; }, 100) >= 0, "the request stood after BTN1 was let go");
 #endif
 
+  // **THE ETHERNET DEVICE'S PAGE**, where its program maps it.
+  constexpr unsigned kPage = CADR_BOARD_PACK_BASE + QED_FACE_OFFSET;
+  const long eth_before = eth_writes;
+  const unsigned ident = PortRead(kPage);
+  PortWrite(kPage + 0x12C, 0x01021A30u);
+  Held(400);
+  eth_writes -= eth_before;
+#if QUUX15_REVISION == 16
+  Check(ident == 0x51453136u, "the Ethernet device's page at %08x reads %08x, wanting \"QE16\"", kPage, ident);
+  Check(eth_writes == 1 && eth_idx == 11 && eth_word == 0x01021A30u,
+        "a COUNTS write at %08x reached the core's Ethernet side %ld times, index %u, word %08x", kPage + 0x12C,
+        eth_writes, eth_idx, eth_word);
+#else
+  Check(ident == 0x4E4F4E45u, "the page at %08x reads %08x on revision 15, wanting the default's \"NONE\"", kPage,
+        ident);
+  Check(eth_writes == 0, "a write at %08x reached the core's Ethernet side on revision 15", kPage + 0x12C);
+#endif
+
   delete top;
   if (fails) {
     std::fprintf(stderr, "quux15 reset hold, %s: FAILED, %d checks\n", BOARD, fails);
@@ -290,7 +357,7 @@ int main(int argc, char **argv) {
   }
   std::printf("quux15 reset hold, %s: ok, the core held while its memory port is in reset, let go %ld clocks after "
               "it, reset again %ld clocks after it; the RESET key a request, answered %ld clocks after the write, "
-              "and at the face's bound, %ld, when the core does not take it\n", BOARD, let_go, caught, answered,
-              bounded);
+              "and at the face's bound, %ld, when the core does not take it; revision %d's page at %08x reads "
+              "%08x\n", BOARD, let_go, caught, answered, bounded, QUUX15_REVISION, kPage, ident);
   return 0;
 }

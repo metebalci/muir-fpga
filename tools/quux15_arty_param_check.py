@@ -52,6 +52,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from machine_param_check import name_of, params_at_cell, walk  # noqa: E402
+import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_arty"
@@ -159,9 +160,10 @@ def top_param(tree, name):
     return found[0] if len(found) == 1 else None
 
 
-def at_period(period, sources, scratch):
+def at_period(period, sources, scratch, revision=15):
     base = [VERILATOR, "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-            "-Iboards/arty-z7-20", "--top-module", TOP, "-GPERIOD_NS=%d" % period]
+            "-Iboards/arty-z7-20", "--top-module", TOP, "-GPERIOD_NS=%d" % period,
+            "-GREVISION=%d" % revision]
     rc, out = run(base[:1] + ["--lint-only", "-Wall"] + base[1:] + sources)
     if rc != 0:
         say(False, "PERIOD_NS=%d: the lint failed:\n%s" % (period, out.strip()))
@@ -175,7 +177,8 @@ def at_period(period, sources, scratch):
         tree = json.load(f)
     shutil.rmtree(mdir, True)
     w, h = VIDEO
-    at = "PERIOD_NS=%d" % period
+    at = "REVISION=%d, PERIOD_NS=%d" % (revision, period)
+    ethernet_page_check.figures(tree, TOP, "u_gp0_split", revision, at, say)
 
     # The clock: the period at a 1,000 MHz VCO from 125 MHz.
     want = {"CLKIN1_PERIOD": 8.0, "CLKFBOUT_MULT_F": 8.0, "CLKOUT0_DIVIDE_F": float(period)}
@@ -248,8 +251,9 @@ def main():
     os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_arty_param.", dir="build")
     try:
-        for p in PERIODS:
-            at_period(p, sources, scratch)
+        for r in (15, 16):
+            for p in PERIODS:
+                at_period(p, sources, scratch, r)
     finally:
         shutil.rmtree(scratch, True)
     if failures:

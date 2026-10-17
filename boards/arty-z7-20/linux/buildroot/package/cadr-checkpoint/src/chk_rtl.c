@@ -904,6 +904,7 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 // recency bytes zero.  A drained cache's words are main memory's, so a cold
 // one moves when a read is answered, never what it reads.
 #define MUIR_REVISION_15_MARK (0200u | 15u)
+#define MUIR_REVISION_16_MARK (0200u | 16u)
 #define MUIR_KRIA_READ_NS 247u
 #define MUIR_KRIA_WRITE_NS 130u
 #define MUIR_KRIA_OCCUPANCY_NS 10u
@@ -1002,6 +1003,46 @@ static void emit_pipeline_15(struct chk *w, const struct cadr_image *img)
 	chk_u16(w, (uint16_t)(t[IMG_TL15_NPC_PREV] & 0x3FFFu));		/* READ npc_prev */
 }
 
+// `EthernetDevice::save` at revision 16 (QUUX's Ethernet contract, section
+// 2.9): the registers, the counters each to its field, the transmit due and
+// 253-257, all READ off `quux16_ethernet.sv`'s readout but for the due time.
+// **A TRANSMIT WAITING IS DUE AT THE CHECKPOINT'S INSTANT**: the board's
+// program sends the entries between 245 and 244 when it will, and has no
+// instant of muir's to give, so the file names the snapshot's and a resumed
+// machine sends them at once.
+static void emit_ethernet_16(struct chk *w, const struct cadr_image *img)
+{
+	const struct quux15_state *x = &img->q15;
+	chk_bool(w, x->eth.on);					/* READ */
+	chk_bool(w, x->eth.ie);					/* READ */
+	chk_bool(w, x->eth.refused);				/* READ */
+	chk_bool(w, x->eth.fault);				/* READ */
+	chk_u32(w, x->eth.tx_base);				/* READ */
+	chk_u32(w, x->eth.tx_log2);				/* READ */
+	chk_u32(w, x->eth.rx_base);				/* READ */
+	chk_u32(w, x->eth.rx_log2);				/* READ */
+	chk_u16(w, x->eth.tx_prod);				/* READ */
+	chk_u16(w, x->eth.tx_cons);				/* READ */
+	chk_u16(w, x->eth.rx_prod);				/* READ */
+	chk_u16(w, x->eth.rx_cons);				/* READ */
+	chk_u16(w, x->eth.rx_taken);				/* READ */
+	chk_u32(w, (x->eth.counts >> 4) & 0xFu);		/* READ the type filter's */
+	chk_u32(w, (x->eth.counts >> 9) & 0x7Fu);		/* READ the IPv4 checks' */
+	chk_u32(w, (x->eth.counts >> 16) & 0xFFu);		/* READ receive drops */
+	chk_u32(w, (x->eth.counts >> 24) & 0xFFu);		/* READ transmit refusals */
+	if (x->eth.on && x->eth.tx_prod != x->eth.tx_cons) {
+		chk_bool(w, 1);
+		chk_u64(w, x->ns);				/* DECLARED due now */
+	} else {
+		chk_bool(w, 0);					/* nothing waiting */
+	}
+	for (unsigned k = 0; k < 6; ++k)
+		chk_u8(w, x->eth.mac[k]);			/* READ 253, 254 */
+	chk_u32(w, x->eth.address);				/* READ 255 */
+	chk_u32(w, x->eth.netmask);				/* READ 256 */
+	chk_u32(w, x->eth.gateway);				/* READ 257 */
+}
+
 // `Tv::save` for revision 15's video controller: `emit_video`'s, and the
 // instant of the last RESET-DEVICES, which the fabric keeps for it.
 static void emit_video_15(struct chk *w, const struct cadr_image *img)
@@ -1034,7 +1075,7 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 
 	// --- Machine::save, at revision 15 ----------------------------------
 	w->word_bytes = 5u;
-	w->version = CHK_VERSION_15;
+	w->version = img->rev16 ? CHK_VERSION_16 : CHK_VERSION_15;
 	chk_u64s(w, img->prom, IMG_PROM_WORDS);			/* READ, 64 bits */
 	// The control store as its RAM holds it, and **ZERO UNDER THE PROM**,
 	// as revisions 13 and 14 write it: the PROM has the addresses from 36000
@@ -1070,7 +1111,7 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	chk_u16(w, img->dc);					/* READ */
 	static const uint32_t no_l1[MUIR_L1_WORDS_13] = { 0 };
 	chk_u32s(w, no_l1, MUIR_L1_WORDS_13);		/* NONE: revision 15 has no map levels */
-	chk_u8(w, MUIR_REVISION_15_MARK);			/* READ, the machine */
+	chk_u8(w, img->rev16 ? MUIR_REVISION_16_MARK : MUIR_REVISION_15_MARK);	/* READ, the machine */
 	chk_u8(w, MUIR_QUUX_PDL_BITS);
 	chk_bool(w, 1);						/* muldiv */
 	chk_bool(w, 1);						/* tick */
@@ -1121,6 +1162,8 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	chk_u32(w, img->qx.pdl_base);				/* READ A 430's copy */
 	chk_u16(w, img->qx.pdl_head);				/* READ A 431's copy */
 	chk_u32(w, x->posted);					/* READ word 225 */
+	if (img->rev16)
+		emit_ethernet_16(w, img);
 
 	// --- the pipeline -----------------------------------------------------
 	chk_u64(w, x->period);					/* READ entry 21 */
@@ -1706,6 +1749,9 @@ static const char *const kMissingQuux15[] = {
 	"    machine's board catches up with the clock at its first look.",
 	"a data push's word waiting for the micro stack: its 19 bits, which are",
 	"    all SPC<18:0> keeps; muir keeps the push's 32.",
+	"on revision 16, the Ethernet device's transmit due time, which is the",
+	"    board's program's: a transmit waiting is written due at the",
+	"    checkpoint's instant, and a resumed machine sends it at once.",
 	"and the DISK PACK, which revision 15's fabric does not build: no pack.",
 	NULL
 };
@@ -1917,6 +1963,12 @@ const char *chk_rtl_mutation(void)
 	return "the CADR's Chaosnet address taken as muir's default, whatever the interface holds";
 #elif CHK_MUTATE == 55
 	return "the CADR's resume line without its Chaosnet address";
+#elif CHK_MUTATE == 56
+	return "revision 16's resume line without the host's three flags";
+#elif CHK_MUTATE == 57
+	return "the resume line's --ip-address with the host part's length for the prefix's";
+#elif CHK_MUTATE == 58
+	return "the sidecar's ip-gateway line not read back";
 #else
 	return NULL;
 #endif

@@ -226,6 +226,30 @@ int bind_digest(struct binding *b, char *err, size_t errlen)
 
 // --- the sidecar -----------------------------------------------------------
 
+// 253-257 in muir's own spellings: the MAC address in lower-case hex and
+// colons, an address as a.b.c.d, a netmask as its prefix's length.
+void bind_mac_text(const uint8_t mac[6], char out[18])
+{
+	snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4],
+		 mac[5]);
+}
+
+void bind_ipv4_text(uint32_t a, char out[16])
+{
+	snprintf(out, 16, "%u.%u.%u.%u", a >> 24, (a >> 16) & 0xFFu, (a >> 8) & 0xFFu, a & 0xFFu);
+}
+
+static unsigned prefix_of(uint32_t netmask)
+{
+	unsigned n = 0;
+	while (n < 32 && (netmask >> (31 - n)) & 1u)
+		++n;
+#if CHK_MUTATE == 57
+	return 32 - n;
+#endif
+	return n;
+}
+
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n)
 {
 	size_t at = 0;
@@ -290,6 +314,22 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 				       " --chaos-address %o", b->chaos_address);
 #endif
+	// **AND REVISION 16's 253-257**, the board's device's, which muir
+	// refuses a resume under others than (QUUX's Ethernet contract, section
+	// 2.9), given or by default.
+#if CHK_MUTATE != 56
+	if (b->quux && b->eth) {
+#else
+	if (0) {
+#endif
+		char mac[18], a[16], g[16];
+		bind_mac_text(b->eth_mac, mac);
+		bind_ipv4_text(b->eth_address, a);
+		bind_ipv4_text(b->eth_gateway, g);
+		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+				       " --ethernet-mac %s --ip-address %s/%u --ip-gateway %s", mac, a,
+				       prefix_of(b->eth_netmask), g);
+	}
 	snprintf(out + at, at < n ? n - at : 0, " --resume %s", chk);
 }
 
@@ -377,6 +417,15 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 		fprintf(f, "sync-cycle-ticks: %u\n", b->sync_k);
 		if (b->video_width)
 			fprintf(f, "video-size: %ux%u\n", b->video_width, b->video_height);
+		if (b->eth) {
+			char mac[18], a[16], g[16];
+			bind_mac_text(b->eth_mac, mac);
+			bind_ipv4_text(b->eth_address, a);
+			bind_ipv4_text(b->eth_gateway, g);
+			fprintf(f, "ethernet-mac: %s\n", mac);
+			fprintf(f, "ip-address: %s/%u\n", a, prefix_of(b->eth_netmask));
+			fprintf(f, "ip-gateway: %s\n", g);
+		}
 	}
 	if (!b->quux && b->chaos_address)
 		fprintf(f, "chaos-address: %o\n", b->chaos_address);
@@ -507,13 +556,13 @@ int bind_revision_known(unsigned revision)
 #if CHK_MUTATE == 48
 	return revision == 13;
 #else
-	return revision >= 13 && revision <= 15;
+	return revision >= 13 && revision <= 16;
 #endif
 }
 
 int bind_revision_packed(unsigned revision)
 {
-	return revision >= 13 && revision <= 15;
+	return revision >= 13 && revision <= 16;
 }
 
 int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
@@ -634,6 +683,38 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			}
 			b->video_width = w;
 			b->video_height = h;
+		} else if ((v = field(line, "ethernet-mac")) != NULL) {
+			unsigned m[6];
+			if (sscanf(v, "%2x:%2x:%2x:%2x:%2x:%2x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6) {
+				note(err, errlen, "%s: ethernet-mac \"%s\", which is not a MAC address", path, v);
+				fclose(f);
+				return -1;
+			}
+			for (unsigned k = 0; k < 6; ++k)
+				b->eth_mac[k] = (uint8_t)m[k];
+			b->eth = 1;
+		} else if ((v = field(line, "ip-address")) != NULL || (v = field(line, "ip-gateway")) != NULL) {
+			unsigned q[4], len = 32;
+			const int gateway = line[3] == 'g';
+			const int got = sscanf(v, gateway ? "%u.%u.%u.%u" : "%u.%u.%u.%u/%u", &q[0], &q[1], &q[2], &q[3],
+					       &len);
+			if (got != (gateway ? 4 : 5) || q[0] > 255 || q[1] > 255 || q[2] > 255 || q[3] > 255 ||
+			    len < 1 || len > 32) {
+				note(err, errlen, "%s: \"%s\", which is not an IPv4 %s", path, line,
+				     gateway ? "address" : "address and prefix length");
+				fclose(f);
+				return -1;
+			}
+			const uint32_t a = q[0] << 24 | q[1] << 16 | q[2] << 8 | q[3];
+			if (gateway) {
+#if CHK_MUTATE != 58
+				b->eth_gateway = a;
+#endif
+			} else {
+				b->eth_address = a;
+				b->eth_netmask = len == 32 ? 0xFFFFFFFFu : ~(0xFFFFFFFFu >> len);
+			}
+			b->eth = 1;
 		} else if ((v = field(line, "chaos-address")) != NULL) {
 			unsigned a = 0;
 			if (chk_chaos_address(v, &a) != 0) {

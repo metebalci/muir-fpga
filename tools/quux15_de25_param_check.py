@@ -53,6 +53,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from machine_param_check import name_of, params_at_cell, walk  # noqa: E402
+import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_de25"
@@ -147,11 +148,12 @@ def top_param(tree, name):
     return found[0] if len(found) == 1 else None
 
 
-def elaborate(period, sources, scratch):
-    """The top's tree at `period`, or at its own when None; None if it fails."""
+def elaborate(period, sources, scratch, revision=15):
+    """The top's tree at `period`, or at its own when None, and at QUUX's
+    `revision`; None if it fails."""
     at = "PERIOD=%d" % period if period is not None else "the top's own PERIOD"
     base = [VERILATOR, "-Irtl/machine", "-Irtl/plumbing", "-DCADR_DDR_MAP_DE25_NANO",
-            "--top-module", TOP] + (["-GPERIOD=%d" % period] if period is not None else [])
+            "--top-module", TOP, "-GREVISION=%d" % revision] + (["-GPERIOD=%d" % period] if period is not None else [])
     rc, out = run(base[:1] + ["--lint-only", "-Wall"] + base[1:] + sources)
     if rc != 0:
         say(False, "%s: the lint failed:\n%s" % (at, out.strip()))
@@ -180,12 +182,13 @@ def own_period(sources, scratch):
     say(got == BINDING, what if got == BINDING else "%s --- it is tied to %s" % (what, got))
 
 
-def at_period(period, sources, scratch):
-    tree = elaborate(period, sources, scratch)
+def at_period(period, sources, scratch, revision=15):
+    tree = elaborate(period, sources, scratch, revision)
     if tree is None:
         return
     w, h = VIDEO
-    at = "PERIOD=%d" % period
+    at = "REVISION=%d, PERIOD=%d" % (revision, period)
+    ethernet_page_check.figures(tree, TOP, "u_h2f_split", revision, at, say)
 
     # The period in units of 0.5 ns, at the core and at the face.
     got = pin_const(tree, "u_core", "period")
@@ -256,8 +259,9 @@ def main():
     scratch = tempfile.mkdtemp(prefix="quux15_de25_param.", dir="build")
     try:
         own_period(sources, scratch)
-        for p in PERIODS:
-            at_period(p, sources, scratch)
+        for r in (15, 16):
+            for p in PERIODS:
+                at_period(p, sources, scratch, r)
     finally:
         shutil.rmtree(scratch, True)
     if failures:

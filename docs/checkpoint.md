@@ -597,6 +597,25 @@ What the file holds otherwise than muir's own:
 
 `cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
 
+## A revision 16 checkpoint
+
+QUUX revision 16's checkpoint is muir's version 57: revision 15's body, the
+level-1 byte carrying revision 16, with the Ethernet device after word 225
+(`EthernetDevice::save`). The device's registers, its indexes, its four
+counters and 253 to 257 are read off the devices' words 24 to 30
+(`rtl/machine/quux16_ethernet.sv`'s readout). A transmit waiting between 245
+and 244 is the board's program's to send, and the board has no instant of
+muir's to give for it, so the file names the checkpoint's own instant as its
+due time, and a resumed machine sends it at once.
+
+muir refuses a resume under other `--ethernet-mac`, `--ip-address` or
+`--ip-gateway` than the checkpoint's, so the resume line names the three the
+board's device holds, and the sidecar records them as `ethernet-mac:`,
+`ip-address:` and `ip-gateway:` lines. `make check`'s checkpoints group at
+revision 16 holds the board's file to muir's byte for byte, and
+`quux16_resume.quux.pass` resumes one under those flags and has muir refuse
+it under its defaults.
+
 **Block-disk's pack** is bound to the file as on revisions 13 and 14, its
 registers, DONE and the instant it was last told read off the devices' words.
 A checkpoint is refused while a transfer is in flight: its walk running or

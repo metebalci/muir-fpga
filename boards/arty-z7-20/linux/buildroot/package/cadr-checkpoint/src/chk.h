@@ -44,6 +44,9 @@
 // QUUX revision 15's (A15b.13; muir's `VERSION_15`): version 55's words,
 // the pipeline's state after the machine.  A body says so in `version`.
 #define CHK_VERSION_15 56u
+// Revision 16's, muir's `VERSION_16`: revision 15's body with the Ethernet
+// device after word 225 (QUUX's Ethernet contract, section 2.9).
+#define CHK_VERSION_16 57u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
 // muir's nanoseconds**, and so what the machine's elapsed time is multiplied

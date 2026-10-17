@@ -1098,6 +1098,70 @@ static unsigned chaos_resolve(uint32_t ident, uint32_t myaddr, int asked, unsign
 	return bind_chaos_address(&f, asked, asked_address, msg, n);
 }
 
+// ---- revision 16's 253-257, the host's flags ------------------------------
+//
+// **muir REFUSES A RESUME UNDER OTHER `--ethernet-mac`, `--ip-address` OR
+// `--ip-gateway` THAN THE CHECKPOINT'S** (QUUX's Ethernet contract, section
+// 2.9), given or by default, so the resume line names the three the board's
+// device holds, in muir's own spellings, and the sidecar records them and
+// gives the same line back.  Every failure prints one line under one prefix.
+static void ethernet_host_check(const char *work)
+{
+	struct binding b, rd;
+	bind_init(&b);
+	b.quux = 1;
+	b.revision = 16;
+	b.sync_k = 20;
+	b.boards = 512;
+	b.running = 0;
+	b.eth = 1;
+	static const uint8_t mac[6] = { 0x02, 0x5a, 0x11, 0x22, 0x33, 0x44 };
+	memcpy(b.eth_mac, mac, 6);
+	b.eth_address = 169u << 24 | 254u << 16 | 101u << 8 | 2u;
+	b.eth_netmask = 0xFFFFFFFCu;
+	b.eth_gateway = 169u << 24 | 254u << 16 | 101u << 8 | 1u;
+	snprintf(b.checkpoint, sizeof b.checkpoint, "/mnt/card/q.chk");
+	static const char want[] = "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 "
+		"--ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 "
+		"--resume q.chk";
+	char cmd[4096], side[400];
+	bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+	if (strcmp(cmd, want) != 0) {
+		fprintf(stderr, "checkpoint: FAIL: the host's flags: the resume line is [%s], wanting [%s]\n",
+			cmd, want);
+		++bad;
+	}
+	snprintf(side, sizeof side, "%s/eth.chk%s", work, BIND_SUFFIX);
+	char err[1024] = "";
+	bind_init(&rd);
+	if (bind_write(&b, side, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
+		fprintf(stderr, "checkpoint: FAIL: the host's flags: the sidecar: %s\n", err);
+		++bad;
+	} else {
+		bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+		if (strcmp(cmd, want) != 0) {
+			fprintf(stderr, "checkpoint: FAIL: the host's flags: the resume line from the sidecar read "
+				"back is [%s], wanting [%s]\n", cmd, want);
+			++bad;
+		}
+		if (sidecar_has(side, "ethernet-mac: 02:5a:11:22:33:44", 1) != 1 ||
+		    sidecar_has(side, "ip-address: 169.254.101.2/30", 1) != 1 ||
+		    sidecar_has(side, "ip-gateway: 169.254.101.1", 1) != 1) {
+			fprintf(stderr, "checkpoint: FAIL: the host's flags: the sidecar's three lines\n");
+			++bad;
+		}
+	}
+	remove(side);
+	// Below revision 16 the line names none of them.
+	b.eth = 0;
+	b.revision = 15;
+	bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+	if (strstr(cmd, "--ethernet-mac") || strstr(cmd, "--ip-")) {
+		fprintf(stderr, "checkpoint: FAIL: the host's flags: revision 15's resume line is [%s]\n", cmd);
+		++bad;
+	}
+}
+
 static void chaos_address_check(const struct cadr_image *img, const struct chk_declared *decl,
 				const char *work)
 {
@@ -1613,7 +1677,7 @@ int main(int argc, char **argv)
 		{
 			const struct { unsigned rev; int known, packed; } t[] = {
 				{0, 0, 0}, {11, 0, 0}, {12, 0, 0}, {13, 1, 1}, {14, 1, 1}, {15, 1, 1},
-				{16, 0, 0}};
+				{16, 1, 1}, {17, 0, 0}};
 			for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
 				if (bind_revision_known(t[i].rev) != t[i].known) {
 					fprintf(stderr, "checkpoint: FAIL: revision %u is %s, and it is %s\n", t[i].rev,
@@ -2045,6 +2109,7 @@ int main(int argc, char **argv)
 	if (run_state_check(&img, &decl, "the CADR") != 0)
 		return 1;
 	chaos_address_check(&img, &decl, work);
+	ethernet_host_check(work);
 
 	if (out) {
 		if (chk_write_file(out, "rtl", 1, &body) != 0) {

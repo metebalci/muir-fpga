@@ -600,7 +600,7 @@ int main(int argc, char **argv)
 		if (bind_revision_packed((unsigned)revision))
 			say("the bitstream is QUUX revision %d: 40-bit words and packed "
 			    "main memory, checkpoint version %u", revision,
-			    revision >= 15 ? CHK_VERSION_15 : CHK_VERSION_40);
+			    revision >= 16 ? CHK_VERSION_16 : revision >= 15 ? CHK_VERSION_15 : CHK_VERSION_40);
 	}
 	// **HOW MUCH MAIN MEMORY, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
 	// checkpoint is of all of main memory, and muir refuses to resume one
@@ -925,6 +925,15 @@ int main(int argc, char **argv)
 	bind.revision = quux ? (unsigned)revision : 0u;
 	bind.sync_k = quux ? sync_k : 0u;
 	bind.video_width = quux ? img.video_width : 0u;
+	// Revision 16's 253-257, the board's device's: the resume line names
+	// them, since muir refuses a resume under others.
+	bind.eth = img.rev16;
+	if (img.rev16) {
+		memcpy(bind.eth_mac, img.q15.eth.mac, sizeof bind.eth_mac);
+		bind.eth_address = img.q15.eth.address;
+		bind.eth_netmask = img.q15.eth.netmask;
+		bind.eth_gateway = img.q15.eth.gateway;
+	}
 	bind.video_height = quux ? img.video_height : 0u;
 	bind.running = ran;
 	bind.chaos_address = quux ? 0u : (unsigned)chaos;
@@ -966,7 +975,7 @@ int main(int argc, char **argv)
 	if (img.rev13)
 		say("  (a revision %d checkpoint, version %u: muir's quux runs it under "
 		    "MUIR_QUUX_REVISION=%d, which the line names)", revision,
-		    img.rev15 ? CHK_VERSION_15 : CHK_VERSION_40, revision);
+		    img.rev16 ? CHK_VERSION_16 : img.rev15 ? CHK_VERSION_15 : CHK_VERSION_40, revision);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);

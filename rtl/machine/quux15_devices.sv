@@ -651,6 +651,7 @@ module quux15_devices #(
   // as the core holds them; RESET-DEVICES disables it.  Below revision 16
   // nothing decodes them and every output is 0.
   logic [31:0] ed_word;
+  logic [63:0] ed_ro;
   logic        ed_irq, ed_irq_state;
   if (ETHERNET) begin : g_ethernet
     quux16_ethernet #(.MAIN_WORDS(MAIN_WORDS)) eth_regs (
@@ -662,8 +663,10 @@ module quux15_devices #(
         .irq(ed_irq), .irq_state(ed_irq_state),
         .tx_prod_now(eth_tx_prod), .rx_prod_now(eth_rx_prod), .sweep(eth_sweep),
         .host_we(eth_we), .host_widx(eth_widx), .host_wdata(eth_wdata),
-        .host_ridx(eth_ridx), .host_rdata(eth_rdata));
+        .host_ridx(eth_ridx), .host_rdata(eth_rdata),
+        .ro_k(ro_k[2:0]), .ro_word(ed_ro));
   end else begin : g_no_ethernet
+    assign ed_ro = 64'd0;
     assign ed_word = 32'd0;
     assign ed_irq = 1'b0;
     assign ed_irq_state = 1'b0;
@@ -898,6 +901,8 @@ module quux15_devices #(
   //   20    the real-time clock's seconds; 21 the microseconds
   //   22    the instant of the last RESET-DEVICES
   //   23    the keyboard and the mouse (`quux15_input.sv`'s `ro_state`)
+  //   24-31 revision 16's Ethernet device, its word k - 24
+  //         (`quux16_ethernet.sv`'s readout); 0 below revision 16
   //   64-127 the keyboard's FIFO, word k - 64 of it, in <23:0>
   always_comb begin
     ro_dev = 64'd0;
@@ -926,6 +931,7 @@ module quux15_devices #(
       5'd21: ro_dev = {32'd0, us_cnt};
       5'd22: ro_dev = {16'd0, tv_at};
       5'd23: ro_dev = {16'd0, in_ro_state};
+      5'd24, 5'd25, 5'd26, 5'd27, 5'd28, 5'd29, 5'd30, 5'd31: ro_dev = ed_ro;
       default: ro_dev = 64'd0;
     endcase
     if (ro_k[6:5] != 2'd0) ro_dev = ro_k[6] ? {40'd0, in_ro_fifo} : 64'd0;

@@ -337,7 +337,7 @@ fn rules() -> Vec<String> {
     r.write(0o244, (p + 1) & 0xFFFF);
     r.write(0o244, (p + 0x101) & 0xFFFF);
     // 253-257 the host's.
-    r.host(Host { mac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55], address: 0xA9FE_6506, netmask: 0xFFFF_FFFC, gateway: 0xA9FE_6505 });
+    r.host(Host { mac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55], address: 0xA9FE_6502, netmask: 0xFFFF_FFFC, gateway: 0xA9FE_6501 });
     r.arrive(&[frame(0, 42, true), frame(0, 42, false)]);
     r.out
 }

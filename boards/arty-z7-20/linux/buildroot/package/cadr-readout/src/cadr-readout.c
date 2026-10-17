@@ -343,7 +343,11 @@ int main(int argc, char **argv)
 			ro_start(&r);
 		return 1;
 	}
-	say("the bitstream is %s", ro_machine_names[machine]);
+	// Revision 16's window is revision 15's, and its name its own.
+	if (rev == 16)
+		say("the bitstream is QUUX revision 16");
+	else
+		say("the bitstream is %s", ro_machine_names[machine]);
 	// **REVISION 15'S HALT IS ITS DRAIN'S END** (`ro_found`): its core reads
 	// its memories only while halted, so a word read before the drain ends
 	// is whatever the port last read (`quux15_face.sv`).

@@ -121,6 +121,14 @@ struct binding {
 	// of another size at.  0 on the CADR and in a sidecar written before
 	// the size was named.
 	unsigned video_width, video_height;
+	// **AND REVISION 16's 253-257**, the board's Ethernet device's, which
+	// muir's `--ethernet-mac`, `--ip-address` and `--ip-gateway` give and
+	// muir refuses a checkpoint of others at (QUUX's Ethernet contract,
+	// section 2.9).  `eth` 0 below revision 16 and in a sidecar written
+	// before the lines were.
+	int eth;
+	uint8_t eth_mac[6];
+	uint32_t eth_address, eth_netmask, eth_gateway;
 	// The run state the file records: 1 when the machine was running and
 	// this program halted it for the read, so that the file carries RUN and
 	// SRUN set and muir resumes it running; 0 when it was found halted and
@@ -201,12 +209,16 @@ void bind_halt_unmark(const char *path);
 void bind_memory_words(int quux, unsigned units, char *out, size_t n);
 
 // **THE REVISIONS OF QUUX A CHECKPOINT IS WRITTEN OF**, the register table's
-// entry 21: 13, 14 and 15, whose words are 40 bits in packed main memory
+// entry 21: 13 to 16, whose words are 40 bits in packed main memory
 // (contract G2 appendix A1.13; revision 14 has revision 13's main memory, its
 // checkpoint version 55 with the revision in the geometry, contract G3
-// revision 14 A14.14; revision 15's is version 56).  Revision 12 is retired.
-// `bind_revision_known` and `bind_revision_packed` are 1 for those three.
+// revision 14 A14.14; revision 15's is version 56, and revision 16's, its body
+// with the Ethernet device, 57).  Revision 12 is retired.
+// `bind_revision_known` and `bind_revision_packed` are 1 for those four.
 int bind_revision_known(unsigned revision);
+// 253-257 in muir's spellings: `02:00:00:00:00:01`, `169.254.100.2`.
+void bind_mac_text(const uint8_t mac[6], char out[18]);
+void bind_ipv4_text(uint32_t a, char out[16]);
 int bind_revision_packed(unsigned revision);
 
 // **THE MAIN MEMORY THE COMMAND LINE ASKED FOR**, held to the machine named:

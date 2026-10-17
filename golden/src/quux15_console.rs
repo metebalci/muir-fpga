@@ -111,8 +111,20 @@ pub fn fabric_body(e: &Pipeline) -> Vec<u8> {
     }
     let mut head = Writer::new();
     m.save(&mut head);
-    head.u64(e.period());
     let mut out = head.finish();
+    // **A TRANSMIT WAITING IS DUE AT THE CHECKPOINT'S INSTANT** on revision
+    // 16: the board's program sends the entries between 245 and 244 when it
+    // will, and the board's file has no instant of muir's to give, so it
+    // writes the snapshot's own, and a resumed machine sends them at once.
+    // `EthernetDevice::save`'s last fields are the due time, 6 bytes of MAC
+    // address and three words.
+    if m.geometry.ethernet()
+        && let Some(_) = m.ethernet.head_due()
+    {
+        let at = out.len() - 18 - 8;
+        out[at..at + 8].copy_from_slice(&m.ns.to_le_bytes());
+    }
+    out.extend_from_slice(&e.period().to_le_bytes());
     let mut port = Writer::new();
     e.port.save(&mut port);
     let port = port.finish();
@@ -596,6 +608,15 @@ pub fn checkpoints(period: u64) -> Vec<Case> {
     }
     for seed in [1u64, 2] {
         add(&format!("randmem-{seed}"), super::quux15_preset::random_program(seed, true).case("x"), 10);
+    }
+    // **REVISION 16's ETHERNET DEVICE** (`quux15_ethernet.rs`): its runs
+    // halted at points across them, rings set up, frames delivered and
+    // counted, transmits sent and waiting, 253-257 the host's.
+    if super::revision() == 16 {
+        for c in super::quux15_ethernet::ethernet() {
+            let name = format!("eth-{}", c.name);
+            add(&name, c, 4);
+        }
     }
     v
 }

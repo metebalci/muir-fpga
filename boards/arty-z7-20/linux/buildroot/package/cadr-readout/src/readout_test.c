@@ -426,9 +426,9 @@ int main(void)
 		const uint64_t sig = ((uint64_t)IMG_QUUX_MARK << 32) | (4ull << 24) | (1ull << 16);
 		const struct { uint64_t id; int rev; } cases[] = {
 			{ 0, 0 }, { sig, 12 }, { sig | IMG_QUUX_ID_13, 13 }, { sig | IMG_QUUX_ID_14, 14 },
-			{ sig | IMG_QUUX_ID_15, 15 },
+			{ sig | IMG_QUUX_ID_15, 15 }, { sig | IMG_QUUX_ID_16, 16 },
 			{ sig | 0x00C4u, -1 }, { sig | 0x00D5u, -1 }, { sig | 0x00E5u, -1 }, { sig | 0x00F5u, -1 },
-			{ sig | 0x0104u, -1 },
+			{ sig | 0x0105u, -1 }, { sig | 0x0114u, -1 },
 		};
 		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
 			m->quux_id = cases[i].id;
@@ -806,7 +806,11 @@ int main(void)
 		}
 		// And a revision with no layout is none, never another's.
 		// Revision 12, retired, among them.
-		const int none[] = { -1, 1, 11, 12, 16, 255 };
+		const int none[] = { -1, 1, 11, 12, 17, 255 };
+		// Revision 16's window is revision 15's.
+		if (ro_machine_of(16) != RO_M_QUUX15)
+			fail("revision 16's layout, which is revision 15's, is", (unsigned long long)ro_machine_of(16),
+			     RO_M_QUUX15);
 		for (unsigned i = 0; i < sizeof none / sizeof none[0]; ++i)
 			if (ro_machine_of(none[i]) != -1)
 				fail("a layout for a revision that has none, revision",

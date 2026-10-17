@@ -1916,6 +1916,28 @@ static void check_boot_rev15(void)
 		      out);
 	}
 
+	// 1b. REVISION 16, revision 15's machine with the Ethernet device (QUUX's
+	// Ethernet contract, section 10): the same boot, the keyboard's word.
+	{
+		struct model m16;
+		struct console c16;
+		struct cons_boot_report r16;
+		model_init(&m16);
+		attach(&c16, &m16);
+		model_rev15(&m16);
+		m16.ro_entry21 = 0x515526000104ull;
+		cons_halt(&c16);
+		capture_start();
+		const int rc16 = cons_boot_and_report(&c16, 2000, &r16);
+		cons_say_boot(&r16);
+		const char *out16 = capture_end();
+		CHECK(rc16 == 0 && r16.how == CONS_BOOT_BY_KEYBOARD && r16.revision == 16 &&
+		      m16.boot_word_writes == 0 && m16.in_key_writes == 1 && m16.kbd_boot_count == 1,
+		      "boot on revision 16 answered %d, how %d, revision %u, %u stores to word 13, %u to KEY, "
+		      "%u boots: [%s]", rc16, r16.how, r16.revision, m16.boot_word_writes, m16.in_key_writes,
+		      m16.kbd_boot_count, out16);
+	}
+
 	// 2. A RUNNING machine, the same again: the second boot is a second
 	// word, and KEY reading the same word as before is still a hand-over.
 	m.pc = 04321;
@@ -2000,8 +2022,8 @@ static void check_boot_rev15(void)
 		int rev15, full, ident_wrong, unmapped;
 		const char *line;
 	} t[] = {
-		{ 0x515506000104ull, 0, 0, 0, 0,
-		  "boot: refused, nothing written --- QUUX revision 16: this program has no boot "
+		{ 0x515506000114ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 17: this program has no boot "
 		  "for it" },
 		{ 0x5155060000B4ull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- QUUX revision 11: this program has no boot "
@@ -2081,7 +2103,7 @@ static void check_boot_rev15(void)
 			close(fd);
 		model_init(&m);
 		attach(&c, &m);
-		m.ro_entry21 = 0x515506000104ull;	/* revision 16 */
+		m.ro_entry21 = 0x515506000114ull;	/* revision 17 */
 		cons_halt(&c);
 		capture_start();
 		rc = cons_boot_command(&c, 2000, path);
@@ -2998,8 +3020,8 @@ static void check_machine_word(void)
 		{ 0x5155060000E5ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
 		  "40-bit words, microcycle K=6 L=0; build 0000000f, no git information" },
-		{ 0x515506000104ull, 0x0000000Fu, 0,
-		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), "
+		{ 0x515506000114ull, 0x0000000Fu, 0,
+		  "machine: QUUX revision 17, MACHINE-ID 51550114 (revision 17, processor type 4), "
 		  "words of a width not known here, period 3 ns; build 0000000f, no git information" },
 		{ 0x5155220000F4ull, 0x0E4E7450u, 0,
 		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
@@ -3042,6 +3064,13 @@ static void check_machine_word(void)
 		CHECK(id.quux == 1 && id.revision == 14 && id.processor_type == 4 && id.word_bits == 40,
 		      "revision 14's entry decoded as rev %u type %u width %u", id.revision,
 		      id.processor_type, id.word_bits);
+		// Revision 16's, the Ethernet device's (QUUX's Ethernet contract,
+		// section 10): revision 15's words, 40 bits, its period in K's place.
+		cons_machine_id_of(0x515522000104ull, 0, &id);
+		CHECK(id.quux == 1 && id.revision == 16 && id.machine_id == 0x51550104u &&
+		      id.processor_type == 4 && id.word_bits == 40 && id.k == 34,
+		      "revision 16's entry decoded as rev %u id %08x type %u width %u K %u", id.revision,
+		      id.machine_id, id.processor_type, id.word_bits, id.k);
 		cons_machine_id_of(CONS_RO_NO_MEMORY, CONS_BUILD_NONE, &id);
 		CHECK(id.quux == 0 && id.known == 1 && id.revision == 0 && id.machine_id == 0 &&
 		      id.word_bits == 32 && !id.build.stamped, "the CADR's answer decoded as QUUX's");
@@ -3081,6 +3110,13 @@ static void check_machine_word(void)
 		const char *says;
 	} e[] = {
 		{ 0x5155050000D4ull, 3, "quux", "13", 0, NULL },
+		{ 0x515522000104ull, 3, "quux", "16", 0,
+		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), 40-bit words, "
+		  "period 17 ns" },
+		{ 0x515522000104ull, 3, "quux", "15", 1,
+		  "asked for QUUX revision 15, and the fabric is QUUX revision 16" },
+		{ 0x5155220000F4ull, 3, "quux", "16", 1,
+		  "asked for QUUX revision 16, and the fabric is QUUX revision 15" },
 		{ 0x5155050000D4ull, 2, "quux", NULL, 0, NULL },
 		{ CONS_RO_NO_MEMORY, 2, "cadr", NULL, 0, NULL },
 		{ 0x515504000000ull, 2, "quux", NULL, 0, NULL },

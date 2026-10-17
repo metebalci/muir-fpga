@@ -369,8 +369,11 @@ QUUX15_PERIODS_regread := 20 36
 # and 250, transmits and deliveries with the testbench as the device's
 # host, the sweep and the interrupt; and revision 15's file device and
 # network groups again at revision 16, whose 140-157 and 160-171 are
-# revision 15's.
-QUUX16_GROUPS := ethernet filedev network
+# revision 15's; and the checkpoints group at revision 16, the board's file
+# (version 57, the Ethernet device's state read off the core's readout) held
+# to muir's byte for byte, the `ethernet` group's runs halted across them
+# among it.
+QUUX16_GROUPS := ethernet filedev network checkpoints
 QUUX15_PERIODS_ethernet := 20 17 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
@@ -449,10 +452,13 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux15_arty.pass $(BUILD)/quux15_arty_param.pass $(BUILD)/quux15_axi3.quux.pass \
        $(BUILD)/quux15_de25.pass $(BUILD)/quux15_de25_param.pass $(BUILD)/quux15_de25_faces.pass \
        $(BUILD)/quux15_f2sdram.quux.pass $(BUILD)/quux15_reset_arty.pass $(BUILD)/quux15_reset_kr260.pass \
+       $(BUILD)/quux15_reset_arty.r16.pass $(BUILD)/quux15_reset_kr260.r16.pass \
+       $(BUILD)/quux15_kr260_probe.r16.pass $(BUILD)/quux15_de25_top.r16.pass \
        $(BUILD)/quux15_kr260_probe.pass \
        $(BUILD)/quux15_reset_axi.quux.pass \
        $(BUILD)/quux15_fd_face.pass \
        $(QUUX16_GROUPS:%=$(BUILD)/quux15_%.quux.r16.pass) $(BUILD)/quux16_ethernet_module.quux.pass \
+       $(BUILD)/quux16_resume.quux.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -3451,6 +3457,41 @@ $(BUILD)/quux15_fd_face.pass: $(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harnes
 	$(BUILD)/obj_quux15_fd_face/Vquux15_fd_face_harness
 	@touch $@
 
+# **REVISION 16's CHECKPOINT IN muir, UNDER ITS HOST'S FLAGS AND OTHERS**
+# (QUUX's Ethernet contract, section 2.9).  The checkpoints group at revision
+# 16 holds the board's file, written by `cadr-readout`'s reader and
+# `cadr-checkpoint`'s writer off the core, to muir's own byte for byte; the
+# `hostwords` run's carries 253-257 other than muir's defaults.  Here muir's
+# `quux` resumes that file under the three flags `cadr-checkpoint`'s resume
+# line gives for those words (`checkpoint_test.c`'s `ethernet_host_check`
+# holds the line), and saves it back the same bytes; and refuses it under
+# muir's defaults, each flag that differs named in muir's words, and under one
+# flag off, the MAC address, that flag alone named.
+QUUX16_RESUME_CHK := $(BUILD)/quux15_ckpt/eth-hostwords-74999.p20.r16.chk
+QUUX16_RESUME_HOST := --ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1
+$(BUILD)/quux16_resume.quux.pass: $(BUILD)/quux15_checkpoints.quux.r16.pass | $(BUILD)
+	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir-sim/Cargo.toml --bin quux --target-dir $(MUIR_TARGET)
+	@set -e; export MUIR_RC=/dev/null MUIR_QUUX_REVISION=16; F=$(QUUX16_RESUME_CHK); W=$(BUILD)/quux16_resume; \
+	 mkdir -p $$W; R="$(QUUX_BIN) --rtl --microcycle-ns 10 --rtc 1790119057 --stop-after 0"; \
+	 $$R $(QUUX16_RESUME_HOST) --resume $$F --checkpoint $$W/back.chk > $$W/host.log 2>&1 \
+	   || { echo "quux16_resume: muir REFUSED the file under its host's flags:"; grep '^quux:' $$W/host.log; exit 1; }; \
+	 cmp $$F $$W/back.chk || { echo "quux16_resume: muir saved other bytes"; exit 1; }; \
+	 if $$R --resume $$F > $$W/defaults.log 2>&1; then echo "quux16_resume: muir TOOK it under its defaults"; exit 1; fi; \
+	 for w in "the checkpoint's --ethernet-mac is 02:5a:11:22:33:44, and here 02:00:00:00:00:01" \
+	          "the checkpoint's --ip-address is 169.254.101.2/30, and here 169.254.100.2/30" \
+	          "the checkpoint's --ip-gateway is 169.254.101.1, and here 169.254.100.1"; do \
+	   grep -qF "$$w" $$W/defaults.log || { echo "quux16_resume: muir's refusal does not say [$$w]:"; \
+	                                         grep '^quux:' $$W/defaults.log; exit 1; }; \
+	 done; \
+	 if $$R --ethernet-mac 02:5a:11:22:33:45 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 \
+	        --resume $$F > $$W/mac.log 2>&1; then echo "quux16_resume: muir TOOK it under another MAC address"; exit 1; fi; \
+	 grep -qF "the checkpoint's --ethernet-mac is 02:5a:11:22:33:44, and here 02:5a:11:22:33:45; a resume" $$W/mac.log \
+	   && ! grep -q -e "--ip-address is" -e "--ip-gateway is" $$W/mac.log \
+	   || { echo "quux16_resume: muir's refusal of another MAC address:"; grep '^quux:' $$W/mac.log; exit 1; }; \
+	 echo "quux16_resume: muir resumed the board's revision-16 file under its host's flags and saved the same $$(stat -c%s $$F) bytes;"; \
+	 echo "quux16_resume: it refused it under its defaults, naming all three flags, and under another MAC address, naming that one"
+	@touch $@
+
 # **REVISION 16's ETHERNET DEVICE FROM BOTH OF ITS SIDES**
 # (`rtl/machine/quux16_ethernet.sv`): the page `rtl/plumbing/quux_ed_face.sv`
 # with revision 16's register-page devices behind it
@@ -3516,6 +3557,7 @@ $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stu
 # clocks --- the display's second, the lamp's hold, the mouse's step ---
 # the period's, at each period the board's fits are asked for and at 10 ns.
 $(BUILD)/quux15_kr260_param.pass: tools/quux15_kr260_param_check.py tools/machine_param_check.py \
+        tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
                                   $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                                   boards/kria-kr260/display_raster.mk | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_kr260_param_check.py \
@@ -3555,6 +3597,7 @@ $(BUILD)/quux15_arty.pass: $(QUUX15_ARTY_SRC) $(BOARD_STUBS) \
 # the lamps' hold and stretch, the mouse's step --- the period's, at each
 # period the board's fits are asked for and at 10 ns.
 $(BUILD)/quux15_arty_param.pass: tools/quux15_arty_param_check.py tools/machine_param_check.py \
+        tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
                                  $(QUUX15_ARTY_SRC) $(BOARD_STUBS) | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_arty_param_check.py \
 	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)
@@ -3614,6 +3657,17 @@ $(BUILD)/obj_quux15_de25_top/Vquux15_de25: $(QUUX15_DE25_SIM) tb/quux15_de25_top
 	    -Mdir $(BUILD)/obj_quux15_de25_top --top-module quux15_de25 $(QUUX15_DE25_SIM) \
 	    $(abspath tb/quux15_de25_top_tb.cpp)
 
+# **AND AT REVISION 16**, the Ethernet device's face on the bridge's second
+# page: the same simulation of the top built with `REVISION` 16.
+$(BUILD)/obj_quux15_de25_top_r16/Vquux15_de25: $(QUUX15_DE25_SIM) tb/quux15_de25_top_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) --pins-inout-enables -O2 -CFLAGS -O2 -GREVISION=16 \
+	    -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    -Mdir $(BUILD)/obj_quux15_de25_top_r16 --top-module quux15_de25 $(QUUX15_DE25_SIM) \
+	    $(abspath tb/quux15_de25_top_tb.cpp)
+$(BUILD)/quux15_de25_top.r16.pass: $(BUILD)/obj_quux15_de25_top_r16/Vquux15_de25
+	$(BUILD)/obj_quux15_de25_top_r16/Vquux15_de25
+	@touch $@
+
 $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
                            $(BUILD)/obj_quux15_de25_top/Vquux15_de25 | $(BUILD)
 	@# At revision 15 and at revision 16, with the Ethernet device's face.
@@ -3637,6 +3691,7 @@ $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
 # face, and every time in clocks, at 10, 22, 22.5, 23 and 24 ns; and the
 # top's own period, the board's binding fit's 22.5 ns.
 $(BUILD)/quux15_de25_param.pass: tools/quux15_de25_param_check.py tools/machine_param_check.py \
+        tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
                                  $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_de25_param_check.py $(QUUX15_DE25_STUBS) $(QUUX15_DE25_SRC)
 	@touch $@
@@ -3714,29 +3769,49 @@ $(BUILD)/quux15_reset_axi.quux.pass: $(foreach b,0 1 2,$(BUILD)/obj_quux15_reset
 # core as a shell, the port's reset driven by the testbench: the core in
 # reset with the port, let go after it, reset again with it.
 QUUX15_ZYNQ_SIM := tb/cadr_sim_axi.sv tb/quux15_core_shell.sv tb/quux15_zynq_reset_tb.cpp
-$(BUILD)/obj_quux15_reset_arty/Vquux15_arty: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv \
-        boards/arty-z7-20/cadr_ps7.sv,$(QUUX15_ARTY_SRC)) $(BOARD_STUBS) tb/cadr_ps7_sim.sv $(QUUX15_ZYNQ_SIM) | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_ARTY \
+# The programs' own headers, for the Ethernet device's page where its program
+# maps it (`cadr_board.h`'s pack side's base, `qed_face.h`'s offset).
+QUUX15_ZYNQ_SIM_INC := -CFLAGS -I$(abspath boards/arty-z7-20/linux/buildroot/package/cadr-common/src) \
+                       -CFLAGS -I$(abspath boards/arty-z7-20/linux/buildroot/package/quux-ethernet-device/src)
+QUUX15_ZYNQ_SIM_HDR := boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
+                       boards/arty-z7-20/linux/buildroot/package/quux-ethernet-device/src/qed_face.h
+# Each board's simulation at revision 15 and at revision 16 (`REVISION`, the
+# top's; `QUUX15_REVISION`, the testbench's), `obj_quux15_reset_<board>` and
+# `obj_quux15_reset_<board>_r16`.
+define QUUX15_RESET_ARTY_RULE
+$$(BUILD)/obj_quux15_reset_arty$(2)/Vquux15_arty: $$(filter-out $$(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv \
+        boards/arty-z7-20/cadr_ps7.sv,$$(QUUX15_ARTY_SRC)) $$(BOARD_STUBS) tb/cadr_ps7_sim.sv $$(QUUX15_ZYNQ_SIM) \
+        $$(QUUX15_ZYNQ_SIM_HDR) | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_ARTY $$(QUUX15_ZYNQ_SIM_INC) \
+	    -GREVISION=$(1) -CFLAGS -DQUUX15_REVISION=$(1) \
 	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
-	    -Mdir $(BUILD)/obj_quux15_reset_arty --top-module quux15_arty \
-	    $(BOARD_STUBS) tb/cadr_sim_axi.sv tb/cadr_ps7_sim.sv tb/quux15_core_shell.sv \
-	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv,$(QUUX15_ARTY_SRC)) \
-	    $(abspath tb/quux15_zynq_reset_tb.cpp)
-$(BUILD)/quux15_reset_arty.pass: $(BUILD)/obj_quux15_reset_arty/Vquux15_arty
-	$(BUILD)/obj_quux15_reset_arty/Vquux15_arty
-	@touch $@
-$(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv \
-        boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
-        tb/cadr_ps8_sim.sv $(QUUX15_ZYNQ_SIM) | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_KRIA -DCADR_DDR_MAP_KR260 \
+	    -Mdir $$(BUILD)/obj_quux15_reset_arty$(2) --top-module quux15_arty \
+	    $$(BOARD_STUBS) tb/cadr_sim_axi.sv tb/cadr_ps7_sim.sv tb/quux15_core_shell.sv \
+	    $$(filter-out $$(QUUX15_CORE_SRC) tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv,$$(QUUX15_ARTY_SRC)) \
+	    $$(abspath tb/quux15_zynq_reset_tb.cpp)
+$$(BUILD)/quux15_reset_arty$(3).pass: $$(BUILD)/obj_quux15_reset_arty$(2)/Vquux15_arty
+	$$(BUILD)/obj_quux15_reset_arty$(2)/Vquux15_arty
+	@touch $$@
+endef
+$(eval $(call QUUX15_RESET_ARTY_RULE,15,,))
+$(eval $(call QUUX15_RESET_ARTY_RULE,16,_r16,.r16))
+define QUUX15_RESET_KR260_RULE
+$$(BUILD)/obj_quux15_reset_kr260$(2)/Vquux15_kr260: $$(filter-out $$(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv \
+        boards/kria-kr260/cadr_ps8.sv,$$(QUUX15_KR260_SRC)) $$(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+        tb/cadr_ps8_sim.sv $$(QUUX15_ZYNQ_SIM) $$(QUUX15_ZYNQ_SIM_HDR) | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -CFLAGS -DQUUX15_KRIA -DCADR_DDR_MAP_KR260 \
+	    -CFLAGS -DCADR_BOARD_KR260 $$(QUUX15_ZYNQ_SIM_INC) -GREVISION=$(1) -CFLAGS -DQUUX15_REVISION=$(1) \
 	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 \
-	    -Mdir $(BUILD)/obj_quux15_reset_kr260 --top-module quux15_kr260 \
-	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv \
-	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) \
-	    $(abspath tb/quux15_zynq_reset_tb.cpp)
-$(BUILD)/quux15_reset_kr260.pass: $(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
-	$(BUILD)/obj_quux15_reset_kr260/Vquux15_kr260
-	@touch $@
+	    -Mdir $$(BUILD)/obj_quux15_reset_kr260$(2) --top-module quux15_kr260 \
+	    $$(BOARD_STUBS) tb/cadr_kr260_stubs.sv tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv \
+	    $$(filter-out $$(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv,$$(QUUX15_KR260_SRC)) \
+	    $$(abspath tb/quux15_zynq_reset_tb.cpp)
+$$(BUILD)/quux15_reset_kr260$(3).pass: $$(BUILD)/obj_quux15_reset_kr260$(2)/Vquux15_kr260
+	$$(BUILD)/obj_quux15_reset_kr260$(2)/Vquux15_kr260
+	@touch $$@
+endef
+$(eval $(call QUUX15_RESET_KR260_RULE,15,,))
+$(eval $(call QUUX15_RESET_KR260_RULE,16,_r16,.r16))
 
 # **AND THE KRIA KR260'S LATENCY PROBE** (`tb/quux15_kr260_probe_tb.cpp`):
 # the same top level around the same simulation, the shell's master port
@@ -3754,6 +3829,19 @@ $(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) t
 	    $(abspath tb/quux15_kr260_probe_tb.cpp)
 $(BUILD)/quux15_kr260_probe.pass: $(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260
 	$(BUILD)/obj_quux15_kr260_probe/Vquux15_kr260
+	@touch $@
+# And at revision 16.
+$(BUILD)/obj_quux15_kr260_probe_r16/Vquux15_kr260: $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv \
+        boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+        tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv tb/quux15_kr260_probe_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Wno-PINCONNECTEMPTY -O2 -CFLAGS -O2 -DCADR_DDR_MAP_KR260 -GREVISION=16 \
+	    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 \
+	    -Mdir $(BUILD)/obj_quux15_kr260_probe_r16 --top-module quux15_kr260 \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv tb/cadr_sim_axi.sv tb/cadr_ps8_sim.sv tb/quux15_core_shell.sv \
+	    $(filter-out $(QUUX15_CORE_SRC) tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv,$(QUUX15_KR260_SRC)) \
+	    $(abspath tb/quux15_kr260_probe_tb.cpp)
+$(BUILD)/quux15_kr260_probe.r16.pass: $(BUILD)/obj_quux15_kr260_probe_r16/Vquux15_kr260
+	$(BUILD)/obj_quux15_kr260_probe_r16/Vquux15_kr260
 	@touch $@
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
@@ -5594,6 +5682,14 @@ CHECKPOINT_SIDECAR_MUTANTS := 51
 # mutant must fail there: the interface not read, and the line without the
 # address.
 CHECKPOINT_CHAOS_MUTANTS := 54 55
+# **REVISION 16's 253-257 ON THE RESUME LINE, AND ITS MUTANTS, 56 TO 58.**
+# muir refuses a resume under other `--ethernet-mac`, `--ip-address` or
+# `--ip-gateway` than the checkpoint's, so revision 16's line names the three
+# the board's device holds, and the sidecar records them and gives the same
+# line back (`checkpoint_test.c`'s `ethernet_host_check`; muir's own refusal
+# is `quux16_resume.quux.pass`'s).  Each mutant must fail there: the line
+# without the three, the prefix's length wrong, and the gateway not read back.
+CHECKPOINT_ETH_MUTANTS := 56 57 58
 CHECKPOINT_CHAOS_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
@@ -5717,6 +5813,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the Chaosnet address: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the Chaosnet address's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_ETH_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the host's flags' check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^checkpoint: FAIL: the host's flags: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the host's flags: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the host's flags' check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 

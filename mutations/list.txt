@@ -31772,9 +31772,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
 @note The board's writer names its file revision 13's and 14's version.
 @old
-	w->version = CHK_VERSION_15;
+	w->version = img->rev16 ? CHK_VERSION_16 : CHK_VERSION_15;
 @new
-	w->version = CHK_VERSION_40;
+	w->version = img->rev16 ? CHK_VERSION_16 : CHK_VERSION_40;
 @end
 
 @mutation quux15-checkpoint-recency-one-short
@@ -35255,4 +35255,193 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
       .CHAOS_BASE(ETHERNET ? 32'h0000_5000 : 32'h0000_1000),
 @new
       .CHAOS_BASE(ETHERNET ? 32'h0000_6000 : 32'h0000_1000),
+@end
+
+# --- QUUX revision 16's checkpoint on a board (QUUX's Ethernet contract,
+# §2.9): the Ethernet device's readout (`rtl/machine/quux16_ethernet.sv`,
+# `quux15_devices.sv`'s words 24-31), `cadr-readout`'s reader and
+# `cadr-checkpoint`'s writer, held to muir's VERSION_16 files byte for byte
+# by the checkpoints group at revision 16; and the Ethernet device's page
+# where its program maps it, on the Zynq boards' simulations at revision 16.
+
+@mutation eth-ckpt-version-15-on-16
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Revision 16's file written at revision 15's version, 56.
+@old
+	w->version = img->rev16 ? CHK_VERSION_16 : CHK_VERSION_15;
+@new
+	w->version = img->rev16 ? CHK_VERSION_15 : CHK_VERSION_15;
+@end
+
+@mutation eth-ckpt-mark-15-on-16
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Revision 16's geometry byte written as revision 15's mark.
+@old
+	chk_u8(w, img->rev16 ? MUIR_REVISION_16_MARK : MUIR_REVISION_15_MARK);	/* READ, the machine */
+@new
+	chk_u8(w, img->rev16 ? MUIR_REVISION_15_MARK : MUIR_REVISION_15_MARK);	/* READ, the machine */
+@end
+
+@mutation eth-ckpt-no-ethernet-device
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Revision 16's body without the Ethernet device after word 225.
+@old
+	if (img->rev16)
+		emit_ethernet_16(w, img);
+@new
+	if (img->rev16 && !img->rev16)
+		emit_ethernet_16(w, img);
+@end
+
+@mutation eth-ckpt-ipv4-counter-out-of-place
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The IPv4 checks' counter read a bit above its place.
+@old
+	chk_u32(w, (x->eth.counts >> 9) & 0x7Fu);		/* READ the IPv4 checks' */
+@new
+	chk_u32(w, (x->eth.counts >> 10) & 0x7Fu);		/* READ the IPv4 checks' */
+@end
+
+@mutation eth-ckpt-due-never-written
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note A transmit waiting written as nothing due: a resumed machine never sends it.
+@old
+	if (x->eth.on && x->eth.tx_prod != x->eth.tx_cons) {
+@new
+	if (x->eth.on && x->eth.tx_prod != x->eth.tx_cons && !x->eth.on) {
+@end
+
+@mutation eth-ckpt-mac-bytes-reversed
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The MAC address written last byte first.
+@old
+		chk_u8(w, x->eth.mac[k]);			/* READ 253, 254 */
+@new
+		chk_u8(w, x->eth.mac[5 - k]);			/* READ 253, 254 */
+@end
+
+@mutation eth-readout-rx-base-from-tx
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-readout/src/readout.c
+@note The receive ring's base read from the transmit ring's half.
+@old
+		x->eth.rx_base = (uint32_t)((e[1] >> 32) & 0x0FFFFFFFu);
+@new
+		x->eth.rx_base = (uint32_t)((e[1] >> 0) & 0x0FFFFFFFu);
+@end
+
+@mutation eth-readout-no-device-on-16
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-readout/src/readout.c
+@note Revision 16 read as revision 15 with no Ethernet device.
+@old
+	img->rev16 = quux && revision == 16;
+@new
+	img->rev16 = quux && revision == 17;
+@end
+
+@mutation eth-readout-gateway-from-netmask
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-readout/src/readout.c
+@note 257 read from the netmask's half.
+@old
+		x->eth.gateway = (uint32_t)e[6];
+@new
+		x->eth.gateway = (uint32_t)(e[6] >> 32);
+@end
+
+@mutation eth-ro-indexes-out-of-place
+@check quux15_checkpoints_quux_r16
+@file rtl/machine/quux16_ethernet.sv
+@note The readout's index word with 244 and 245 swapped.
+@old
+      3'd2: ro_word = {rx_cons, rx_prod, tx_cons, tx_prod};
+@new
+      3'd2: ro_word = {rx_cons, rx_prod, tx_prod, tx_cons};
+@end
+
+@mutation eth-ro-words-at-the-wrong-place
+@check quux15_checkpoints_quux_r16
+@file rtl/machine/quux15_devices.sv
+@note The devices' readout gives the Ethernet device from word 25, one late.
+@old
+        .ro_k(ro_k[2:0]), .ro_word(ed_ro));
+@new
+        .ro_k(ro_k[2:0] - 3'd1), .ro_word(ed_ro));
+@end
+
+@mutation eth-arty-page-a-page-off
+@check quux15_reset_arty_r16
+@file boards/arty-z7-20/quux15_arty.sv
+@note Revision 16's Ethernet page a page above where its program maps it.
+@old
+  cadr_gp0_split #(.HAS_FD(1'b1), .CHAOS_BASE(ETHERNET ? 32'h4000_5000 : 32'h4000_1000)) u_gp0_split (
+@new
+  cadr_gp0_split #(.HAS_FD(1'b1), .CHAOS_BASE(ETHERNET ? 32'h4000_6000 : 32'h4000_1000)) u_gp0_split (
+@end
+
+@mutation eth-arty-page-a-page-off-param
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note Revision 16's Ethernet page a page above the pack side's + 0x5000.
+@old
+  cadr_gp0_split #(.HAS_FD(1'b1), .CHAOS_BASE(ETHERNET ? 32'h4000_5000 : 32'h4000_1000)) u_gp0_split (
+@new
+  cadr_gp0_split #(.HAS_FD(1'b1), .CHAOS_BASE(ETHERNET ? 32'h4000_6000 : 32'h4000_1000)) u_gp0_split (
+@end
+
+@mutation eth-arty-machine-id-15-on-16
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note The core keeps revision 15's MACHINE-ID whatever REVISION says.
+@old
+      .MACHINE_ID({16'h5155, 12'(REVISION), 4'd4}),
+@new
+      .MACHINE_ID({16'h5155, 12'(15 + 0 * REVISION), 4'd4}),
+@end
+
+@mutation eth-kr260-page-a-page-off
+@check quux15_reset_kr260_r16
+@file boards/kria-kr260/quux15_kr260.sv
+@note Revision 16's Ethernet page a page above where its program maps it.
+@old
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(ETHERNET ? 32'hA000_5000 : 32'hA000_1000),
+@new
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(ETHERNET ? 32'hA000_6000 : 32'hA000_1000),
+@end
+
+@mutation eth-kr260-page-a-page-off-param
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note Revision 16's Ethernet page a page above the pack side's + 0x5000.
+@old
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(ETHERNET ? 32'hA000_5000 : 32'hA000_1000),
+@new
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(ETHERNET ? 32'hA000_6000 : 32'hA000_1000),
+@end
+
+@mutation eth-kr260-face-ident-15
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note The Ethernet face built with another IDENT than the program's.
+@old
+    quux_ed_face #(.IDENT(32'h5145_3136), .ID_W(16), .LEN_W(8)) u_ed_face (
+@new
+    quux_ed_face #(.IDENT(32'h5145_3135), .ID_W(16), .LEN_W(8)) u_ed_face (
+@end
+
+@mutation eth-de25-machine-id-15-on-16
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The core keeps revision 15's MACHINE-ID whatever REVISION says.
+@old
+      .MACHINE_ID({16'h5155, 12'(REVISION), 4'd4}),
+@new
+      .MACHINE_ID({16'h5155, 12'(15 + 0 * REVISION), 4'd4}),
 @end

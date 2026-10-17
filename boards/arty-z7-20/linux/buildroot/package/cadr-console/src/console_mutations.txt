@@ -922,7 +922,7 @@
 @why a revision this program has not met has a width it does not know, and the line
 @why must say so rather than call it 40 bits
 @old
-	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
+	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
 @new
 	m->word_bits = m->revision >= 13 ? 40 : 0;
 @end
@@ -931,9 +931,9 @@
 @file console_face.c
 @why revision 14's words are revision 13's, 40 bits, and the line must say so
 @old
-	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
+	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
 @new
-	m->word_bits = m->revision == 13 || m->revision == 15 ? 40 : 0;
+	m->word_bits = m->revision == 13 || m->revision == 15 || m->revision == 16 ? 40 : 0;
 @end
 
 @mutation machine-period-said-as-k
@@ -1270,4 +1270,22 @@
 	if (r.how == CONS_BOOT_REFUSED)
 		return 1;
 @new
+@end
+
+@mutation machine-width-of-16-not-known
+@file console_face.c
+@why revision 16's words are revision 15's, 40 bits, and the line must say so
+@old
+	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
+@new
+	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
+@end
+
+@mutation revision-16-has-no-boot
+@file console_face.c
+@why revision 16 is revision 15's machine and boots by the keyboard's boot word, as it does
+@old
+	if (id.revision == 15 || id.revision == 16) {
+@new
+	if (id.revision == 15) {
 @end

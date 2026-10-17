@@ -22,14 +22,18 @@
 //!              the cache holds it; an ARP frame delivered, its line read
 //!              again after the sweep, its length, status <8> and word 100
 //!              <8> under the interrupt enable, 252 taking it back; a second
-//!              delivered; an IPv6 frame dropped by the type filter and one
-//!              too long for its buffer dropped, each counted
+//!              delivered; an IPv6 frame dropped by the type filter, an IPv4
+//!              frame by the IPv4 checks and one too long for its buffer
+//!              dropped, each counted
 //!   held       244 held behind a slow write, a second 244 replacing it, 250
 //!              waiting behind it, and CMD_PROD's 164 held before another 244,
 //!              the file device enabled beside the Ethernet device
 //!   irq        a frame arriving under the interrupt enable with interrupts
 //!              on: condition 5 calling the handler, which takes the entry
 //!              back and lowers the level
+//!   hostwords  253-257 other than muir's defaults, read, and a frame to
+//!              that MAC address delivered; the checkpoints group at
+//!              revision 16 halts each of these runs at points across it
 //!
 //! **WHAT THE TESTBENCH IS TOLD IS WHAT muir's DEVICE DID, BY CLOCK**, each
 //! `<clock>` the first after the tick whose machine has it, as the file
@@ -48,12 +52,15 @@
 //!                                  reads it
 //!   # edcounts <clock> <counts>    241's counters: COUNTS written at that
 //!                                  clock, which lands at its edge
+//!   # edhost <253> ... <257>       253-257 when not muir's defaults: written
+//!                                  through the host's side while the
+//!                                  machine is held in its reset
 //!
 //! `micro` is not run: what a run ends with depends on the device's
 //! instants, which `micro` keeps otherwise.
 
 use muir::engine::Engine;
-use muir::ethernet_device::{RX_BASE, RX_CONS, RX_PROD, RX_SIZE, STATUS, Script, TX_CONS, TX_PROD};
+use muir::ethernet_device::{Host, RX_BASE, RX_CONS, RX_PROD, RX_SIZE, STATUS, Script, TX_CONS, TX_PROD};
 use muir::isa::asm::{
     ADD, ALU, JUMP, N, P, POPJ, SETA, START_READ, SUB, a_src, filler, m_dest, m_src, target,
 };
@@ -87,6 +94,9 @@ const COUNTS_MASK: u32 = 0xFFFF_FEF0;
 #[derive(Clone, Debug, Default)]
 pub struct EthRun {
     pub frames: Vec<(u64, Vec<u8>)>,
+    /// 253-257 when not muir's defaults: the host's flags, which the
+    /// testbench writes through the host's side in the run's first clocks.
+    pub host: Option<Host>,
 }
 
 /// An Ethernet frame: ARP or IPv6 (`kind`), `len` bytes, to the device's
@@ -99,6 +109,19 @@ fn frame(ipv6: bool, len: usize) -> Vec<u8> {
     for (k, b) in f.iter_mut().enumerate().skip(14) {
         *b = (k as u8).wrapping_mul(13).wrapping_add(5);
     }
+    f
+}
+
+/// An IPv4 Ethernet frame whose header's checksum is wrong, which the IPv4
+/// checks drop.
+fn ipv4_bad(len: usize) -> Vec<u8> {
+    let mut f = frame(false, len);
+    f[12..14].copy_from_slice(&[0x08, 0x00]);
+    f[14] = 0x45;
+    f[16..18].copy_from_slice(&((len - 14) as u16).to_be_bytes());
+    f[22] = 64;
+    f[23] = 17;
+    f[24..26].copy_from_slice(&[0xde, 0xad]);
     f
 }
 
@@ -121,11 +144,15 @@ pub fn attach(e: &mut Pipeline, run: &EthRun) {
         s.arrive(clock * period, f.clone());
     }
     e.machine_mut().attach_ethernet_peer(Box::new(s));
+    if let Some(h) = run.host {
+        e.machine_mut().ethernet.host = h;
+    }
 }
 
 /// **muir's device as the host's side saw it**, by clock.
 #[derive(Default)]
 pub struct Watch {
+    told_host: bool,
     prod: (u32, u32),
     tx: u32,
     rx: u32,
@@ -141,6 +168,13 @@ impl Watch {
         }
         let d = &m.ethernet;
         let clock = e.clock();
+        // 253-257 when they are not muir's defaults, once: the testbench
+        // writes them in the run's first clocks.
+        if !self.told_host && d.host != Host::default() {
+            let w: Vec<String> = (0o253..=0o257).map(|k| format!("{:x}", d.read(k))).collect();
+            self.lines.push(format!("# edhost {}", w.join(" ")));
+        }
+        self.told_host = true;
         let prod = (d.read(TX_PROD), d.read(RX_PROD));
         if prod != self.prod {
             self.lines.push(format!("# edprod {clock:x} {:x} {:x}", prod.0, prod.1));
@@ -217,7 +251,7 @@ fn rings(p: &mut Preset, tl: Word, rl: Word, control: Word) {
 fn finish(name: &str, p: &Preset, frames: Vec<(u64, Vec<u8>)>) -> Case {
     let mut c = p.case(name);
     c.micro_check = false;
-    c.eth = Some(EthRun { frames });
+    c.eth = Some(EthRun { frames, host: None });
     c
 }
 
@@ -296,14 +330,21 @@ pub fn ethernet() -> Vec<Case> {
     wait_for(&mut p, 0o251, 2);
     p.read(PHYS | BUF1, 0o23).read(PHYS | (RX_RING + 10), 0o24);
     p.write(2, reg(0o252));
-    // The type filter's drop and the short buffer's, counted.
-    wait_for(&mut p, 0o241, 0x0001_0011);
+    // The type filter's drop, the IPv4 checks' and the short buffer's,
+    // counted.
+    wait_for(&mut p, 0o241, 0x0001_0211);
     p.read(reg(0o251), 0o23).read(reg(0o100), 0o24);
     p.stop();
     v.push(finish(
         "receive",
         &p,
-        vec![(3000, frame(false, 42)), (6000, frame(false, 60)), (9000, frame(true, 42)), (12000, frame(false, 42))],
+        vec![
+            (3000, frame(false, 42)),
+            (6000, frame(false, 60)),
+            (9000, frame(true, 42)),
+            (10500, ipv4_bad(46)),
+            (12000, frame(false, 42)),
+        ],
     ));
 
     // --------------------------------------------------------------- held
@@ -359,5 +400,32 @@ pub fn ethernet() -> Vec<Case> {
     p.op(filler().raw() | POPJ);
     p.fill(1);
     v.push(finish("irq", &p, vec![(2500, frame(false, 42))]));
+
+    // ---------------------------------------------------------- hostwords
+    // 253-257 the host's, not muir's defaults: read after the testbench has
+    // written them, and a frame to the host's MAC address delivered.
+    let host = Host {
+        mac: [0x02, 0x5a, 0x11, 0x22, 0x33, 0x44],
+        address: u32::from_be_bytes([169, 254, 101, 2]),
+        netmask: u32::MAX << 2,
+        gateway: u32::from_be_bytes([169, 254, 101, 1]),
+    };
+    let mut p = run();
+    p.main.push((RX_RING as usize, BUF0));
+    p.main.push((RX_RING as usize + 1, 64));
+    delay(&mut p, 0o25, 40);
+    for k in 0o253..=0o257 {
+        p.read(reg(k), 0o23);
+    }
+    rings(&mut p, 0, 0, 1 | 1 << 8);
+    p.write(1, reg(0o250));
+    wait_for(&mut p, 0o251, 1);
+    p.read(PHYS | BUF0, 0o23).read(reg(0o241), 0o24);
+    p.stop();
+    let mut f = frame(false, 42);
+    f[..6].copy_from_slice(&host.mac);
+    let mut c = finish("hostwords", &p, vec![(3000, f), (3200, frame(false, 42))]);
+    c.eth.as_mut().expect("the run's frames").host = Some(host);
+    v.push(c);
     v
 }

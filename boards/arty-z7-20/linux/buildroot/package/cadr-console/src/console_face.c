@@ -292,7 +292,9 @@ static int boot_how(struct console *c, struct cons_boot_report *r)
 		r->how = CONS_BOOT_BY_BUTTON;
 		return 0;
 	}
-	if (id.revision == 15) {
+	// Revision 16 is revision 15's machine with the Ethernet device, and
+	// boots as it does.
+	if (id.revision == 15 || id.revision == 16) {
 		r->how = CONS_BOOT_BY_KEYBOARD;
 		return 0;
 	}
@@ -1020,10 +1022,10 @@ void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine
 	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
 	m->revision = (low >> 4) & 0xFFu;
 	m->processor_type = low & 0xFu;
-	// Revision 13's words are 40 bits, and revisions 14's and 15's.  A
-	// revision this program has not met has a width it does not know, and
+	// Revision 13's words are 40 bits, and revisions 14's, 15's and 16's.
+	// A revision this program has not met has a width it does not know, and
 	// says so rather than guessing.
-	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
+	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
 }
 
 int cons_read_machine_id(struct console *c, struct cons_machine_id *m)

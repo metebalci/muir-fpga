@@ -48,6 +48,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from machine_param_check import name_of, params_at_cell  # noqa: E402
+import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_kr260"
@@ -96,10 +97,10 @@ def check(want, got, why, what):
         say(True, "%s: %s" % (what, ", ".join("%s=%d" % kv for kv in sorted(got.items()))))
 
 
-def at_period(period, sources, scratch):
+def at_period(period, sources, scratch, revision=15):
     base = [VERILATOR, "-DCADR_DDR_MAP_KR260", "-Irtl/machine", "-Irtl/plumbing",
             "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260", "--top-module", TOP,
-            "-GPERIOD_NS=%d" % period]
+            "-GPERIOD_NS=%d" % period, "-GREVISION=%d" % revision]
     rc, out = run(base[:1] + ["--lint-only", "-Wall"] + base[1:] + sources)
     if rc != 0:
         say(False, "PERIOD_NS=%d: the lint failed:\n%s" % (period, out.strip()))
@@ -113,7 +114,8 @@ def at_period(period, sources, scratch):
         tree = json.load(f)
     shutil.rmtree(mdir, True)
     w, h = VIDEO
-    at = "PERIOD_NS=%d" % period
+    at = "REVISION=%d, PERIOD_NS=%d" % (revision, period)
+    ethernet_page_check.figures(tree, TOP, "u_gp0_split", revision, at, say)
 
     # The times, from the period here.
     second = (10 ** 9 + period // 2) // period
@@ -174,8 +176,9 @@ def main():
     os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_kr260_param.", dir="build")
     try:
-        for p in PERIODS:
-            at_period(p, sources, scratch)
+        for r in (15, 16):
+            for p in PERIODS:
+                at_period(p, sources, scratch, r)
     finally:
         shutil.rmtree(scratch, True)
     if failures:

@@ -145,7 +145,13 @@ module quux16_ethernet #(
     input  var logic [4:0]  host_widx,
     input  var logic [31:0] host_wdata,
     input  var logic [4:0]  host_ridx,
-    output var logic [31:0] host_rdata
+    output var logic [31:0] host_rdata,
+
+    // The readout (A15b.13), for the checkpoint a board takes halted: word
+    // `ro_k` of the device's state, what muir's `EthernetDevice::save`
+    // carries (below).
+    input  var logic [2:0]  ro_k,
+    output var logic [63:0] ro_word
 );
 
   localparam logic [3:0] R_CONTROL = 4'o00;
@@ -374,6 +380,33 @@ module quux16_ethernet #(
       4'o15: rd_word = ip;
       4'o16: rd_word = netmask;
       default: rd_word = gateway;
+    endcase
+  end
+
+  // ============================================================= the readout
+
+  // **THE DEVICE'S STATE FOR A CHECKPOINT**, muir's `EthernetDevice::save`'s
+  // fields as the registers hold them:
+  //
+  //   0  <0> enabled, <1> interrupt enable, <2> refused, <3> index fault,
+  //      <7:4> 243, <11:8> 247
+  //   1  <27:0> 242, <59:32> 246
+  //   2  <15:0> 244, <31:16> 245, <47:32> 250, <63:48> 251
+  //   3  <15:0> 252
+  //   4  <31:0> the four counters in 241's places, <47:32> 253
+  //   5  <31:0> 255, <63:32> 254
+  //   6  <31:0> 257, <63:32> 256
+  //   7  0
+  always_comb begin
+    unique case (ro_k)
+      3'd0: ro_word = {52'd0, rx_log2, tx_log2, fault, refused, ie, on};
+      3'd1: ro_word = {4'd0, rx_base, 4'd0, tx_base};
+      3'd2: ro_word = {rx_cons, rx_prod, tx_cons, tx_prod};
+      3'd3: ro_word = {48'd0, rx_taken};
+      3'd4: ro_word = {16'd0, mac_high, counts};
+      3'd5: ro_word = {mac_low, ip};
+      3'd6: ro_word = {netmask, gateway};
+      default: ro_word = 64'd0;
     endcase
   end
 

@@ -348,7 +348,7 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l)
 		return 0;
 	if (((w >> 32) & 0xFFFFu) != IMG_QUUX_MARK ||
 	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13 && (w & 0xFFFFu) != IMG_QUUX_ID_14 &&
-	     (w & 0xFFFFu) != IMG_QUUX_ID_15))
+	     (w & 0xFFFFu) != IMG_QUUX_ID_15 && (w & 0xFFFFu) != IMG_QUUX_ID_16))
 		return -1;
 	if (k)
 		*k = (unsigned)((w >> 24) & 0xFFu);
@@ -365,7 +365,8 @@ int ro_quux_revision(struct readout *r)
 		return is;
 	if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_ID, &w) != 0)
 		return -1;
-	return (w & 0xFFFFu) == IMG_QUUX_ID_15 ? 15 : (w & 0xFFFFu) == IMG_QUUX_ID_14 ? 14
+	return (w & 0xFFFFu) == IMG_QUUX_ID_16 ? 16 : (w & 0xFFFFu) == IMG_QUUX_ID_15 ? 15
+	     : (w & 0xFFFFu) == IMG_QUUX_ID_14 ? 14
 	     : (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
@@ -380,6 +381,8 @@ int ro_machine_of(int rev)
 	case 13: return RO_M_QUUX13;
 	case 14: return RO_M_QUUX14;
 	case 15: return RO_M_QUUX15;
+	// Revision 16's memories and window are revision 15's.
+	case 16: return RO_M_QUUX15;
 	default: return -1;
 	}
 }
@@ -836,6 +839,35 @@ int ro_read_quux15(struct readout *r, struct cadr_image *img)
 			return -1;
 		q->fifo[at] = (uint32_t)(w & 0xFFFFFFu);
 	}
+	// Revision 16's Ethernet device (`quux16_ethernet.sv`'s readout words).
+	if (img->rev16) {
+		uint64_t e[IMG_DV15_ETH_COUNT];
+		for (unsigned k = 0; k < IMG_DV15_ETH_COUNT; ++k)
+			if (ro_word64(r, IMG_SEL_QUUX_PAGE, IMG_DV15_ETH + k, &e[k]) != 0)
+				return -1;
+		x->eth.on = (int)(e[0] & 1u);
+		x->eth.ie = (int)((e[0] >> 1) & 1u);
+		x->eth.refused = (int)((e[0] >> 2) & 1u);
+		x->eth.fault = (int)((e[0] >> 3) & 1u);
+		x->eth.tx_log2 = (uint32_t)((e[0] >> 4) & 0xFu);
+		x->eth.rx_log2 = (uint32_t)((e[0] >> 8) & 0xFu);
+		x->eth.tx_base = (uint32_t)(e[1] & 0x0FFFFFFFu);
+		x->eth.rx_base = (uint32_t)((e[1] >> 32) & 0x0FFFFFFFu);
+		x->eth.tx_prod = (uint16_t)e[2];
+		x->eth.tx_cons = (uint16_t)(e[2] >> 16);
+		x->eth.rx_prod = (uint16_t)(e[2] >> 32);
+		x->eth.rx_cons = (uint16_t)(e[2] >> 48);
+		x->eth.rx_taken = (uint16_t)e[3];
+		x->eth.counts = (uint32_t)e[4];
+		const uint32_t hi = (uint32_t)((e[4] >> 32) & 0xFFFFu), lo = (uint32_t)(e[5] >> 32);
+		x->eth.mac[0] = (uint8_t)(hi >> 8);
+		x->eth.mac[1] = (uint8_t)hi;
+		for (unsigned k = 0; k < 4; ++k)
+			x->eth.mac[2 + k] = (uint8_t)(lo >> (24 - 8 * k));
+		x->eth.address = (uint32_t)e[5];
+		x->eth.netmask = (uint32_t)(e[6] >> 32);
+		x->eth.gateway = (uint32_t)e[6];
+	}
 	return 0;
 }
 
@@ -892,14 +924,15 @@ int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revis
 	if (quux && (width == 0 || height == 0 || width % 32u != 0 ||
 		     width > CADR_VIDEO_MAX_WIDTH || height > CADR_VIDEO_MAX_HEIGHT))
 		return -1;
-	// QUUX is revision 13 to 15; revision 12, QUUX at 32 bits, is retired.
-	if (quux && (revision < 13 || revision > 15))
+	// QUUX is revision 13 to 16; revision 12, QUUX at 32 bits, is retired.
+	if (quux && (revision < 13 || revision > 16))
 		return -1;
 	img->boards = boards;
 	img->quux = quux != 0;
-	img->rev13 = quux && (revision == 13 || revision == 14 || revision == 15);
-	img->rev14 = quux && (revision == 14 || revision == 15);
-	img->rev15 = quux && revision == 15;
+	img->rev13 = quux && revision >= 13 && revision <= 16;
+	img->rev14 = quux && revision >= 14 && revision <= 16;
+	img->rev15 = quux && (revision == 15 || revision == 16);
+	img->rev16 = quux && revision == 16;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
 	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : IMG_L2_WORDS;
 	img->video_width = quux ? width : 0u;

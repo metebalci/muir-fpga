@@ -422,7 +422,10 @@ static void sim_wr(void *ctx, unsigned off, uint32_t v)
 				sim_disable(s);
 			if (s->epoch_at_claim >= 0)
 				s->epoch_at_claim--;
-			s->busy = s->enabled && epoch == s->epoch;
+			// Refused under a stale epoch or disabled, and then the
+			// claim stays as it was, as the file device's does.
+			if (s->enabled && epoch == s->epoch)
+				s->busy = 1;
 		} else {
 			s->busy = 0;
 		}
@@ -440,7 +443,8 @@ static void sim_wr(void *ctx, unsigned off, uint32_t v)
 			return;
 		if (s->dirty)
 			fail("251 moved with no barrier after the words written");
-		if (index != (uint16_t)(s->rx_cons + 1) || s->rx_cons == s->rx_prod)
+		// Forward by one entry or more, up to 250.
+		if (index == s->rx_cons || (uint16_t)(index - s->rx_cons) > (uint16_t)(s->rx_prod - s->rx_cons))
 			fail("the program moved 251 to %u from %u, with 250 at %u", index, s->rx_cons, s->rx_prod);
 		else
 			s->rx_cons = index;
@@ -998,6 +1002,31 @@ static void unit_epoch_before_claim(void)
 	bench_down(&b);
 }
 
+// **THE MODEL'S OWN RULES, THE FABRIC'S** (`rtl/machine/quux16_ethernet.sv`):
+// a claim under a stale epoch is refused and leaves the claim as it was, as
+// the file device's is (the Ethernet contract, section 2.7); and RX_CONS
+// may move 251 by more than one entry, up to 250, under one sweep, as
+// muir's device moves 251 over every frame one advance delivers
+// (section 2.5: the host side may fill several entries and move 251 once).
+static void unit_model_rules(void)
+{
+	static struct bench b;
+	bench_up(&b, 0);
+	CHECK(b.face.claim(b.face.ctx, b.s.epoch) == 1, "the claim in the epoch");
+	b.fb.sim_wr(b.fb.sim, 0x104, (uint32_t)(uint16_t)(b.s.epoch + 1) << 16 | 1u);
+	CHECK(b.s.busy == 1, "a claim under a stale epoch dropped the claim held");
+	b.face.release(b.face.ctx);
+	sim_reg_write(&b.s, 0250, 3);
+	CHECK(b.face.claim(b.face.ctx, b.s.epoch) == 1, "the claim before a move by three");
+	b.fb.sim_wr(b.fb.sim, QED_FABRIC_BARRIER, 0);
+	const int before = failures;
+	b.fb.sim_wr(b.fb.sim, 0x124, (uint32_t)b.s.epoch << 16 | 3u);
+	CHECK(failures == before && b.s.rx_cons == 3, "RX_CONS by three, up to 250, refused (251 at %u)",
+	      b.s.rx_cons);
+	b.face.release(b.face.ctx);
+	bench_down(&b);
+}
+
 // **THE COUNTERS ARE THE PAGE'S TO KEEP**: a program started again reads
 // them back and counts on, and none moves another.
 static void unit_counts_read_back(void)
@@ -1170,6 +1199,7 @@ static void unit_checks(void)
 	unit_delivery_order();
 	unit_disable_mid_delivery();
 	unit_epoch_before_claim();
+	unit_model_rules();
 	unit_counts_read_back();
 	unit_wrap_2_16();
 	unit_transmit_most();

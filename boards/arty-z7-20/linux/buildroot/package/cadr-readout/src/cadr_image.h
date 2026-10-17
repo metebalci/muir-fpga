@@ -73,6 +73,10 @@
 // bits, and a register table of its own (`img_rg15`).  Entry 21's <31:24>
 // is the clock's period in units of 0.5 ns, not K, and <23:16> is 0.
 #define IMG_QUUX_ID_15    0x00F4u
+// Revision 16's (QUUX's Ethernet contract, section 10), 0x0104: revision 15's
+// core and words with the Ethernet device, whose state the devices' readout
+// gives from `IMG_DV15_ETH`.
+#define IMG_QUUX_ID_16    0x0104u
 
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
@@ -287,6 +291,9 @@ enum img_dv15 {
 	IMG_DV15_TV_AT = 22,	/* the last RESET-DEVICES's instant */
 	IMG_DV15_INPUT = 23,	/* the keyboard and the mouse, `IMG_QP_INPUT`'s layout */
 	IMG_DV15_COUNT = 24,
+	// Revision 16's Ethernet device, `quux16_ethernet.sv`'s readout words 0
+	// to 6, from here.
+	IMG_DV15_ETH = 24, IMG_DV15_ETH_COUNT = 7,
 	IMG_DV15_FIFO = 64	/* + k: the keyboard's FIFO, word k, in <23:0> */
 };
 // The halted pipeline's words, `ro_sel` 0 to 23 (`quux15_core.sv`).
@@ -318,6 +325,16 @@ struct quux15_state {
 	uint64_t tv_at;			/* muir's `Tv::written_at` */
 	uint32_t posted;
 	uint64_t tail[IMG_TL15_COUNT];
+	// Revision 16's Ethernet device (`quux16_ethernet.sv`'s readout): what
+	// muir's `EthernetDevice::save` carries.
+	struct {
+		int on, ie, refused, fault;
+		uint32_t tx_base, tx_log2, rx_base, rx_log2;
+		uint16_t tx_prod, tx_cons, rx_prod, rx_cons, rx_taken;
+		uint32_t counts;	/* 241's four counters in their places */
+		uint8_t mac[6];
+		uint32_t address, netmask, gateway;
+	} eth;
 };
 
 // The register table's entries, `cadr_microcycle.sv`'s `RG_*`.
@@ -413,7 +430,9 @@ struct cadr_image {
 	// --- set too, but has no map levels: both are written zero and not read.
 	// --- revision 15 (`rev15`) is revision 14's in all of these, `rev13`
 	// --- and `rev14` set too; its own state is `q15`.
-	int quux, rev13, rev14, rev15;
+	// `rev16` is revision 16's, which is revision 15's with the Ethernet
+	// device: `rev15` is set beside it.
+	int quux, rev13, rev14, rev15, rev16;
 	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
 	// --- QUUX's video controller's size, the bitstream's (console word
 	// --- 39): `tv_words` is its height times its width over 32.  0 on the
@@ -425,7 +444,7 @@ struct cadr_image {
 
 // The CADR's machine.
 int img_alloc(struct cadr_image *img, unsigned boards);
-// Either machine's: `quux` non-zero is QUUX at `revision`, 13 to 15, with
+// Either machine's: `quux` non-zero is QUUX at `revision`, 13 to 16, with
 // revision 13's arrays at its sizes and no main memory, which is `main13`'s
 // to point at; QUUX at any other revision, revision 12 among them, retired,
 // is refused, -1.

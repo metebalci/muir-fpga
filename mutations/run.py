@@ -2837,7 +2837,7 @@ for _p in QUUX15_CORE:
 # `quux15_<group>.quux.r16.pass`): the core built with revision 16's
 # MACHINE-ID, and so with the Ethernet device, its testbench refusing a
 # trace of another revision.
-QUUX16_GROUPS = ("ethernet", "filedev", "network")
+QUUX16_GROUPS = ("ethernet", "filedev", "network", "checkpoints")
 QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
 for _p in QUUX16_GROUPS:
     CHECKS["quux15_%s_quux_r16" % _p] = dict(
@@ -3115,10 +3115,17 @@ for _board, _top, _ps, _define, _map in (
         "top": _top.split("/")[-1][:-3],
         "tb": "tb/quux15_zynq_reset_tb.cpp",
         "flags": ["-Wno-PINCONNECTEMPTY", "-O2", "-CFLAGS", "-O2", "-CFLAGS", "-D" + _define, "-Irtl/machine",
-                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/" + _top.split("/")[1]] + _map,
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/" + _top.split("/")[1]] + _map
+                 + (["-CFLAGS", "-DCADR_BOARD_KR260"] if _board == "kr260" else []),
+        "cinclude": [_Q15CHK_PKG + "cadr-common/src", _Q15CHK_PKG + "quux-ethernet-device/src"],
         "golden": None,
         "machine": "quux",
     }
+    # And at revision 16 (the Makefile's `quux15_reset_<board>.r16.pass`):
+    # the Ethernet device's page where its program maps it.
+    CHECKS["quux15_reset_%s_r16" % _board] = dict(
+        CHECKS["quux15_reset_%s" % _board],
+        flags=CHECKS["quux15_reset_%s" % _board]["flags"] + ["-GREVISION=16", "-CFLAGS", "-DQUUX15_REVISION=16"])
 
 # **AND THE KRIA KR260'S LATENCY PROBE** (the Makefile's
 # `quux15_kr260_probe.pass`, `tb/quux15_kr260_probe_tb.cpp`): the same top
@@ -3686,6 +3693,10 @@ def build_and_run(args, work, check, build_fails=False):
         for i in inc + spec["clib"].get("cflags", []):
             cmd += ["-CFLAGS", i]
         cmd += ["-LDFLAGS", lib]
+    # Header directories of the mutant's copy a testbench includes (the
+    # programs' own `cadr_board.h` and `qed_face.h`).
+    for d in spec.get("cinclude", []):
+        cmd += ["-CFLAGS", "-I" + os.path.join(work, d)]
     if spec.get("gprom_path"):
         # A check that writes its own PROM names it here, and it is placed in
         # the mutant's work directory so two mutants cannot share one file.
