@@ -92,6 +92,9 @@ BR2_PACKAGE_CADR_CHAOSNET=y
 BR2_PACKAGE_CADR_USB_INPUT=y
 BR2_PACKAGE_CADR_DISPLAYPORT=y
 BR2_PACKAGE_QUUX_FILE_DEVICE=y
+# QUUX's Ethernet device, the Linux side.  Its init script makes the tap
+# quux0 and starts it only on a card that says --machine quux.
+BR2_PACKAGE_QUUX_ETHERNET_DEVICE=y
 BR2_PACKAGE_MUIR=y
 # ozd, the band's file and time host, on the board itself, as on every board.
 BR2_PACKAGE_OZD=y

@@ -227,7 +227,8 @@ for a; do
 done
 exec sleep 8
 EOF
-	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs quux-file-device; do
+	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs quux-file-device \
+	          quux-ethernet-device; do
 		cat > "$WORK/bin/$_p" <<EOF
 #!/bin/sh
 for a; do
@@ -330,6 +331,15 @@ EOF
 	cat > "$WORK/bin/ip" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/ip.calls"
+# **THE TAP quux0 IS THERE WHEN tunctl MADE IT**, which is how the Ethernet
+# device's script asks before it makes one; every other word about it goes
+# into the tap's record too, in order.
+case "\$*" in
+*quux0*) echo "ip \$*" >> "$WORK/tap.calls" ;;
+esac
+case "\$*" in
+"link show dev quux0") [ -f "$WORK/tap.made" ]; exit \$? ;;
+esac
 if [ "\${NET:-up}" = down ]; then
 	case "\$*" in
 	*addr*) echo "1: lo    inet 127.0.0.1/8 scope host lo" ;;
@@ -487,6 +497,26 @@ EOF
 #!/bin/sh
 exit 0
 EOF
+	# **THE TAP'S TWO TOOLS**, BusyBox's \`tunctl\` and \`sysctl\`: each records
+	# what it was asked in the tap's record, beside \`ip\`'s words about the
+	# tap, so that the order the tap was made in can be read; \`tunctl -t\`
+	# makes the tap and \`-d\` removes it.
+	: > "$WORK/tap.calls"
+	rm -f "$WORK/tap.made"
+	cat > "$WORK/bin/tunctl" <<EOF
+#!/bin/sh
+echo "tunctl \$*" >> "$WORK/tap.calls"
+case "\$1" in
+-t) : > "$WORK/tap.made" ;;
+-d) rm -f "$WORK/tap.made" ;;
+esac
+exit 0
+EOF
+	cat > "$WORK/bin/sysctl" <<EOF
+#!/bin/sh
+echo "sysctl \$*" >> "$WORK/tap.calls"
+exit 0
+EOF
 	chmod +x "$WORK/bin/"*
 }
 
@@ -575,6 +605,11 @@ prepare() {
 	# `cadr_daemon` really reads: /var/run belongs to the board.
 	anchor "$dst" "^PIDFILE=/var/run/$prog.pid\$" "PIDFILE=$WORK/run/$prog.pid" || return 1
 	case "$2" in
+	S82quux-ethernet-device)
+		# Where the kernel keeps a link's IPv6 settings: the board's,
+		# rewritten to the sandbox, and a rename fails here by name.
+		anchor "$dst" "^IPV6_CONF=/proc/sys/net/ipv6/conf\$" "IPV6_CONF=$WORK/ipv6" || return 1
+		;;
 	S87cadr-chaosnet)
 		anchor "$dst" "^WAIT_SECONDS=30\$" "WAIT_SECONDS=1" || return 1
 		# What S84ozd leaves behind when it has started a host on this
@@ -6998,6 +7033,132 @@ if prepare cadr-terminal S85cadr-terminal; then
 		ok "a fault.sh that names no board reads nothing and stops nothing"
 	else
 		fail "a fault.sh that names no board: devmem was asked [$(cat "$WORK/devmem.calls")], the program was given [$(given)]"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# **QUUX's ETHERNET DEVICE MAKES ITS TAP AND STARTS ON A QUUX CARD AND ON NO
+# OTHER**, with muir's four flags and only those, and the tap at
+# `--ip-gateway` on `--ip-address`'s prefix, set up before it comes up.
+# ---------------------------------------------------------------------------
+
+# The line of the tap's record where $1 first stands, or 0.
+tap_line() {
+	grep -n -- "$1" "$WORK/tap.calls" | head -1 | cut -d: -f1 || true
+}
+
+case_head "the Ethernet device is not started on a card that does not say --machine quux"
+sandbox
+printf '%s\r\n' '--machine cadr' '--ip-address 169.254.1.2/30' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if [ ! -s "$WORK/daemon.calls" ] && [ ! -s "$WORK/tap.calls" ] &&
+	   grep -q "not started" "$WORK/out.S82quux-ethernet-device"; then
+		ok "a CADR card makes no tap and starts no Ethernet device, and says so"
+	else
+		fail "a CADR card: the program was given [$(given)], the tap [$(tr '\n' '|' < "$WORK/tap.calls")]," \
+		     "and the script said: $(cat "$WORK/out.S82quux-ethernet-device")"
+	fi
+fi
+
+case_head "on a QUUX card that names nothing, the tap is muir's defaults' and set up before it comes up"
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+mkdir -p "$WORK/ipv6/quux0"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	for want in "tunctl -t quux0" "sysctl -q -w net.ipv6.conf.quux0.disable_ipv6=1" \
+	            "sysctl -q -w net.ipv4.conf.quux0.arp_ignore=2" "sysctl -q -w net.ipv4.conf.quux0.rp_filter=1" \
+	            "ip link set dev quux0 address 02:00:00:00:00:02 mtu 1500" \
+	            "ip address add 169.254.100.1/30 dev quux0" "ip link set dev quux0 up"; do
+		if grep -qx -- "$want" "$WORK/tap.calls"; then
+			ok "the tap: $want"
+		else
+			fail "the tap was not made with [$want]: $(tr '\n' '|' < "$WORK/tap.calls")"
+		fi
+	done
+	up=$(tap_line "ip link set dev quux0 up")
+	for before in "tunctl -t quux0" "disable_ipv6=1" "arp_ignore=2" "rp_filter=1" "address 02:00:00:00:00:02" \
+	              "ip address add"; do
+		at=$(tap_line "$before")
+		if [ -n "$at" ] && [ -n "$up" ] && [ "$at" -lt "$up" ]; then
+			ok "$before before the tap comes up"
+		else
+			fail "$before is at line [$at] of the tap's record and the tap came up at [$up]"
+		fi
+	done
+	passes_not "--ip-address" "quux-ethernet-device"
+	passes_not "--ip-gateway" "quux-ethernet-device"
+	passes_not "--ethernet-mac" "quux-ethernet-device"
+	logs_to quux-ethernet-device
+fi
+
+case_head "a kernel with no IPv6 is asked nothing of it"
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if grep -q ipv6 "$WORK/tap.calls"; then
+		fail "a kernel with no IPv6 was asked to turn it off: $(tr '\n' '|' < "$WORK/tap.calls")"
+	elif [ -s "$WORK/daemon.calls" ]; then
+		ok "no IPv6 setting, and the device started"
+	else
+		fail "with no IPv6 the device was not started: $(cat "$WORK/out.S82quux-ethernet-device")"
+	fi
+fi
+
+case_head "a QUUX card's four Ethernet flags reach the device and nothing else does; the tap takes the gateway"
+sandbox
+printf '%s\r\n' '--machine quux' '--ip-address 169.254.1.2/30' '--ip-gateway 169.254.1.1' \
+	'--ethernet-mac 02:00:00:00:01:01' '--ethernet-trace' \
+	'--file-root sys=/mnt/card/sys' '--bow' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	passes_once "--ip-address" "quux-ethernet-device" 169.254.1.2/30
+	passes_once "--ip-gateway" "quux-ethernet-device" 169.254.1.1
+	passes_once "--ethernet-mac" "quux-ethernet-device" 02:00:00:00:01:01
+	passes_once "--ethernet-trace" "quux-ethernet-device"
+	passes_not "--file-root" "quux-ethernet-device"
+	passes_not "--bow" "quux-ethernet-device"
+	passes_not "--machine" "quux-ethernet-device"
+	if grep -qx "ip address add 169.254.1.1/30 dev quux0" "$WORK/tap.calls"; then
+		ok "the tap is at --ip-gateway on --ip-address's prefix"
+	else
+		fail "the tap's address: $(grep 'address add' "$WORK/tap.calls")"
+	fi
+fi
+
+case_head "a device that refuses its flags is said, and the start fails"
+sandbox
+printf '%s\r\n' '--machine quux' '--ip-address 169.254.1.2/30' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	REFUSE=--ip-address
+	export REFUSE
+	run_script S82quux-ethernet-device
+	unset REFUSE
+	if [ "$(cat "$WORK/status.S82quux-ethernet-device")" != 0 ] &&
+	   grep -q "quux-ethernet-device: unrecognized option '--ip-address'" "$WORK/out.S82quux-ethernet-device"; then
+		ok "the refusal is on the console, and the start failed"
+	else
+		fail "a refused flag: status $(cat "$WORK/status.S82quux-ethernet-device"), said" \
+		     "[$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")]"
+	fi
+fi
+
+case_head "the device's stop on a card that is not QUUX's says it was not running; on QUUX's it removes the tap"
+if init_stop quux-ethernet-device S82quux-ethernet-device "Ethernet device, --machine cadr" none '--machine cadr'; then
+	init_stop_said "Ethernet device, --machine cadr" "Stopping quux-ethernet-device: not running (CADR)" ok
+fi
+if init_stop quux-ethernet-device S82quux-ethernet-device "Ethernet device, --machine quux, running" live '--machine quux'; then
+	: > "$WORK/tap.made"
+	: > "$WORK/tap.calls"
+	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+	CADR_FAULT_SAID="$WORK/run/fault.said" \
+	PATH="$WORK/bin:$PATH" "$WORK/S82quux-ethernet-device" stop > "$WORK/out.stop" 2>&1
+	if grep -qx "tunctl -d quux0" "$WORK/tap.calls" && [ ! -e "$WORK/tap.made" ]; then
+		ok "the stop removes the tap"
+	else
+		fail "the stop left the tap: $(tr '\n' '|' < "$WORK/tap.calls")"
 	fi
 fi
 

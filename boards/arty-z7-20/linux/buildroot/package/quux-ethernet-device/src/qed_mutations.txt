@@ -1,0 +1,1223 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for quux-ethernet-device: bugs the check has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# `qed_test` against it, and runs the whole check: every script against
+# muir's own device, the flags' answers against muir's, the checksum vectors
+# from the pinned muir, and the unit checks.  A mutation the check FAILS on
+# is caught; one it passes SURVIVED, and the run is red.  A record whose
+# `@old` no longer matches its file exactly once, or that does not compile,
+# is BROKEN and also fails the run.
+#
+# THE FORMAT is `mutations/list.txt`'s:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable
+#   @old       the source to replace, exactly as it stands, to a line's end
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  Section 2.4 first, rule by rule: the sum, its
+# end-around carry and its odd last byte, the pseudo-header and its length L,
+# the three fields, UDP's 0 both ways, the type filter, every well-formedness
+# bound and the fragments (the Ethernet contract, section 9, names the first
+# five as the plants the vectors must catch).  Then the program's own
+# decisions, each one a reader would otherwise take on trust: every refusal
+# of a transmit entry and every drop of a received frame, in muir's order and
+# with muir's reasons; the counters; the slots and the wraps; the claim, the
+# epoch and the barrier; the page's offsets and bits; packed storage's tags
+# and alignment; the tap's flags; and the flags of 253-257, with muir's
+# refusals and defaults.
+#
+# NOT HERE: the width masks of the four counters in `qed_ring.c`.  The face
+# writes each counter through `QED_COUNTS`, which masks it to its field, so a
+# record that widens the ring's mask changes nothing either side can see:
+# measured, such a record survived, and it is equivalent rather than a hole.
+# Nor the epoch compared again after the claim: the claim is taken only
+# under the epoch read, so a moved epoch refuses the claim first.  Nor a part of
+# an address four digits long: every such part is over 255 or has a leading
+# zero, and is refused for that.
+
+@mutation the-end-around-carry-dropped
+@file qed_offload.c
+@why the vectors: every sum that carries
+@old
+	while (sum > 0xFFFFu)
+		sum = (sum & 0xFFFFu) + (sum >> 16);
+@new
+	sum &= 0xFFFFu;
+@end
+
+@mutation an-odd-last-byte-not-padded
+@file qed_offload.c
+@why the vectors: the odd-length frames, RFC 1071's example
+@old
+	if (i < n)
+		sum += (uint64_t)data[i] << 8;
+@new
+@end
+
+@mutation an-odd-last-byte-padded-on-the-wrong-side
+@file qed_offload.c
+@why the vectors: the odd-length frames
+@old
+		sum += (uint64_t)data[i] << 8;
+	return sum;
+@new
+		sum += (uint64_t)data[i];
+	return sum;
+@end
+
+@mutation the-pseudo-header-length-from-n
+@file qed_offload.c
+@why the vectors: the padded TCP and UDP frames
+@old
++ (uint64_t)(d->end - d->start);
+@new
++ (uint64_t)(d->n - d->start);
+@end
+
+@mutation the-pseudo-header-length-from-tl
+@file qed_offload.c
+@why the vectors: every TCP and UDP frame
+@old
++ (uint64_t)(d->end - d->start);
+@new
++ (uint64_t)(d->end - 14);
+@end
+
+@mutation the-pseudo-header-for-icmp
+@file qed_offload.c
+@why the vectors: ICMP has no pseudo-header
+@old
+	if (d->p != TCP && d->p != UDP)
+		return 0;
+@new
+@end
+
+@mutation the-pseudo-header-one-address
+@file qed_offload.c
+@why the vectors: TCP's and UDP's pseudo-header
+@old
+add(add(0, f + 26, 8), zp, 2) + (uint64_t)(d->end - d->start);
+@new
+add(add(0, f + 26, 4), zp, 2) + (uint64_t)(d->end - d->start);
+@end
+
+@mutation the-pseudo-header-protocol-byte-swapped
+@file qed_offload.c
+@why the vectors: the zero byte comes first
+@old
+const uint8_t zp[2] = { 0, (uint8_t)d->p };
+@new
+const uint8_t zp[2] = { (uint8_t)d->p, 0 };
+@end
+
+@mutation udp-zero-not-sent-as-ffff
+@file qed_offload.c
+@why the vectors: udp-computes-zero tx
+@old
+		if (d.p == UDP && c == 0)
+			c = 0xFFFFu;
+@new
+@end
+
+@mutation every-zero-sent-as-ffff
+@file qed_offload.c
+@why the vectors: tcp-computes-zero and icmp-computes-zero tx
+@old
+		if (d.p == UDP && c == 0)
+@new
+		if (c == 0)
+@end
+
+@mutation the-header-not-filled
+@file qed_offload.c
+@why the vectors: every IPv4 tx
+@old
+	f[24] = (uint8_t)(header >> 8);
+	f[25] = (uint8_t)header;
+@new
+@end
+
+@mutation the-header-summed-without-options
+@file qed_offload.c
+@why the vectors: IHL 6 and 15 tx
+@old
+const uint16_t header = (uint16_t)~qed_ones_sum(f + 14, d.h);
+@new
+const uint16_t header = (uint16_t)~qed_ones_sum(f + 14, 20);
+@end
+
+@mutation the-header-field-not-zeroed-first
+@file qed_offload.c
+@why the vectors: the junk-field tx cases
+@old
+	f[24] = f[25] = 0;
+@new
+@end
+
+@mutation the-protocol-field-not-zeroed-first
+@file qed_offload.c
+@why the vectors: the junk-field tx cases
+@old
+		f[at] = f[at + 1] = 0;
+@new
+@end
+
+@mutation a-refused-frame-changed
+@file qed_offload.c
+@why the vectors: a refused frame is left as it was
+@old
+	if (bad)
+		return bad;
+	f[24] = f[25] = 0;
+@new
+	if (bad) {
+		if (n > 25)
+			f[24] = f[25] = 0;
+		return bad;
+	}
+	f[24] = f[25] = 0;
+@end
+
+@mutation arp-refused-on-transmit
+@file qed_offload.c
+@why the vectors: ARP passes both ways untouched
+@old
+	case ARP:
+		return NULL;
+@new
+	case ARP:
+		return "type not IPv4 or ARP";
+@end
+
+@mutation every-type-passes
+@file qed_offload.c
+@why the vectors: the type filter's cases, both ways
+@old
+	default:
+		return OTHER_TYPE;
+@new
+	default:
+		return ARP;
+@end
+
+@mutation a-short-frame-said-to-be-of-another-type
+@file qed_offload.c
+@why the scripts: a 13-byte frame's reason
+@old
+	if (n < 14)
+		return NO_TYPE;
+@new
+	if (n < 14)
+		return OTHER_TYPE;
+@end
+
+@mutation n-33-taken
+@file qed_offload.c
+@why the scripts: ipv4-n33's reason
+@old
+	if (n < 34)
+@new
+	if (n < 33)
+@end
+
+@mutation the-version-not-checked
+@file qed_offload.c
+@why the vectors: version 6 under 0x0800
+@old
+	if (f[14] >> 4 != 4)
+		return "IPv4 version not 4";
+@new
+@end
+
+@mutation ihl-4-taken
+@file qed_offload.c
+@why the vectors: IHL 4
+@old
+	if (ihl < 5)
+@new
+	if (ihl < 4)
+@end
+
+@mutation a-total-length-under-the-header-taken
+@file qed_offload.c
+@why the vectors: TL < H
+@old
+	if (tl < h)
+@new
+	if (tl < 20)
+@end
+
+@mutation a-total-length-past-the-frame-taken
+@file qed_offload.c
+@why the vectors: 14 + TL > n
+@old
+	if (14 + tl > n)
+@new
+	if (14 + tl > n + 1)
+@end
+
+@mutation mf-not-a-fragment
+@file qed_offload.c
+@why the vectors: a first fragment
+@old
+(f[20] & 0x20u) || (be16(f, 20) & 0x1FFFu);
+@new
+(be16(f, 20) & 0x1FFFu);
+@end
+
+@mutation an-offset-not-a-fragment
+@file qed_offload.c
+@why the vectors: a later fragment
+@old
+(f[20] & 0x20u) || (be16(f, 20) & 0x1FFFu);
+@new
+(f[20] & 0x20u);
+@end
+
+@mutation df-a-fragment
+@file qed_offload.c
+@why the vectors: DF set is not a fragment
+@old
+(f[20] & 0x20u) || (be16(f, 20) & 0x1FFFu);
+@new
+(f[20] & 0x60u) || (be16(f, 20) & 0x1FFFu);
+@end
+
+@mutation tcp-19-taken
+@file qed_offload.c
+@why the vectors: tcp-l19
+@old
+		if (l < 20)
+@new
+		if (l < 19)
+@end
+
+@mutation udp-7-taken
+@file qed_offload.c
+@why the vectors: udp-l7
+@old
+		if (l < 8)
+			return "UDP payload under 8 bytes";
+@new
+		if (l < 7)
+			return "UDP payload under 8 bytes";
+@end
+
+@mutation the-udp-length-not-checked
+@file qed_offload.c
+@why the vectors: a UDP length other than L
+@old
+		if (be16(f, d->start + 4) != l)
+			return "UDP length not the payload's";
+@new
+@end
+
+@mutation icmp-7-taken
+@file qed_offload.c
+@why the vectors: icmp-l7
+@old
+		if (l < 8)
+			return "ICMP payload under 8 bytes";
+@new
+		if (l < 7)
+			return "ICMP payload under 8 bytes";
+@end
+
+@mutation tcp-field-misplaced
+@file qed_offload.c
+@why the vectors: TCP's field is payload bytes 16-17
+@old
+		d->field = 16;
+@new
+		d->field = 18;
+@end
+
+@mutation udp-field-misplaced
+@file qed_offload.c
+@why the vectors: UDP's field is payload bytes 6-7
+@old
+		d->field = 6;
+@new
+		d->field = 4;
+@end
+
+@mutation icmp-field-misplaced
+@file qed_offload.c
+@why the vectors: ICMP's field is payload bytes 2-3
+@old
+		d->field = 2;
+@new
+		d->field = 0;
+@end
+
+@mutation icmp-not-checked
+@file qed_offload.c
+@why the vectors: ICMP is a checked protocol
+@old
+		d->field = 2;
+@new
+		d->field = -1;
+@end
+
+@mutation the-header-not-checked
+@file qed_offload.c
+@why the vectors: a bad header checksum
+@old
+	if (qed_ones_sum(f + 14, d.h) != 0xFFFFu) {
+@new
+	if (0) {
+@end
+
+@mutation the-payload-not-checked
+@file qed_offload.c
+@why the vectors: every bad payload checksum
+@old
+	if (payload_sum(&d, f) != 0xFFFFu) {
+@new
+	if (0) {
+@end
+
+@mutation a-received-udp-zero-dropped
+@file qed_offload.c
+@why the vectors: udp-no-checksum rx
+@old
+	if (d.p == UDP && be16(f, d.start + (size_t)d.field) == 0)
+		return QED_COUNT_NONE;
+@new
+@end
+
+@mutation a-received-zero-field-never-checked
+@file qed_offload.c
+@why the vectors: tcp-field-zero and icmp-field-zero rx
+@old
+	if (d.p == UDP && be16(f, d.start + (size_t)d.field) == 0)
+@new
+	if (be16(f, d.start + (size_t)d.field) == 0)
+@end
+
+@mutation a-malformed-frame-counted-by-type
+@file qed_offload.c
+@why the vectors: a malformed IPv4 frame is dropped by the IPv4 checks
+@old
+	if (bad) {
+		*why = bad;
+		return QED_COUNT_IPV4;
+@new
+	if (bad) {
+		*why = bad;
+		return QED_COUNT_TYPE;
+@end
+
+@mutation the-checksum-reasons-swapped
+@file qed_offload.c
+@why the scripts: a TCP drop's reason
+@old
+*why = d.p == TCP ? "TCP checksum bad" : d.p == UDP ? "UDP checksum bad" : "ICMP checksum bad";
+@new
+*why = d.p == UDP ? "TCP checksum bad" : d.p == TCP ? "UDP checksum bad" : "ICMP checksum bad";
+@end
+
+@mutation the-transmit-address-unmasked
+@file qed_ring.c
+@why transmit-tags: <31:28> of an entry's address are not the device's
+@old
+const uint32_t addr = w[0] & QED_ADDRESS, len = w[1];
+@new
+const uint32_t addr = w[0], len = w[1];
+@end
+
+@mutation length-13-taken
+@file qed_ring.c
+@why transmit-refusals: length 13's reason
+@old
+if (len < QED_MIN_FRAME || len > QED_MAX_FRAME) {
+@new
+if (len < 13 || len > QED_MAX_FRAME) {
+@end
+
+@mutation an-entry-off-a-line-taken
+@file qed_ring.c
+@why transmit-refusals: a frame off a line
+@old
+		} else if (addr & QED_LINE) {
+@new
+		} else if (addr & 1u) {
+@end
+
+@mutation an-entry-to-the-last-word-refused
+@file qed_ring.c
+@why transmit-refusals: a frame ending at main memory's last word
+@old
+		} else if ((size_t)addr + (len + 3) / 4 > f->mem.words) {
+@new
+		} else if ((size_t)addr + (len + 3) / 4 >= f->mem.words) {
+@end
+
+@mutation an-entry-past-memory-taken
+@file qed_ring.c
+@why transmit-refusals: a frame one word past main memory
+@old
+		} else if ((size_t)addr + (len + 3) / 4 > f->mem.words) {
+@new
+		} else if ((size_t)addr + len / 4 > f->mem.words) {
+@end
+
+@mutation the-rules-not-applied-on-transmit
+@file qed_ring.c
+@why transmit and the tx vectors: the checksums are filled in
+@old
+			refused = qed_transmit(frame, len);
+@new
+			refused = NULL;
+@end
+
+@mutation a-transmit-writes-memory
+@file qed_ring.c
+@why every transmit: the memory's digest
+@old
+			refused = qed_transmit(frame, len);
+@new
+			refused = qed_transmit(frame, len);
+			uint32_t back[(QED_MAX_FRAME + 3) / 4] = { 0 };
+			for (size_t k = 0; k < len; ++k)
+				back[k / 4] |= (uint32_t)frame[k] << (8 * (k % 4));
+			qed_mem_write(&f->mem, addr, (len + 3) / 4, back);
+@end
+
+@mutation a-refusal-not-counted
+@file qed_ring.c
+@why transmit-refusals: <31:24>
+@old
+			g->tx_refusals = (g->tx_refusals + 1) & 0xFFu;
+@new
+@end
+
+@mutation a-refusal-not-passed
+@file qed_ring.c
+@why transmit-refusals: 245 passes a refused entry
+@old
+		cons = (uint16_t)(cons + 1);
+		++done;
+		if (refused) {
+@new
+		++done;
+		if (refused) {
+@end
+
+@mutation a-frame-not-sent
+@file qed_ring.c
+@why every transmit: the frames sent
+@old
+			if (g->send)
+				g->send(g->send_ctx, frame, len);
+@new
+@end
+
+@mutation the-transmit-slot-misplaced
+@file qed_ring.c
+@why transmit-ring-1 and -2: an entry's slot is its index mod the size
+@old
+const size_t e = u.tx_base + 8u * (index % entries);
+@new
+const size_t e = u.tx_base + 8u * (index % (entries + 1));
+@end
+
+@mutation 245-moved-under-another-epoch
+@file qed_ring.c
+@why every transmit: 245 moves under the epoch read
+@old
+		f->sent(f->ctx, s.epoch, cons);
+@new
+		f->sent(f->ctx, (uint16_t)(s.epoch + 1), cons);
+@end
+
+@mutation a-transmit-without-the-claim
+@file qed_ring.c
+@why every transmit: memory is read under the claim
+@old
+	if (!s.enabled || s.tx_prod == s.tx_cons || !most)
+		return 0;
+	if (!f->claim(f->ctx, s.epoch))
+		return 0;
+@new
+	if (!s.enabled || s.tx_prod == s.tx_cons || !most)
+		return 0;
+@end
+
+@mutation a-transmit-takes-more-than-asked
+@file qed_ring.c
+@why the unit check of a pass's bound
+@old
+	while (cons != u.tx_prod && done < most) {
+@new
+	while (cons != u.tx_prod) {
+@end
+
+@mutation the-claim-kept-after-a-transmit
+@file qed_ring.c
+@why every transmit: the claim dropped
+@old
+		f->sent(f->ctx, s.epoch, cons);
+	}
+	f->release(f->ctx);
+	return done;
+@new
+		f->sent(f->ctx, s.epoch, cons);
+	}
+	return done;
+@end
+
+@mutation the-sent-trace-wrong
+@file qed_ring.c
+@why every transmit: --ethernet-trace's line is muir's
+@old
+			say(g, g->trace, "sent %s", d);
+@new
+			say(g, g->trace, "sent: %s", d);
+@end
+
+@mutation a-disabled-device-takes-frames
+@file qed_ring.c
+@why receive-disabled
+@old
+	if (!s.enabled) {
+		say(g, g->trace, "received %s, dropped: the device is disabled", d);
+		return 0;
+	}
+@new
+@end
+
+@mutation the-mac-filter-off
+@file qed_ring.c
+@why receive-filters: a frame for another station
+@old
+	if (n < 6 || (memcmp(frame, g->host.mac, 6) && memcmp(frame, BROADCAST, 6))) {
+@new
+	if (n < 6) {
+@end
+
+@mutation broadcast-not-taken
+@file qed_ring.c
+@why receive: a broadcast frame
+@old
+	if (n < 6 || (memcmp(frame, g->host.mac, 6) && memcmp(frame, BROADCAST, 6))) {
+@new
+	if (n < 6 || memcmp(frame, g->host.mac, 6)) {
+@end
+
+@mutation the-filter-on-five-bytes
+@file qed_ring.c
+@why receive-filters: a group address differs from the device's in byte 0 only
+@old
+	if (n < 6 || (memcmp(frame, g->host.mac, 6) && memcmp(frame, BROADCAST, 6))) {
+@new
+	if (n < 6 || (memcmp(frame + 1, g->host.mac + 1, 5) && memcmp(frame, BROADCAST, 6))) {
+@end
+
+@mutation the-rules-not-applied-on-receive
+@file qed_ring.c
+@why receive-filters and the rx vectors
+@old
+	switch (qed_receive(frame, n, &why)) {
+@new
+	(void)qed_receive;
+	switch (QED_COUNT_NONE) {
+@end
+
+@mutation a-type-drop-not-counted
+@file qed_ring.c
+@why receive-filters: <7:4>
+@old
+		g->type_drops = (g->type_drops + 1) & 0xFu;
+@new
+@end
+
+@mutation an-ipv4-drop-counted-by-type
+@file qed_ring.c
+@why receive-filters: <15:9>
+@old
+		g->ipv4_drops = (g->ipv4_drops + 1) & 0x7Fu;
+@new
+		g->type_drops = (g->type_drops + 1) & 0xFu;
+@end
+
+@mutation a-drop-not-written-to-the-page
+@file qed_ring.c
+@why receive-filters: 241 shows the count at once
+@old
+		g->ipv4_drops = (g->ipv4_drops + 1) & 0x7Fu;
+		put_counts(g, f);
+@new
+		g->ipv4_drops = (g->ipv4_drops + 1) & 0x7Fu;
+@end
+
+@mutation no-buffer-not-counted
+@file qed_ring.c
+@why receive-buffers-bad: <23:16>
+@old
+	if (s.rx_prod == s.rx_cons) {
+		g->rx_drops = (g->rx_drops + 1) & 0xFFu;
+@new
+	if (s.rx_prod == s.rx_cons) {
+@end
+
+@mutation no-buffer-taken-anyway
+@file qed_ring.c
+@why receive: the model's 251 past 250
+@old
+	if (s.rx_prod == s.rx_cons) {
+@new
+	if (0) {
+@end
+
+@mutation the-receive-address-unmasked
+@file qed_ring.c
+@why receive-buffers-bad: <31:28> of a buffer's address are not the device's
+@old
+const uint32_t buf = w[0] & QED_ADDRESS, room = w[1];
+@new
+const uint32_t buf = w[0], room = w[1];
+@end
+
+@mutation 1515-bytes-taken
+@file qed_ring.c
+@why receive-filters: a frame of 1,515 bytes
+@old
+	if (n > QED_MAX_FRAME)
+@new
+	if (n > QED_MAX_FRAME + 1)
+@end
+
+@mutation a-short-buffer-taken
+@file qed_ring.c
+@why receive-buffers-bad: a buffer one byte short
+@old
+	else if (n > room)
+@new
+	else if (n > room + 1)
+@end
+
+@mutation a-buffer-off-a-line-taken
+@file qed_ring.c
+@why receive-buffers-bad: a buffer off a line
+@old
+	else if (buf & QED_LINE)
+@new
+	else if (buf & 1u)
+@end
+
+@mutation a-buffer-to-the-last-word-refused
+@file qed_ring.c
+@why receive-buffers-bad: a buffer ending at main memory's last word
+@old
+	else if ((size_t)buf + words > f->mem.words)
+@new
+	else if ((size_t)buf + words >= f->mem.words)
+@end
+
+@mutation a-bad-buffer-not-counted
+@file qed_ring.c
+@why receive-buffers-bad: <23:16>
+@old
+		f->release(f->ctx);
+		g->rx_drops = (g->rx_drops + 1) & 0xFFu;
+@new
+		f->release(f->ctx);
+@end
+
+@mutation the-bytes-past-the-end-not-zero
+@file qed_ring.c
+@why receive-lengths: the last word's bytes past the end are 0
+@old
+	memset(data, 0, sizeof data);
+@new
+	memset(data, 0xA5, sizeof data);
+@end
+
+@mutation a-word-past-the-frame-written
+@file qed_ring.c
+@why receive-lengths: no word past the frame
+@old
+	qed_mem_write(&f->mem, buf, words, data);
+@new
+	qed_mem_write(&f->mem, buf, words + ((n & 3) == 0), data);
+@end
+
+@mutation the-length-not-written
+@file qed_ring.c
+@why receive: the entry's word 2
+@old
+	qed_mem_write(&f->mem, e + 2, 1, &len);
+@new
+@end
+
+@mutation the-length-in-word-1
+@file qed_ring.c
+@why receive: the entry's word 2, not its word 1
+@old
+	qed_mem_write(&f->mem, e + 2, 1, &len);
+@new
+	qed_mem_write(&f->mem, e + 1, 1, &len);
+@end
+
+@mutation the-receive-slot-misplaced
+@file qed_ring.c
+@why receive-ring-1: an entry's slot is its index mod the size
+@old
+const size_t e = u.rx_base + 8u * (index % (1u << u.rx_log2));
+@new
+const size_t e = u.rx_base + 8u * (index % (2u << u.rx_log2));
+@end
+
+@mutation a-delivery-without-the-claim
+@file qed_ring.c
+@why receive: the model's claim
+@old
+	if (!f->claim(f->ctx, s.epoch)) {
+		say(g, g->trace, "received %s, dropped: the device is disabled", d);
+		return 0;
+	}
+@new
+@end
+
+@mutation 251-before-the-words
+@file qed_ring.c
+@why receive: the model's barrier and its words after 251
+@old
+	qed_mem_write(&f->mem, buf, words, data);
+	const uint32_t len = (uint32_t)n;
+	qed_mem_write(&f->mem, e + 2, 1, &len);
+	f->delivered(f->ctx, s.epoch, (uint16_t)(index + 1));
+@new
+	f->delivered(f->ctx, s.epoch, (uint16_t)(index + 1));
+	qed_mem_write(&f->mem, buf, words, data);
+	const uint32_t len = (uint32_t)n;
+	qed_mem_write(&f->mem, e + 2, 1, &len);
+@end
+
+@mutation the-claim-kept-after-a-delivery
+@file qed_ring.c
+@why receive: the claim dropped
+@old
+	f->delivered(f->ctx, s.epoch, (uint16_t)(index + 1));
+	f->release(f->ctx);
+@new
+	f->delivered(f->ctx, s.epoch, (uint16_t)(index + 1));
+@end
+
+@mutation the-counters-not-read-back
+@file qed_ring.c
+@why the unit check of a program started again
+@old
+	g->type_drops = QED_COUNTS_TYPE(s.counts);
+@new
+	g->type_drops = 0;
+@end
+
+@mutation the-host-not-written
+@file qed_ring.c
+@why host: 253-257 read back
+@old
+	f->host(f->ctx, host);
+@new
+@end
+
+@mutation the-face-without-a-barrier
+@file qed_face_fabric.c
+@why receive: the model's barrier before 251
+@old
+	barrier(fb);
+	reg_wr(fb, OFF_RX_CONS, (uint32_t)epoch << 16 | index);
+@new
+	reg_wr(fb, OFF_RX_CONS, (uint32_t)epoch << 16 | index);
+@end
+
+@mutation tx-cons-at-rx-prod
+@file qed_face_fabric.c
+@why the face's offsets
+@old
+#define OFF_TX_CONS      0x11Cu
+@new
+#define OFF_TX_CONS      0x120u
+@end
+
+@mutation rx-cons-at-rx-taken
+@file qed_face_fabric.c
+@why the face's offsets
+@old
+#define OFF_RX_CONS      0x124u
+@new
+#define OFF_RX_CONS      0x128u
+@end
+
+@mutation counts-off-by-a-word
+@file qed_face_fabric.c
+@why the face's offsets
+@old
+#define OFF_COUNTS       0x12Cu
+@new
+#define OFF_COUNTS       0x130u
+@end
+
+@mutation the-mac-high-bytes-swapped
+@file qed_face_fabric.c
+@why the face's 253
+@old
+reg_wr(fb, OFF_MAC_HIGH, (uint32_t)h->mac[0] << 8 | h->mac[1]);
+@new
+reg_wr(fb, OFF_MAC_HIGH, (uint32_t)h->mac[1] << 8 | h->mac[0]);
+@end
+
+@mutation the-gateway-as-the-netmask
+@file qed_face_fabric.c
+@why host: 257
+@old
+	reg_wr(fb, OFF_GATEWAY, h->gateway);
+@new
+	reg_wr(fb, OFF_GATEWAY, h->netmask);
+@end
+
+@mutation busy-read-from-quiet
+@file qed_face_fabric.c
+@why the face's STATE
+@old
+	s->busy = (st >> 2) & 1u;
+@new
+	s->busy = (st >> 3) & 1u;
+@end
+
+@mutation the-epoch-read-short
+@file qed_face_fabric.c
+@why the face's STATE
+@old
+	s->epoch = (uint16_t)(st >> 16);
+@new
+	s->epoch = (uint16_t)(st >> 16) & 0xFFu;
+@end
+
+@mutation the-tx-base-unmasked
+@file qed_face_fabric.c
+@why the face's TX_BASE
+@old
+	s->tx_base = reg_rd(fb, OFF_TX_BASE) & QED_ADDRESS;
+@new
+	s->tx_base = reg_rd(fb, OFF_TX_BASE);
+@end
+
+@mutation the-claim-without-its-epoch
+@file qed_face_fabric.c
+@why the face's CLAIM
+@old
+	reg_wr(fb, OFF_CLAIM, (uint32_t)epoch << 16 | 1u);
+@new
+	reg_wr(fb, OFF_CLAIM, 1u);
+@end
+
+@mutation another-ident-taken
+@file qed_face_fabric.c
+@why the face: the file device's page is not this one
+@old
+	if (id != QED_IDENT_16) {
+@new
+	if (id != QED_IDENT_16 && id != 0x51463133u) {
+@end
+
+@mutation a-stale-claim-kept
+@file qed_face_fabric.c
+@why the face: the start drops a claim left on the page
+@old
+	reg_wr(fb, OFF_CLAIM, 0);
+	return 0;
+@new
+	return 0;
+@end
+
+@mutation the-most-memory-refused
+@file qed_face_fabric.c
+@why the face: the most main memory
+@old
+	if (words == 0 || words > QED_MAX_MEM_WORDS) {
+@new
+	if (words == 0 || words >= QED_MAX_MEM_WORDS) {
+@end
+
+@mutation the-counts-unmasked
+@file qed_face_fabric.c
+@why the face's COUNTS
+@old
+	reg_wr(ctx, OFF_COUNTS, counts & QED_COUNTS_MASK);
+@new
+	reg_wr(ctx, OFF_COUNTS, counts);
+@end
+
+@mutation a-written-word-untagged
+@file qed_mem.c
+@why receive: every word the device writes is a fixnum
+@old
+			img[5 * i + 4] = QED_TAG_FIXNUM;
+@new
+			img[5 * i + 4] = 0;
+@end
+
+@mutation a-store-misaligned
+@file qed_mem.c
+@why every delivery: an access to DDR is naturally aligned
+@old
+	for (; o < hi && (o & 3u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		b[o] = *img++;
+@new
+	for (; o < hi && (o & 1u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		b[o] = *img++;
+@end
+
+@mutation a-load-misaligned
+@file qed_mem.c
+@why every transmit: an access to DDR is naturally aligned
+@old
+	for (; o < hi && (o & 3u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		*img++ = b[o];
+@new
+	for (; o < hi && (o & 1u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		*img++ = b[o];
+@end
+
+@mutation a-store-past-its-run
+@file qed_mem.c
+@why receive-lengths: no byte outside a run
+@old
+	for (; o + 4u <= hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		*(volatile uint32_t *)(void *)(b + o) = (uint32_t)img[0] | (uint32_t)img[1] << 8 |
+@new
+	for (; o < hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		*(volatile uint32_t *)(void *)(b + o) = (uint32_t)img[0] | (uint32_t)img[1] << 8 |
+@end
+
+@mutation the-tap-with-a-virtio-net-header
+@file qed_tap.c
+@why the unit check of the tap's flags
+@old
+	ifr.ifr_flags = (short)QED_TAP_FLAGS;
+@new
+	ifr.ifr_flags = (short)(QED_TAP_FLAGS | QED_TAP_NEVER);
+@end
+
+@mutation the-tap-with-packet-information
+@file qed_tap.c
+@why the unit check of the tap's flags
+@old
+	ifr.ifr_flags = (short)QED_TAP_FLAGS;
+@new
+	ifr.ifr_flags = (short)IFF_TAP;
+@end
+
+@mutation the-tap-with-an-offload
+@file qed_tap.c
+@why the unit check: no TUNSETOFFLOAD
+@old
+	// What the kernel says the tap is now: a tap with no packet
+@new
+	IOCTL(fd, TUNSETOFFLOAD, &ifr);
+	// What the kernel says the tap is now: a tap with no packet
+@end
+
+@mutation the-tap-taken-whatever-it-says
+@file qed_tap.c
+@why the unit check: a tap with IFF_VNET_HDR is refused
+@old
+	if ((flags & QED_TAP_FLAGS) != QED_TAP_FLAGS || (flags & QED_TAP_NEVER)) {
+@new
+	if (0) {
+@end
+
+@mutation a-group-address-taken
+@file qed_host.c
+@why the flags: 03:00:00:00:00:01
+@old
+	if (m[0] & 1u) {
+@new
+	if (m[0] & 2u) {
+@end
+
+@mutation prefix-31-taken
+@file qed_host.c
+@why the flags: a /31
+@old
+#define MAX_PREFIX 30u
+@new
+#define MAX_PREFIX 31u
+@end
+
+@mutation prefix-0-taken
+@file qed_host.c
+@why the flags: a /0
+@old
+	if (n < 1 || n > MAX_PREFIX) {
+@new
+	if (n > MAX_PREFIX) {
+@end
+
+@mutation a-three-digit-prefix-taken
+@file qed_host.c
+@why the flags: /030
+@old
+pl == 0 || pl > 2 || strspn(prefix, "0123456789") != pl))
+@new
+pl == 0 || pl > 3 || strspn(prefix, "0123456789") != pl))
+@end
+
+@mutation a-leading-zero-taken
+@file qed_host.c
+@why the flags: 01.2.3.4
+@old
+if (!digits || x > 255 || (digits > 1 && s[from] == '0'))
+@new
+if (!digits || x > 255)
+@end
+
+@mutation part-256-taken
+@file qed_host.c
+@why the flags: 256.1.1.1
+@old
+if (!digits || x > 255 || (digits > 1 && s[from] == '0'))
+@new
+if (!digits || x > 256 || (digits > 1 && s[from] == '0'))
+@end
+
+@mutation loopback-taken
+@file qed_host.c
+@why the flags: 127.0.0.1/8
+@old
+top == 127              ? "in 127.x.x.x, loopback"
+@new
+top == 126              ? "in 127.x.x.x, loopback"
+@end
+
+@mutation multicast-taken
+@file qed_host.c
+@why the flags: 224.0.0.1/4
+@old
+top >= 224 && top <= 239 ? "from 224.0.0.0 to 239.255.255.255, multicast"
+@new
+top >= 225 && top <= 239 ? "from 224.0.0.0 to 239.255.255.255, multicast"
+@end
+
+@mutation the-network-address-taken
+@file qed_host.c
+@why the flags: 192.0.2.4/30, the subnet's network address
+@old
+: (a & ~mask) == 0        ? "the subnet's network address"
+@new
+: 0                      ? "the subnet's network address"
+@end
+
+@mutation the-broadcast-address-taken
+@file qed_host.c
+@why the flags: 192.0.2.7/30, the subnet's broadcast address
+@old
+: (a & ~mask) == ~mask    ? "the subnet's broadcast address"
+@new
+: 0                      ? "the subnet's broadcast address"
+@end
+
+@mutation a-zero-gateway-taken
+@file qed_host.c
+@why the flags: --ip-gateway 0.0.0.0
+@old
+	if (gateway == 0) {
+@new
+	if (0) {
+@end
+
+@mutation the-own-address-a-gateway
+@file qed_host.c
+@why the flags: --ip-gateway QUUX's own address
+@old
+	if (gateway == address)
+@new
+	if (0)
+@end
+
+@mutation a-gateway-off-the-subnet
+@file qed_host.c
+@why the flags: a gateway on another subnet
+@old
+	else if ((gateway & netmask) != (address & netmask))
+@new
+	else if (0)
+@end
+
+@mutation the-default-not-said
+@file qed_host.c
+@why the flags: a default gateway's refusal says so
+@old
+	const char *dflt = is_default ? ", its default," : "";
+@new
+	const char *dflt = "";
+@end
+
+@mutation the-default-mac
+@file qed_host.c
+@why the scripts and the flags: the default MAC address
+@old
+	static const uint8_t mac[6] = { 0x02, 0, 0, 0, 0, 0x01 };
+@new
+	static const uint8_t mac[6] = { 0x02, 0, 0, 0, 0, 0x02 };
+@end
+
+@mutation the-default-address
+@file qed_host.c
+@why the flags: the default address
+@old
+	h->address = 169u << 24 | 254u << 16 | 100u << 8 | 2u;
+@new
+	h->address = 169u << 24 | 254u << 16 | 101u << 8 | 2u;
+@end
+
+@mutation the-default-prefix
+@file qed_host.c
+@why the flags: the default /30
+@old
+	h->netmask = 0xFFFFFFFFu << 2;
+@new
+	h->netmask = 0xFFFFFFFFu << 8;
+@end
+
+@mutation the-default-gateway
+@file qed_host.c
+@why the flags: the default gateway
+@old
+	h->gateway = 169u << 24 | 254u << 16 | 100u << 8 | 1u;
+@new
+	h->gateway = 169u << 24 | 254u << 16 | 100u << 8 | 3u;
+@end
+
+@mutation a-quote-not-escaped
+@file qed_host.c
+@why the flags: muir's {:?} escapes a quote
+@old
+		if (c == '"' || c == '\\') {
+@new
+		if (c == '\\') {
+@end
+
+@mutation a-tab-written-raw
+@file qed_host.c
+@why the flags: muir's {:?} writes a tab as \t
+@old
+		} else if (c == '\t' || c == '\r' || c == '\n') {
+@new
+		} else if (c == '\r' || c == '\n') {
+@end

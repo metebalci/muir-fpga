@@ -1,0 +1,137 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# QUUX's Ethernet device at boot: the tap quux0 made, and quux-ethernet-device
+# moving the machine's Ethernet frames between it and the rings.
+#
+# **QUUX ONLY.**  The Ethernet device is QUUX revision 16's, and a CADR's
+# bitstream has no page for it.  A card carrying a QUUX bitstream says
+# `--machine quux` in `fpgarc`, and this script starts the program then and
+# only then.  On any other card it says so and starts nothing.  On a QUUX
+# bitstream older than revision 16 the program finds no page and says so.
+#
+# S82, after S81quux-file-device.
+#
+# **THE TAP IS quux0, AND IT IS THIS SCRIPT'S** (the Ethernet contract,
+# section 4): a host-only link between the board's Linux and QUUX, the
+# board's side at `--ip-gateway` on `--ip-address`'s subnet and QUUX at
+# `--ip-address`.  There is no forwarding, no NAT and no LAN route, so QUUX
+# reaches the board's Linux alone and nothing on the LAN reaches QUUX.
+# Before it comes up the tap gets what muir-sim's
+# `quux-taps` gives each tap of the build host's pool:
+#   - IPv6 off, where the kernel has IPv6 at all, so that Linux sends
+#     nothing of IPv6 on the link: QUUX's device takes IPv4 and ARP only;
+#   - arp_ignore 2: Linux answers an ARP request only for the tap's own
+#     address from a sender on the tap's subnet;
+#   - rp_filter 1, strict;
+#   - the MAC address 02:00:00:00:00:02 on the board's side, and an MTU of
+#     1500, so that no frame is longer than the device's 1,514 bytes.
+# BusyBox's `tunctl` makes it, a persistent tap opened IFF_TAP | IFF_NO_PI,
+# and the program opens it the same way, never with a virtio-net header, so
+# the board's Linux checks every checksum QUUX's device fills in.
+#
+# **THE FLAGS ARE muir's**, with muir's meaning and defaults
+# (`docs/fpgarc.md`): `--ethernet-mac`, `--ip-address`, `--ip-gateway` and
+# `--ethernet-trace`.  The program refuses a value muir refuses, in muir's
+# words; the script only reads `--ip-address`'s prefix and `--ip-gateway` to
+# give the tap its address.
+
+PROG=/usr/bin/quux-ethernet-device
+PIDFILE=/var/run/quux-ethernet-device.pid
+CARD=/mnt/card
+TAP=quux0
+# The board's side of the tap: its MAC address and MTU, `quux-taps`' own.
+TAP_MAC=02:00:00:00:00:02
+TAP_MTU=1500
+# muir's defaults, where the card names none.
+DEFAULT_ADDRESS=169.254.100.2/30
+DEFAULT_GATEWAY=169.254.100.1
+# Where the kernel keeps a link's IPv6 settings, which a kernel built
+# without IPv6 has not got.
+IPV6_CONF=/proc/sys/net/ipv6/conf
+
+RC="$CARD/fpgarc"
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
+STOP_SH=/usr/share/cadr/stop.sh
+. "$STOP_SH"
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
+# The flags this program owns, read off its own argument list
+# (src/quux-ethernet-device.c).  `--log` is `cadr_daemon`'s and `--no-guard`
+# a person's at a prompt.
+FLAGS="--ethernet-mac --ip-address --ip-gateway --ethernet-trace"
+
+# The argument of one of this script's own flags, or nothing.
+value_of() {
+	eval "set -- $(fpgarc_args "$RC" "$1")"
+	echo "${2:-}"
+}
+
+# The tap made, or made again, and set up before it comes up.
+make_tap() {
+	_address=$1
+	_gateway=$2
+	_prefix=${_address##*/}
+	ip link show dev "$TAP" > /dev/null 2>&1 || tunctl -t "$TAP" > /dev/null || return 1
+	if [ -d "$IPV6_CONF/$TAP" ]; then
+		sysctl -q -w "net.ipv6.conf.$TAP.disable_ipv6=1" || return 1
+	fi
+	sysctl -q -w "net.ipv4.conf.$TAP.arp_ignore=2" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.rp_filter=1" || return 1
+	ip link set dev "$TAP" down
+	ip link set dev "$TAP" address "$TAP_MAC" mtu "$TAP_MTU" || return 1
+	ip address flush dev "$TAP"
+	ip address add "$_gateway/$_prefix" dev "$TAP" || return 1
+	ip link set dev "$TAP" up
+}
+
+start() {
+	cadr_fault_stop && return 0
+	set --
+	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+	if ! fpgarc_is_quux; then
+		echo "quux-ethernet-device: the card does not say --machine quux; the Ethernet device is QUUX's; not started."
+		return 0
+	fi
+	address=$(value_of --ip-address)
+	gateway=$(value_of --ip-gateway)
+	[ -n "$address" ] || address=$DEFAULT_ADDRESS
+	[ -n "$gateway" ] || gateway=$DEFAULT_GATEWAY
+	if ! make_tap "$address" "$gateway"; then
+		echo "quux-ethernet-device: the tap $TAP could not be made at $gateway for $address; not started."
+		return 1
+	fi
+	cadr_daemon "$PROG" "$PIDFILE" "$@"
+}
+
+# **A DEVICE THE START DID NOT START IS NOT A STOP THAT FAILED**, the file
+# device's rule: with no pid file the card is asked the start's question.
+# The tap goes with the program: a persistent tap outlives its holder, and
+# the next start makes it afresh.
+stop() {
+	if [ ! -s "$PIDFILE" ] && ! fpgarc_is_quux; then
+		echo "Stopping quux-ethernet-device: not running (CADR)"
+		return 0
+	fi
+	cadr_stop quux-ethernet-device "$PIDFILE"
+	_status=$?
+	if ip link show dev "$TAP" > /dev/null 2>&1; then
+		ip link set dev "$TAP" down
+		tunctl -d "$TAP" > /dev/null
+	fi
+	return $_status
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

@@ -469,8 +469,8 @@ region, on every board:
   space. The machine fits at most 60 boards of 64K words, 3,932,160 words
   (15 MB), since the top four slots of the space are the display, the disk
   controller and the Unibus. QUUX, revision 13, has its own region (below),
-  and its count runs to what that region holds. The fabric writes it, and `cadr-console`, `cadr-checkpoint`
-  and `quux-file-device` map it.
+  and its count runs to what that region holds. The fabric writes it, and `cadr-console`, `cadr-checkpoint`,
+  `quux-file-device` and `quux-ethernet-device` map it.
 - **The display** holds both TV boards' buffers, 32,768 words each, 256 KB in
   use; QUUX's video controller has one buffer of at most 64K words, 256 KB,
   from the same base (64,800 words at 1920 by 1080). The fabric writes it, the

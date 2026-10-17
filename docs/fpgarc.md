@@ -280,6 +280,20 @@ program and what it serves when this file says nothing.
 
     --file-root           a folder served as HOST, muir's flag; once for each mount
 
+**QUUX's Ethernet device**, read by `S82quux-ethernet-device`, which makes the
+tap `quux0` and starts the program only when this file says `--machine quux`.
+The four are muir's flags, with muir's meanings, defaults and refusals.
+`docs/ethernet-device.md` has the program and the tap.
+
+    --ethernet-mac        the device's MAC address [default 02:00:00:00:00:01]
+    --ip-address          QUUX's IPv4 address, A.B.C.D/N [default 169.254.100.2/30]
+    --ip-gateway          the gateway, the tap's address [default 169.254.100.1]
+    --ethernet-trace      every Ethernet frame sent and received, to the log
+
+The tap takes `--ip-gateway`'s address with `--ip-address`'s prefix. A card
+names its own machine's link, LISPM-*n* at 169.254.*n*.2/30 with gateway
+169.254.*n*.1, as the site's host table gives it.
+
 **The display boards**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/tv.md` has the boards.
 

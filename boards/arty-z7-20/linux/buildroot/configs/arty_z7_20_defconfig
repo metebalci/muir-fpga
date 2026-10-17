@@ -83,6 +83,9 @@ BR2_PACKAGE_CADR_USB_INPUT=y
 # QUUX's file device, the Linux side.  Its init script starts it only on a
 # card that says --machine quux.
 BR2_PACKAGE_QUUX_FILE_DEVICE=y
+# QUUX's Ethernet device, the Linux side.  Its init script makes the tap
+# quux0 and starts it only on a card that says --machine quux.
+BR2_PACKAGE_QUUX_ETHERNET_DEVICE=y
 # muir itself, built from its own source at the commit muir.commit pins, to be
 # the debugger at the other end of the fabric's debug cable.  It is the only
 # program in the image that is not ours and the only one with no init script:

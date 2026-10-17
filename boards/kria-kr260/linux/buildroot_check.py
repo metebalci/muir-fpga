@@ -350,6 +350,7 @@ def programs(tree, bindir):
         "cadr-chaosnet": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
         "cadr-usb-input": [],
         "quux-file-device": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
+        "quux-ethernet-device": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
         # The DisplayPort link's program: the controller and the transceiver
         # where this board's map puts them, the console it follows, and the
         # board's mode.

@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_QUUX_ETHERNET_DEVICE
+	bool "quux-ethernet-device"
+	select BR2_PACKAGE_CADR_COMMON
+	help
+	  QUUX's Ethernet device, the Linux side: the program that
+	  sends the Ethernet frames QUUX's transmit ring names to the
+	  tap quux0 and delivers the tap's into QUUX's receive ring,
+	  filling in and checking the IPv4, TCP, UDP and ICMP
+	  checksums, through the Ethernet device's page in the fabric.
+
+	  QUUX revision 16 only: its init script makes the tap and
+	  starts it when the card's fpgarc says --machine quux.  The
+	  kernel needs CONFIG_TUN and BusyBox its tunctl.

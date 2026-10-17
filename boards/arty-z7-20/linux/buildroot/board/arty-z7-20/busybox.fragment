@@ -10,3 +10,8 @@
 CONFIG_NTPD=y
 # CONFIG_FEATURE_NTPD_SERVER is not set
 # CONFIG_FEATURE_NTPD_CONF is not set
+# tunctl: the tap quux0, a persistent tap made IFF_TAP | IFF_NO_PI, for QUUX's
+# Ethernet device (S82quux-ethernet-device).  Its -u and -g are not needed:
+# root makes the tap and root's program opens it.
+CONFIG_TUNCTL=y
+# CONFIG_FEATURE_TUNCTL_UG is not set

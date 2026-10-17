@@ -82,3 +82,7 @@ CONFIG_HID=y
 CONFIG_HID_GENERIC=y
 CONFIG_USB_HID=y
 CONFIG_ARM_SMMU_V3=y
+# The tap quux0, QUUX's Ethernet link to the board's Linux
+# (`quux-ethernet-device`), which `defconfig` builds in already: said here so
+# that the build asserts it.
+CONFIG_TUN=y

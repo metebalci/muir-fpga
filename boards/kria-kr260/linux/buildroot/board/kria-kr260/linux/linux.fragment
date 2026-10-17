@@ -105,3 +105,7 @@ CONFIG_USB_HID=y
 CONFIG_NET_VENDOR_CADENCE=y
 CONFIG_MACB=y
 CONFIG_DP83867_PHY=y
+# The tap quux0, QUUX's Ethernet link to the board's Linux
+# (`quux-ethernet-device`), which `defconfig` builds in already: said here so
+# that the build asserts it.
+CONFIG_TUN=y

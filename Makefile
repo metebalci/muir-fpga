@@ -164,7 +164,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/checkpoint.pass $(BUILD)/quux_readout_window.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/displayport.pass \
-       $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass \
+       $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass $(BUILD)/quux_ethernet_device.pass \
        $(BUILD)/fpgarc.pass $(BUILD)/quux_card.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
@@ -6081,6 +6081,37 @@ $(BUILD)/quux_file_device.pass: $(wildcard $(QFD_SRC)/*.c) $(wildcard $(QFD_SRC)
 	@echo "quux_file_device: muir's own device's, byte for byte, over every script"
 	@touch $@
 
+# **QUUX's ETHERNET DEVICE, THE LINUX SIDE, HELD TO muir's OWN DEVICE.**
+# `quux-ethernet-device` sends the transmit ring's Ethernet frames and
+# delivers the tap's into the receive ring, applying section 2.4 of the
+# Ethernet contract both ways, and muir's `ethernet_device::EthernetDevice`
+# is what it must do it like.  So `golden/src/quux_ethernet_device.rs` runs
+# muir's device over each of the package's scripts (`qed_scenarios.py`), the
+# package's `qed_test` runs its own step, face and rules over the same script
+# against a model of the fabric's page, and `qed_compare.py` holds the two
+# transcripts to each other byte for byte; then the flags' answers against
+# muir's parsers; then muir-sim's checksum vectors at the pin, read from the
+# muir beside this tree as `golden/` reads it; then the unit checks and the
+# package's mutation list, which prints "N caught, 0 survived, 0 broken".  The top-level mutation runner does not
+# reach these sources.
+QED_PKG  := boards/arty-z7-20/linux/buildroot/package/quux-ethernet-device
+QED_SRC  := $(QED_PKG)/src
+QED_WORK := $(abspath $(BUILD))/quux-ethernet-device-work
+QED_GOLDEN := $(abspath golden/target/release/quux_ethernet_device)
+QED_VECTORS := $(abspath $(MUIR)/muir-sim/tests/ethernet_vectors.txt)
+$(BUILD)/quux_ethernet_device.pass: $(wildcard $(QED_SRC)/*.c) $(wildcard $(QED_SRC)/*.h) \
+                                    $(wildcard $(QED_SRC)/*.py) $(QED_SRC)/Makefile \
+                                    $(QED_SRC)/qed_mutations.txt $(QED_SRC)/qed_flags.txt \
+                                    $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
+                                    golden/src/quux_ethernet_device.rs golden/Cargo.toml muir.commit | $(BUILD)
+	$(CARGO) build --quiet --release --manifest-path golden/Cargo.toml --bin quux_ethernet_device
+	$(MAKE) -C $(QED_SRC) check WORK=$(QED_WORK) QED_GOLDEN=$(QED_GOLDEN) QED_VECTORS=$(QED_VECTORS)
+	$(MAKE) -C $(QED_SRC) all COMMON=host
+	$(MAKE) -C $(QED_SRC) clean
+	@echo "quux_ethernet_device: the program builds, the device does to every frame what muir's"
+	@echo "quux_ethernet_device: does, its flags refuse what muir's refuse, and the vectors pass"
+	@touch $@
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
@@ -6442,7 +6473,7 @@ BR_DE25_CHECK := boards/de25-nano/linux/buildroot_check.py
 # that this never shares a source directory with the checks that build there.
 DE25_LINUX_PROGRAMS := cadr-console cadr-readout cadr-checkpoint cadr-disk-packs \
                        cadr-serial cadr-chaosnet cadr-terminal cadr-usb-input \
-                       quux-file-device
+                       quux-file-device quux-ethernet-device
 DE25_LINUX_WORK := $(HOME)/.cache/muir-fpga-de25-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
                           boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
