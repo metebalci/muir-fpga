@@ -25,7 +25,9 @@
 #     own side.
 # A card that mixes the two, a link-local address with a gateway that is not
 # or the reverse, is refused before anything is touched, so the board never
-# holds the LAN router's address.  The defaults are muir's and host-only.
+# holds the LAN router's address; and so is a LAN address that is the LAN's
+# router, `--ip-gateway` or the address a route of the board's goes via (once
+# the lease has come), since the proxy entry would answer for it.  The defaults are muir's and host-only.
 #
 # **THE LAN INTERFACE IS THE IMAGE'S DHCP INTERFACE**, read from the one
 # `iface X inet dhcp` line Buildroot writes into /etc/network/interfaces for
@@ -149,6 +151,26 @@ quad_value() {
 same_subnet() {
 	_m=$(( (4294967295 << (32 - $3)) & 4294967295 ))
 	[ $(( $(quad_value "$1") & _m )) -eq $(( $(quad_value "$2") & _m )) ]
+}
+
+# The first of the board's routes that goes via $1, or nothing: `ip route
+# show`'s lines, the word after each `via` read as an address.  Before the
+# lease there is no such route, and this says nothing.
+route_via() {
+	_want=$(quad_value "$1")
+	ip route show 2>/dev/null | while read -r _r; do
+		set -f
+		# shellcheck disable=SC2086
+		set -- $_r
+		set +f
+		while [ $# -ge 2 ]; do
+			if [ "$1" = via ] && dotted_quad "$2" && [ "$(quad_value "$2")" = "$_want" ]; then
+				echo "$_r"
+				exit 0
+			fi
+			shift
+		done
+	done
 }
 
 # The LAN interface: the X of the image's one `iface X inet dhcp` line.  It
@@ -310,6 +332,18 @@ start() {
 	if [ "$q" = "$address" ] || ! dotted_quad "$q" || [ "$n" -lt 1 ] || [ "$n" -gt 30 ] ||
 	   ! dotted_quad "$gateway"; then
 		echo "quux-ethernet-device: --ip-address $address and --ip-gateway $gateway are not A.B.C.D/N, N from 1 to 30, and A.B.C.D; not started."
+		return 1
+	fi
+	# **NEVER THE LAN's ROUTER.**  The proxy entry answers ARP for QUUX's
+	# address across the whole LAN, so QUUX's address is neither the gateway
+	# nor the address a route of the board's goes via.
+	if [ "$(quad_value "$q")" = "$(quad_value "$gateway")" ]; then
+		echo "quux-ethernet-device: --ip-address $address is --ip-gateway $gateway, the LAN's router, which the board would answer ARP for across the LAN; not started."
+		return 1
+	fi
+	via=$(route_via "$q")
+	if [ -n "$via" ]; then
+		echo "quux-ethernet-device: --ip-address $address is a router of the board's, by its route '$via', which the board would answer ARP for across the LAN; not started."
 		return 1
 	fi
 	lan=$(lan_interface) || return 1

@@ -346,9 +346,11 @@ if [ "\${NET:-up}" = down ]; then
 	esac
 	exit 0
 fi
+# \$WORK/ip.routes, when a case writes it, is the board's routes instead.
 case "\$*" in
 *addr*) echo "2: eth0    inet 192.0.2.17/24 brd 192.0.2.255 scope global eth0" ;;
-*route*) echo "default via 192.0.2.1 dev eth0" ;;
+*route*)
+	if [ -f "$WORK/ip.routes" ]; then cat "$WORK/ip.routes"; else echo "default via 192.0.2.1 dev eth0"; fi ;;
 esac
 exit 0
 EOF
@@ -502,7 +504,7 @@ EOF
 	# tap, so that the order the tap was made in can be read; \`tunctl -t\`
 	# makes the tap and \`-d\` removes it.
 	: > "$WORK/tap.calls"
-	rm -f "$WORK/tap.made"
+	rm -f "$WORK/tap.made" "$WORK/ip.routes"
 	cat > "$WORK/bin/tunctl" <<EOF
 #!/bin/sh
 echo "tunctl \$*" >> "$WORK/tap.calls"
@@ -544,6 +546,52 @@ EOF
 	# proxy entry is a line flagged 0xc with no hardware address.
 	echo 'IP address       HW type     Flags       HW address            Mask     Device' > "$WORK/proc-net-arp"
 	chmod +x "$WORK/bin/"*
+	stubs_resolve
+}
+
+# **EVERY STUB IS WHAT ITS NAME RESOLVES TO, OR NOTHING RUNS.**  The stubs
+# stand in for the board's tools only because $WORK/bin is first on the
+# PATH, and a shell may resolve a name before the PATH: BusyBox's sh runs its
+# own applets (`ip`, `tunctl`, `sysctl`, `arp`) whatever the PATH says, and
+# S82's `tunctl -d quux0` would then remove the build host's own tap of that
+# name.  So each name in
+# $WORK/bin is resolved in this check's own shell and in the shell the init
+# scripts run under (their `#!/bin/sh`, run as `run_script` runs them), and
+# the check stops before any init script is run if one resolves elsewhere,
+# naming the command and the shell.
+stubs_resolve() {
+	cat > "$WORK/resolve" <<'EOF'
+#!/bin/sh
+# The name and what it resolves to, for each name that is not its stub.
+for _name; do
+	_got=$(command -v "$_name" 2>/dev/null)
+	[ "$_got" = "$STUBS/$_name" ] ||
+		echo "  $_name resolves to [$_got] in the init scripts' shell, $(readlink "/proc/$$/exe" 2>/dev/null || echo /bin/sh)"
+done
+EOF
+	chmod +x "$WORK/resolve"
+	_names=""
+	for _stub in "$WORK/bin/"*; do
+		_names="$_names ${_stub##*/}"
+	done
+	_self=$(readlink "/proc/$$/exe" 2>/dev/null || echo "$0")
+	_bad=""
+	for _name in $_names; do
+		_got=$(PATH="$WORK/bin:$PATH"; command -v "$_name" 2>/dev/null)
+		[ "$_got" = "$WORK/bin/$_name" ] || _bad="$_bad
+  $_name resolves to [$_got] in this check's shell, $_self"
+	done
+	# shellcheck disable=SC2086
+	_far=$(STUBS="$WORK/bin" PATH="$WORK/bin:$PATH" "$WORK/resolve" $_names 2>&1) ||
+		_far="the probe itself failed: $_far"
+	[ -z "$_far" ] || _bad="$_bad
+$_far"
+	if [ -n "$_bad" ]; then
+		echo "fpgarc: refused before any init script was run: a stub is not what its name resolves to," \
+		     "so a script would reach the build host's real tool:$_bad" >&2
+		echo "fpgarc: run this check under a shell that takes the PATH as it is, such as dash." >&2
+		exit 2
+	fi
 }
 
 # Copy one init script and rewrite the constants that would otherwise reach
@@ -7490,6 +7538,63 @@ if prepare quux-ethernet-device S82quux-ethernet-device; then
 		fail "off eth0's subnet: said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")], the program [$(given)]"
 	fi
 fi
+
+# **A LAN TAP NEVER ANSWERS FOR THE LAN's ROUTER.**  With proxy ARP the board
+# answers for QUUX's address across the whole LAN, so QUUX's address must not
+# be the router's: not `--ip-gateway`, and not the address any of the board's
+# own routes goes via, which is known only once the lease has come.
+case_head "a LAN address that is --ip-gateway is refused before anything is touched"
+lan_card
+printf '%s\r\n' '--machine quux' '--ip-address 192.0.2.1/24' '--ip-gateway 192.0.2.1' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	refused_untouched "QUUX's address is --ip-gateway" "the LAN's router"
+	if [ ! -s "$WORK/ip.calls" ]; then
+		ok "QUUX's address is --ip-gateway: ip was not asked even for the routes"
+	else
+		fail "QUUX's address is --ip-gateway: ip was asked [$(tr '\n' '|' < "$WORK/ip.calls")]"
+	fi
+fi
+
+case_head "a LAN address that a route of the board's goes via is refused before anything is touched"
+lan_card
+printf '%s\n' 'default via 192.0.2.50 dev eth0' '192.0.2.64/26 dev eth0 scope link  src 192.0.2.17' > "$WORK/ip.routes"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	refused_untouched "the default route goes via QUUX's address" "via 192.0.2.50"
+	if [ "$(tr '\n' '|' < "$WORK/ip.calls")" = "route show|" ]; then
+		ok "the default route goes via QUUX's address: ip was asked for the routes and nothing else"
+	else
+		fail "the default route goes via QUUX's address: ip was asked [$(tr '\n' '|' < "$WORK/ip.calls")]"
+	fi
+fi
+lan_card
+printf '%s\n' 'default via 192.0.2.1 dev eth0' '192.0.2.99 via 192.0.2.50 dev eth0 proto static' > "$WORK/ip.routes"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	refused_untouched "a host route goes via QUUX's address" "via 192.0.2.50"
+fi
+
+case_head "a LAN address no route goes via starts as before, whatever routes there are"
+for routes in 'default via 192.0.2.5 dev eth0|192.0.2.50 dev eth0 scope link|192.0.2.99 via 192.0.2.150 dev eth0' ''; do
+	lan_card
+	printf '%s' "$routes" | tr '|' '\n' > "$WORK/ip.routes"
+	if prepare quux-ethernet-device S82quux-ethernet-device; then
+		run_script S82quux-ethernet-device
+		_ifs=$IFS; IFS='
+'
+		# shellcheck disable=SC2086
+		set -- $LAN_START_LIST
+		IFS=$_ifs
+		tap_record_is "LAN, routes [$routes]" "$@"
+		if [ "$(cat "$WORK/status.S82quux-ethernet-device")" = 0 ] && [ -s "$WORK/daemon.calls" ]; then
+			ok "LAN, routes [$routes]: the device started"
+		else
+			fail "LAN, routes [$routes]: status $(cat "$WORK/status.S82quux-ethernet-device"), the program [$(given)]," \
+			     "said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")]"
+		fi
+	fi
+done
 
 # ---------------------------------------------------------------------------
 # **QUUX's FILE DEVICE STARTS ON A QUUX CARD AND ON NO OTHER**, and serves the
