@@ -5952,6 +5952,7 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(USB_INPUT_PKG)/S88cadr-usb-input \
                       $(DISK_PACKS_PKG)/S80cadr-disk-packs \
                       boards/arty-z7-20/linux/buildroot/package/quux-file-device/S81quux-file-device \
+                      boards/arty-z7-20/linux/buildroot/package/quux-ethernet-device/S82quux-ethernet-device \
                       boards/arty-z7-20/linux/mksd-buildroot.sh \
                       boards/arty-z7-20/linux/mksd-release.sh \
                       tools/quux_card_check.py \

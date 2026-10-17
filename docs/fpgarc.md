@@ -287,12 +287,37 @@ The four are muir's flags, with muir's meanings, defaults and refusals.
 
     --ethernet-mac        the device's MAC address [default 02:00:00:00:00:01]
     --ip-address          QUUX's IPv4 address, A.B.C.D/N [default 169.254.100.2/30]
-    --ip-gateway          the gateway, the tap's address [default 169.254.100.1]
+    --ip-gateway          the gateway [default 169.254.100.1]
     --ethernet-trace      every Ethernet frame sent and received, to the log
 
-The tap takes `--ip-gateway`'s address with `--ip-address`'s prefix. A card
-names its own machine's link, LISPM-*n* at 169.254.*n*.2/30 with gateway
-169.254.*n*.1, as the site's host table gives it.
+QUUX's address decides what the tap is. An address in 169.254.x.y makes a
+host-only tap: the tap takes `--ip-gateway`'s address with `--ip-address`'s
+prefix, and QUUX reaches the board's Linux alone. A card that names nothing
+gets muir's defaults, which are host-only. A card names its own machine's link,
+LISPM-*n* at 169.254.*n*.2/30 with gateway 169.254.*n*.1, as the site's host
+table gives it.
+
+**To put QUUX on the board's LAN**, give it a free address on the LAN, with
+the LAN's prefix, and the LAN's router as its gateway. Any address outside
+169.254.x.y makes a LAN tap. For a LAN of 192.0.2.0/24 whose router is
+192.0.2.1:
+
+    --machine quux
+    --ip-address 192.0.2.50/24
+    --ip-gateway 192.0.2.1
+
+QUUX is then a computer on the LAN at 192.0.2.50, and any machine on the LAN
+reaches it there. The board answers ARP for that one address on its LAN
+interface and forwards between the LAN and the tap; the tap itself has no
+address. Choose an address that the LAN's DHCP server does not give out, or
+reserve it there, since two machines answering for one address break both.
+
+Both flags must be on the same side of the line. A link-local `--ip-address`
+with a gateway that is not link-local, or a LAN address with a link-local
+gateway, is refused at boot, and nothing is touched. A LAN address with no
+`--ip-gateway` line is refused for the same reason, because the default
+gateway is link-local. `docs/ethernet-device.md` has the two modes, the LAN
+interface on each board and what the board sets.
 
 **The display boards**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/tv.md` has the boards.
@@ -1031,6 +1056,11 @@ has a line for every program on the board. Each program must get its own flags
 and no others. A few constants in each script are rewritten so that nothing
 reaches a real board, and every rewrite is asserted to have matched exactly
 once, so renaming a constant fails the check by name.
+
+It holds the Ethernet device's tap the same way, with `tunctl`, `sysctl`, `ip`
+and `arp` stubbed: a host-only card's calls, a LAN card's calls and its stop's
+are each compared to a list, line for line and in order, and a mixed card or a
+LAN card on an image without exactly one DHCP line must make none.
 
 It also holds the reader itself: a carriage return that must not reach a
 program, an argument with spaces in it, an argument with a quote in it, a bare

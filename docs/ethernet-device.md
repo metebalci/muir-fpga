@@ -25,12 +25,33 @@ revisions have no page for it, and the default slave answers its address.
 
 ## What QUUX reaches on a board
 
-`quux0` is a host-only link between the board's Linux and QUUX. The board's
-side has the address `--ip-gateway` names, on `--ip-address`'s subnet, and
-QUUX has `--ip-address`. Nothing is forwarded, translated or routed onto the
-board's network. So QUUX reaches the board's Linux alone, and nothing on the
-network reaches QUUX. QUUX's MAC address never appears on
-the network, and no frame from the network reaches QUUX's memory.
+QUUX's address decides what `quux0` is, by one rule:
+
+- **An address in 169.254.x.y makes a host-only tap.** The board's side
+  has the address `--ip-gateway` names, on `--ip-address`'s subnet. Nothing is
+  forwarded and no ARP is answered for QUUX on the board's network, so QUUX
+  reaches the board's Linux alone and nothing on the network reaches QUUX.
+  muir's defaults are link-local, so a card that names no address is
+  host-only.
+- **Any other address makes a LAN tap.** QUUX is then a computer on the
+  board's LAN, with its own address on the LAN's subnet and the LAN's router
+  as its gateway. The board's Linux answers ARP on its LAN interface for
+  QUUX's address and no other, and forwards between the LAN interface and
+  `quux0`.
+- **A card that mixes the two is refused** before anything is touched: a
+  link-local `--ip-address` with a gateway that is not link-local, or the
+  reverse. So the board never holds the LAN router's address.
+
+Link-local is the line because a router must not forward a packet with a
+link-local source or destination address (RFC 3927, section 2.7). A link-local
+QUUX cannot be on the LAN by forwarding, and a QUUX on the LAN is never
+link-local. The rule reads QUUX's own flags only and adds no flag.
+
+In either mode QUUX's MAC address stays on `quux0`: on a LAN tap the board
+answers ARP on the LAN with its own MAC address. The board forwards no
+broadcast from the LAN to QUUX.
+
+### A host-only tap
 
 Before the tap comes up, the init script gives it what muir-sim's `quux-taps`
 gives every tap of a build host's pool:
@@ -40,8 +61,78 @@ gives every tap of a build host's pool:
 - `arp_ignore` 2, so Linux answers an ARP request only for the tap's own
   address and from a sender on the tap's subnet.
 - `rp_filter` 1, strict.
+- `proxy_arp` 0 and `forwarding` 0.
 - The MAC address `02:00:00:00:00:02` on the board's side, and an MTU of 1500,
   so no frame is longer than the device's 1,514 bytes.
+- The address `--ip-gateway` names, with `--ip-address`'s prefix.
+
+### A LAN tap
+
+The init script sets it up in this order, so that nothing is touched before
+the mode is certain and the board never answers for QUUX before it can
+deliver to QUUX:
+
+1. The flags are checked and the LAN interface is found. On any failure the
+   script refuses and touches nothing.
+2. `quux0` is made, if it is not there.
+3. On `quux0`: IPv6 off, `arp_ignore` 0, `arp_filter` 1, `rp_filter` 1,
+   `proxy_arp` 1, `forwarding` 1, and the proxy delay 0.
+4. The tap's MAC address and MTU as above, its addresses flushed, and **no
+   address on the tap**, since one would be answered on the LAN too.
+5. The tap comes up.
+6. A host route, `QUUX's address/32 dev quux0`.
+7. On the LAN interface: `forwarding` 1 and the proxy delay 0. Their old
+   values are kept in a run file under `/var/run`.
+8. One proxy entry for QUUX's address on the LAN interface, made with
+   BusyBox's `arp -i L -Ds Q L pub`. A proxy entry the LAN interface has for
+   any other address is removed first.
+9. If the LAN interface has an address already, QUUX's must not be that
+   address, and the script undoes the tap and refuses. If QUUX's address is
+   off the LAN interface's subnet, or its prefix differs, the script warns.
+10. The program starts.
+
+`arp_ignore` 0 and `arp_filter` 1 let the board answer QUUX for the board's own
+addresses, but only when the route back to the sender goes out of `quux0`.
+`proxy_arp` 1 on `quux0` answers QUUX for every address routed out of another
+interface: the LAN's machines, its router and anything beyond. The proxy
+delay is 0 so that no first contact waits for a proxied reply.
+
+Nothing else on the board changes. The LAN interface keeps its address, its
+DHCP lease and its routes. It never gets `proxy_arp`, which would answer for
+every address routed out of another interface. The global `ip_forward` is
+never written, because writing it resets every interface's settings.
+
+The stop undoes the start in reverse: it stops the program, removes the proxy
+entry the start made, puts the LAN interface's `forwarding` and proxy delay
+back to the values the start found, and removes the tap, which takes its
+route and its settings with it.
+
+### The LAN interface on each board
+
+The LAN interface is the image's DHCP interface. The script reads it from the
+one `iface X inet dhcp` line in `/etc/network/interfaces`, which Buildroot
+writes from the defconfig's `BR2_SYSTEM_DHCP`. With no such line, or with
+more than one, a LAN tap is refused.
+
+| Board | LAN interface |
+|---|---|
+| Arty Z7-20 | `eth0` |
+| Cora Z7-07S | `eth0` |
+| DE25-Nano | `eth0` |
+| Kria KR260 | `eth1`, the J10C jack (GEM1) |
+
+On a board with more than one Ethernet port, such as the Kria KR260, QUUX is
+reached only through the LAN interface. The proxy entry is on that interface
+alone, and forwarding is on for it and `quux0` alone. The other ports neither
+answer ARP for QUUX nor forward to it. The LAN interface is the one port the
+board's own image brings up with an address, so it is the port the board is
+reached by.
+
+The script never waits for the DHCP lease, which may come after it runs. No
+step needs the LAN interface's address, and step 9 is skipped while the
+interface has none.
+
+### The tap itself
 
 BusyBox's `tunctl` makes `quux0` as a persistent tap. The program opens it
 `IFF_TAP | IFF_NO_PI`, never with a virtio-net header, and never asks for an
@@ -62,7 +153,8 @@ gives them in `fpgarc` (`docs/fpgarc.md`).
                                        prefix length, N from 1 to 30
                                        [default 169.254.100.2/30]
     --ip-gateway A.B.C.D               word 257, the gateway: the tap's address
-                                       [default 169.254.100.1]
+                                       on a host-only tap, the LAN's router
+                                       on a LAN tap [default 169.254.100.1]
     --ethernet-trace                   every frame sent and received, and why
                                        one is refused or dropped, to the log
 
@@ -72,7 +164,9 @@ group bit set is refused. An address that is no host's is refused: in 0/8,
 127/8 or from 224.0.0.0 up, or its subnet's network or broadcast address.
 There is always a gateway, and it is refused when it is 0.0.0.0, QUUX's own
 address, off the address's subnet, or the subnet's network or broadcast
-address. Each refusal is muir's sentence, word for word.
+address. Each refusal is muir's sentence, word for word. The init script
+refuses a mixed card before the program starts, and on a LAN card also an
+address that is not `A.B.C.D/N` with N from 1 to 30.
 
 The program also takes `--no-guard`, which skips the fabric guard, and
 `--log <file>`, which may be given more than once. `cadr_daemon` gives it the
@@ -192,6 +286,12 @@ rules (below).
   and the tap's flags.
 - **The mutation list.** Every record in `qed_mutations.txt` breaks the
   program in one way, and the check must fail on each one.
+
+`make check`'s `fpgarc.pass` holds the init script (`docs/fpgarc.md`, What
+holds all of this). With BusyBox's `tunctl`, `sysctl`, `ip` and `arp` stubbed,
+it compares every call the script makes to a list, line for line and in order:
+a host-only card's start, a LAN card's start and its stop. A mixed card, and a
+LAN card on an image with no DHCP line or with two, must make no call at all.
 
 The model of the page is what the fabric owes, written from muir's device. The
 fabric itself is held to muir with the rest of revision 16's machine side.

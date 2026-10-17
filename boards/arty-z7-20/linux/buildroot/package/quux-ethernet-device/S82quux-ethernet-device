@@ -13,29 +13,54 @@
 #
 # S82, after S81quux-file-device.
 #
-# **THE TAP IS quux0, AND IT IS THIS SCRIPT'S** (the Ethernet contract,
-# section 4): a host-only link between the board's Linux and QUUX, the
-# board's side at `--ip-gateway` on `--ip-address`'s subnet and QUUX at
-# `--ip-address`.  There is no forwarding, no NAT and no LAN route, so QUUX
-# reaches the board's Linux alone and nothing on the LAN reaches QUUX.
-# Before it comes up the tap gets what muir-sim's
-# `quux-taps` gives each tap of the build host's pool:
+# **THE TAP IS quux0, AND IT IS THIS SCRIPT'S.**  QUUX's address decides
+# what it is (the Ethernet contract, section 4):
+#   - an `--ip-address` in 169.254.x.y makes a HOST-ONLY TAP, a link between
+#     the board's Linux and QUUX alone: the board's side at `--ip-gateway` on
+#     `--ip-address`'s subnet, with no forwarding and no proxy entry;
+#   - any other address makes a LAN TAP: the tap has no address, a /32 route
+#     sends QUUX's address to it, and the board answers ARP for that one
+#     address on its LAN interface, by one proxy entry, and forwards between
+#     the two.  QUUX's MAC address and the LAN's broadcasts each stay on their
+#     own side.
+# A card that mixes the two, a link-local address with a gateway that is not
+# or the reverse, is refused before anything is touched, so the board never
+# holds the LAN router's address.  The defaults are muir's and host-only.
+#
+# **THE LAN INTERFACE IS THE IMAGE'S DHCP INTERFACE**, read from the one
+# `iface X inet dhcp` line Buildroot writes into /etc/network/interfaces for
+# BR2_SYSTEM_DHCP; with none or more than one, a LAN tap is refused.  Its
+# address, its lease and its routes are never written.  The lease may come
+# after this script, so nothing here waits for it.
+#
+# Before it comes up the tap gets what muir-sim's `quux-taps` gives a tap:
 #   - IPv6 off, where the kernel has IPv6 at all, so that Linux sends
 #     nothing of IPv6 on the link: QUUX's device takes IPv4 and ARP only;
-#   - arp_ignore 2: Linux answers an ARP request only for the tap's own
-#     address from a sender on the tap's subnet;
+#   - host-only: arp_ignore 2, so Linux answers an ARP request only for the
+#     tap's own address from a sender on the tap's subnet; proxy_arp and
+#     forwarding 0;
+#   - LAN: arp_ignore 0 and arp_filter 1, so the board answers QUUX for its
+#     own addresses only when the route back goes out of the tap; proxy_arp
+#     1, which answers QUUX for every address routed elsewhere; forwarding 1
+#     and the proxy delay 0;
 #   - rp_filter 1, strict;
 #   - the MAC address 02:00:00:00:00:02 on the board's side, and an MTU of
 #     1500, so that no frame is longer than the device's 1,514 bytes.
-# BusyBox's `tunctl` makes it, a persistent tap opened IFF_TAP | IFF_NO_PI,
-# and the program opens it the same way, never with a virtio-net header, so
-# the board's Linux checks every checksum QUUX's device fills in.
+# On the LAN interface a LAN tap sets forwarding 1 and the proxy delay 0, and
+# nothing else: never proxy_arp, which would answer for every address routed
+# out of another interface, and never the global ip_forward, which resets
+# every interface's settings.  The values it found are kept in a run file,
+# and the stop puts them back.
+#
+# BusyBox's `tunctl` makes the tap, a persistent tap opened IFF_TAP |
+# IFF_NO_PI, and the program opens it the same way, never with a virtio-net
+# header, so the board's Linux checks every checksum QUUX's device fills in.
+# BusyBox's `ip neigh` cannot add a proxy entry, so its `arp` does.
 #
 # **THE FLAGS ARE muir's**, with muir's meaning and defaults
 # (`docs/fpgarc.md`): `--ethernet-mac`, `--ip-address`, `--ip-gateway` and
 # `--ethernet-trace`.  The program refuses a value muir refuses, in muir's
-# words; the script only reads `--ip-address`'s prefix and `--ip-gateway` to
-# give the tap its address.
+# words; the script reads `--ip-address` and `--ip-gateway` to make the tap.
 
 PROG=/usr/bin/quux-ethernet-device
 PIDFILE=/var/run/quux-ethernet-device.pid
@@ -50,6 +75,11 @@ DEFAULT_GATEWAY=169.254.100.1
 # Where the kernel keeps a link's IPv6 settings, which a kernel built
 # without IPv6 has not got.
 IPV6_CONF=/proc/sys/net/ipv6/conf
+# Where the image names its DHCP interface, where the kernel lists its proxy
+# entries, and where a LAN tap's start keeps what the stop must undo.
+INTERFACES=/etc/network/interfaces
+PROC_ARP=/proc/net/arp
+LANFILE=/var/run/quux-ethernet-device.lan
 
 RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
@@ -72,22 +102,179 @@ value_of() {
 	echo "${2:-}"
 }
 
-# The tap made, or made again, and set up before it comes up.
-make_tap() {
-	_address=$1
-	_gateway=$2
-	_prefix=${_address##*/}
+# An address in 169.254.x.y, the link-local block (RFC 3927), which no
+# router forwards: the line between a host-only tap and a LAN tap.
+link_local() {
+	case "$1" in
+	169.254.*) return 0 ;;
+	esac
+	return 1
+}
+
+# A.B.C.D, four decimal numbers from 0 to 255.  The program refuses what muir
+# refuses; this only keeps a word that is no address away from the LAN
+# interface.
+dotted_quad() {
+	case "$1" in
+	''|*[!0-9.]*|.*|*.|*..*) return 1 ;;
+	esac
+	_ifs=$IFS
+	IFS=.
+	# shellcheck disable=SC2086
+	set -- $1
+	IFS=$_ifs
+	[ $# -eq 4 ] || return 1
+	for _o; do
+		[ ${#_o} -le 3 ] && [ "$_o" -le 255 ] || return 1
+	done
+}
+
+# A.B.C.D as one number.  Each part loses its leading zeros first, since the
+# shell's arithmetic reads 010 as octal.
+quad_value() {
+	_ifs=$IFS
+	IFS=.
+	# shellcheck disable=SC2086
+	set -- $1
+	IFS=$_ifs
+	_v=0
+	for _o; do
+		_o=${_o#"${_o%%[!0]*}"}
+		_v=$(( _v * 256 + ${_o:-0} ))
+	done
+	echo "$_v"
+}
+
+# $1 and $2 on one subnet of prefix $3.
+same_subnet() {
+	_m=$(( (4294967295 << (32 - $3)) & 4294967295 ))
+	[ $(( $(quad_value "$1") & _m )) -eq $(( $(quad_value "$2") & _m )) ]
+}
+
+# The LAN interface: the X of the image's one `iface X inet dhcp` line.  It
+# says why and fails when there is none or more than one.
+lan_interface() {
+	_l=$(sed -n 's/^[[:space:]]*iface[[:space:]]\{1,\}\([^[:space:]]\{1,\}\)[[:space:]]\{1,\}inet[[:space:]]\{1,\}dhcp[[:space:]]*$/\1/p' \
+		"$INTERFACES" 2>/dev/null)
+	_n=$(printf '%s' "$_l" | grep -c .)
+	if [ "$_n" != 1 ]; then
+		echo "quux-ethernet-device: a LAN tap's LAN interface is the one 'iface X inet dhcp' line of $INTERFACES, and it has $_n; not started." >&2
+		return 1
+	fi
+	echo "$_l"
+}
+
+# A value the run file keeps: $1 the key.
+lan_saved() {
+	sed -n "s/^$1 //p" "$LANFILE" 2>/dev/null
+}
+
+# The tap made, if absent, with IPv6 off where the kernel has it.
+tap_made() {
 	ip link show dev "$TAP" > /dev/null 2>&1 || tunctl -t "$TAP" > /dev/null || return 1
 	if [ -d "$IPV6_CONF/$TAP" ]; then
 		sysctl -q -w "net.ipv6.conf.$TAP.disable_ipv6=1" || return 1
 	fi
-	sysctl -q -w "net.ipv4.conf.$TAP.arp_ignore=2" || return 1
-	sysctl -q -w "net.ipv4.conf.$TAP.rp_filter=1" || return 1
+}
+
+# The tap's MAC address and MTU, with the tap down and its addresses gone.
+tap_link() {
 	ip link set dev "$TAP" down
 	ip link set dev "$TAP" address "$TAP_MAC" mtu "$TAP_MTU" || return 1
 	ip address flush dev "$TAP"
+}
+
+# A host-only tap, made or made again, and set up before it comes up.
+make_tap() {
+	_address=$1
+	_gateway=$2
+	_prefix=${_address##*/}
+	tap_made || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.arp_ignore=2" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.rp_filter=1" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.proxy_arp=0" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.forwarding=0" || return 1
+	tap_link || return 1
 	ip address add "$_gateway/$_prefix" dev "$TAP" || return 1
 	ip link set dev "$TAP" up
+}
+
+# **A LAN TAP, IN THE CONTRACT'S ORDER.**  $1 is QUUX's address, $2 its
+# prefix and $3 the LAN interface, all checked before this is called.  The
+# tap is finished and routed before the LAN interface is touched, and the
+# proxy entry comes last, so the board never answers for QUUX before it can
+# deliver to QUUX.
+make_lan_tap() {
+	_q=$1
+	_l=$3
+	tap_made || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.arp_ignore=0" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.arp_filter=1" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.rp_filter=1" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.proxy_arp=1" || return 1
+	sysctl -q -w "net.ipv4.conf.$TAP.forwarding=1" || return 1
+	sysctl -q -w "net.ipv4.neigh.$TAP.proxy_delay=0" || return 1
+	# No address on the tap: one would be answered on the LAN too.
+	tap_link || return 1
+	ip link set dev "$TAP" up || return 1
+	ip route replace "$_q/32" dev "$TAP" || return 1
+	# What the LAN interface had, kept for the stop.  A start made again
+	# without a stop keeps the first start's values, which are the
+	# interface's own; the values now are this script's.
+	if [ "$(lan_saved lan)" = "$_l" ]; then
+		_forwarding=$(lan_saved forwarding)
+		_delay=$(lan_saved proxy_delay)
+	else
+		_forwarding=$(sysctl -n "net.ipv4.conf.$_l.forwarding") || return 1
+		_delay=$(sysctl -n "net.ipv4.neigh.$_l.proxy_delay") || return 1
+	fi
+	printf 'lan %s\nquux %s\nforwarding %s\nproxy_delay %s\n' "$_l" "$_q" "$_forwarding" "$_delay" \
+		> "$LANFILE" || return 1
+	sysctl -q -w "net.ipv4.conf.$_l.forwarding=1" || return 1
+	sysctl -q -w "net.ipv4.neigh.$_l.proxy_delay=0" || return 1
+	# Any older proxy entry on the LAN interface, for another address, goes:
+	# it would answer again as soon as a route took its address out of the
+	# tap.  An entry is a line flagged ATF_PUBL, 0x8.
+	while read -r _ip _hw _flags _rest; do
+		case "$_flags" in
+		0x*) ;;
+		*) continue ;;
+		esac
+		[ $(( $_flags & 8 )) -ne 0 ] || continue
+		[ "$_ip" != "$_q" ] || continue
+		[ "${_rest##* }" = "$_l" ] || continue
+		arp -i "$_l" -d "$_ip" pub > /dev/null
+	done < "$PROC_ARP"
+	arp -i "$_l" -Ds "$_q" "$_l" pub || return 1
+}
+
+# The LAN interface's address and prefix, A.B.C.D N, or nothing before the
+# lease.
+lan_address() {
+	ip address show dev "$1" 2>/dev/null |
+		sed -n 's/.* inet \([0-9.]\{1,\}\)\/\([0-9]\{1,\}\).*/\1 \2/p' | head -1
+}
+
+# The LAN tap's settings undone in reverse, from the run file: the proxy
+# entry this start made, then the LAN interface's two values as they were.
+lan_undo() {
+	[ -f "$LANFILE" ] || return 0
+	_l=$(lan_saved lan)
+	_q=$(lan_saved quux)
+	[ -n "$_q" ] && arp -i "$_l" -d "$_q" pub > /dev/null
+	_v=$(lan_saved forwarding)
+	[ -n "$_v" ] && sysctl -q -w "net.ipv4.conf.$_l.forwarding=$_v"
+	_v=$(lan_saved proxy_delay)
+	[ -n "$_v" ] && sysctl -q -w "net.ipv4.neigh.$_l.proxy_delay=$_v"
+	rm -f "$LANFILE"
+}
+
+# The tap removed, which takes its route and its settings with it.
+tap_removed() {
+	if ip link show dev "$TAP" > /dev/null 2>&1; then
+		ip link set dev "$TAP" down
+		tunctl -d "$TAP" > /dev/null
+	fi
 }
 
 start() {
@@ -102,28 +289,74 @@ start() {
 	gateway=$(value_of --ip-gateway)
 	[ -n "$address" ] || address=$DEFAULT_ADDRESS
 	[ -n "$gateway" ] || gateway=$DEFAULT_GATEWAY
-	if ! make_tap "$address" "$gateway"; then
-		echo "quux-ethernet-device: the tap $TAP could not be made at $gateway for $address; not started."
+	# **THE MODE IS CERTAIN BEFORE ANYTHING IS TOUCHED.**
+	if link_local "$address" && link_local "$gateway"; then
+		if ! make_tap "$address" "$gateway"; then
+			echo "quux-ethernet-device: the tap $TAP could not be made at $gateway for $address; not started."
+			return 1
+		fi
+		cadr_daemon "$PROG" "$PIDFILE" "$@"
+		return
+	fi
+	if link_local "$address" || link_local "$gateway"; then
+		echo "quux-ethernet-device: --ip-address $address and --ip-gateway $gateway mix a link-local address (169.254.x.y) with one that is not; a host-only tap takes both link-local and a LAN tap neither; not started."
 		return 1
 	fi
-	cadr_daemon "$PROG" "$PIDFILE" "$@"
+	q=${address%/*}
+	n=${address##*/}
+	case "$n" in
+	''|*[!0-9]*) n=0 ;;
+	esac
+	if [ "$q" = "$address" ] || ! dotted_quad "$q" || [ "$n" -lt 1 ] || [ "$n" -gt 30 ] ||
+	   ! dotted_quad "$gateway"; then
+		echo "quux-ethernet-device: --ip-address $address and --ip-gateway $gateway are not A.B.C.D/N, N from 1 to 30, and A.B.C.D; not started."
+		return 1
+	fi
+	lan=$(lan_interface) || return 1
+	if ! make_lan_tap "$q" "$n" "$lan"; then
+		echo "quux-ethernet-device: the LAN tap $TAP could not be made for $address on $lan; undone; not started."
+		lan_undo
+		tap_removed
+		return 1
+	fi
+	# The LAN interface's address, if the lease has come: QUUX's must not be
+	# it, and should be on its subnet at its prefix.
+	own=$(lan_address "$lan")
+	if [ -n "$own" ]; then
+		own_q=${own% *}
+		own_n=${own#* }
+		if [ "$own_q" = "$q" ]; then
+			echo "quux-ethernet-device: --ip-address $address is $lan's own address; the LAN tap is undone; not started."
+			lan_undo
+			tap_removed
+			return 1
+		fi
+		if [ "$own_n" != "$n" ] || ! same_subnet "$q" "$own_q" "$n"; then
+			echo "quux-ethernet-device: warning: --ip-address $address is not on $lan's subnet, $own_q/$own_n; the LAN tap is made all the same."
+		fi
+	fi
+	if ! cadr_daemon "$PROG" "$PIDFILE" "$@"; then
+		lan_undo
+		tap_removed
+		return 1
+	fi
 }
 
 # **A DEVICE THE START DID NOT START IS NOT A STOP THAT FAILED**, the file
-# device's rule: with no pid file the card is asked the start's question.
-# The tap goes with the program: a persistent tap outlives its holder, and
-# the next start makes it afresh.
+# device's rule: with no pid file and no LAN tap's run file the card is asked
+# the start's question.  The stop undoes the start in reverse: the program,
+# then a LAN tap's proxy entry and the LAN interface's values, then the tap,
+# which a persistent tap would otherwise outlive its holder by; the next start
+# makes it afresh.
 stop() {
-	if [ ! -s "$PIDFILE" ] && ! fpgarc_is_quux; then
+	if [ ! -s "$PIDFILE" ] && [ ! -f "$LANFILE" ] && ! fpgarc_is_quux; then
 		echo "Stopping quux-ethernet-device: not running (CADR)"
 		return 0
 	fi
 	cadr_stop quux-ethernet-device "$PIDFILE"
 	_status=$?
-	if ip link show dev "$TAP" > /dev/null 2>&1; then
-		ip link set dev "$TAP" down
-		tunctl -d "$TAP" > /dev/null
-	fi
+	lan_undo
+	tap_removed
 	return $_status
 }
 
