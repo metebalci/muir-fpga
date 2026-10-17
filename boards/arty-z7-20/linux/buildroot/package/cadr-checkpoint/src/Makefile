@@ -12,21 +12,23 @@
 # the build host.
 #
 # **TWO SOURCE LISTS FOR EACH BORROWED LIBRARY, AND WHICH IS FOR WHICH BUILD.**
-# This program borrows three times: /dev/mem, the EMIO tally guard and the
+# This program borrows four times: /dev/mem, the EMIO tally guard and the
 # logging are cadr-common's, the console's readout window is cadr-readout's,
-# and the test that says a file is QUUX's disk is cadr-disk-packs's.
+# the test that says a file is QUUX's disk is cadr-disk-packs's, and the
+# Chaosnet interface's face is cadr-chaosnet's.
 # Buildroot's `local` site method rsyncs only THIS directory into the build
 # tree, so no sibling's files are there at target-build time and a
 # relative include of them would build here and fail under Buildroot. All
-# three packages therefore install a static library and their headers into
+# four packages therefore install a static library and their headers into
 # the staging tree, and this links against them. So:
 #
-#   the target build (`all`)   -lcadr-common -lcadr-readout -lquux-disk, and the headers
+#   the target build (`all`)   -lcadr-common -lcadr-readout -lquux-disk
+#                              -lcadr-chaos-face, and the headers
 #                              out of the staging tree
 #   the host build (`check`)   the same .c files compiled straight from the
 #                              sibling directories, where `..` is real
 #
-# `make all COMMON=host READOUT=host DISK=host` builds the program itself the host way,
+# `make all COMMON=host READOUT=host DISK=host CHAOS=host` builds the program itself the host way,
 # which is how it is compiled here without Buildroot.
 #
 # **NOTHING OF cadr-readout IS COPIED INTO THIS DIRECTORY.**  `readout.c`,
@@ -79,6 +81,21 @@ DISK_INC     :=
 DISK_LINK    := -lquux-disk
 endif
 
+# And the Chaosnet interface's face, `cadr-chaosnet`'s `chaos_face.c`, the
+# same way: the interface's address is read as that program reads it
+# (`pack_bind.h`'s `bind_chaos_address`), and its header goes beside the
+# readout's in the staging tree's `usr/include/cadr`.
+CHAOS        ?= staging
+CHAOS_DIR    := ../../cadr-chaosnet/src
+CHAOS_SRC    := $(CHAOS_DIR)/chaos_face.c
+ifeq ($(CHAOS),host)
+CHAOS_INC    := -I$(CHAOS_DIR)
+CHAOS_LINK   := $(CHAOS_SRC)
+else
+CHAOS_INC    :=
+CHAOS_LINK   := -lcadr-chaos-face
+endif
+
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # The work directory is this directory's own, by its path hashed, as
@@ -104,8 +121,8 @@ CFLAGS += -Wall -Wextra -std=gnu11
 all: $(PROGRAMS)
 
 cadr-checkpoint: cadr-checkpoint.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(READOUT_INC) $(DISK_INC) $(LDFLAGS) -o $@ \
-	    cadr-checkpoint.c $(CORE) $(READOUT_LINK) $(DISK_LINK) $(COMMON_LINK)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(READOUT_INC) $(DISK_INC) $(CHAOS_INC) $(LDFLAGS) -o $@ \
+	    cadr-checkpoint.c $(CORE) $(READOUT_LINK) $(DISK_LINK) $(CHAOS_LINK) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin
@@ -126,10 +143,11 @@ check: $(WORK)/checkpoint_test
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
-                         $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h
+                         $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h \
+                         $(CHAOS_SRC) $(CHAOS_DIR)/chaos_face.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) -o $@ checkpoint_test.c \
-	    $(CORE) $(READOUT_SRC) $(DISK_SRC)
+	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) -I$(CHAOS_DIR) -o $@ \
+	    checkpoint_test.c $(CORE) $(READOUT_SRC) $(DISK_SRC) $(CHAOS_SRC) $(COMMON_DIR)/cadr_log.c
 
 # The mutants. **A ROUND TRIP THAT CANNOT FAIL IS NOT EVIDENCE**, so the same
 # check is built again with each value of `CHK_MUTATE` and `build/checkpoint
@@ -145,17 +163,21 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # as are 49 and 50, the halt's (`readout.c`'s `ro_found`), and 51, the
 # sidecar's resume line; 52 and 53, the Chaosnet interface's fields of
 # version 54, are the CADR's, judged as 1 to 8 are, and 53 is QUUX's too,
-# judged by `build/checkpoint.quux.pass`.
+# judged by `build/checkpoint.quux.pass`; 54 and 55, the CADR's Chaosnet
+# address read off the interface and named on the resume line, which the host
+# check itself must fail on, judged by `build/checkpoint.pass`.
 # A mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                            $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
-                           $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h
+                           $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h \
+                           $(CHAOS_SRC) $(CHAOS_DIR)/chaos_face.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) -o $@ \
-	    checkpoint_test.c $(CORE) $(READOUT_SRC) $(DISK_SRC)
+	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) \
+	    -I$(CHAOS_DIR) -o $@ \
+	    checkpoint_test.c $(CORE) $(READOUT_SRC) $(DISK_SRC) $(CHAOS_SRC) $(COMMON_DIR)/cadr_log.c
 
 clean:
 	rm -f $(PROGRAMS)

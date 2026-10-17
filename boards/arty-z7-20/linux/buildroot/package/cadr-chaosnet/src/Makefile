@@ -69,6 +69,25 @@ install: all
 	install -d $(DESTDIR)/usr/bin
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
+# **THE INTERFACE'S FACE AS A LIBRARY, STAGING ONLY**, for `cadr-checkpoint`,
+# which reads the address the interface holds as this program reads it and
+# must not carry a second copy of that reading.  `cadr-disk-packs`'s shape:
+# the header in a cadr/ directory of its own, so the consumer writes the same
+# quoted include on the host, where the directory is this one.
+LIB := libcadr-chaos-face.a
+AR ?= ar
+
+$(LIB): chaos_face.o
+	$(AR) rcs $@ chaos_face.o
+
+chaos_face.o: chaos_face.c chaos_face.h chaos_packet.h
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) -c -o $@ chaos_face.c
+
+install-staging: $(LIB)
+	install -d $(DESTDIR)/usr/lib $(DESTDIR)/usr/include/cadr
+	install -m 0644 $(LIB) $(DESTDIR)/usr/lib/
+	install -m 0644 chaos_face.h $(DESTDIR)/usr/include/cadr/
+
 # The check.  Its own object directory, so a target build and a host build
 # never share a binary --- and a build artifact that outlived a machine move
 # would name a home directory that no longer exists.
@@ -92,6 +111,6 @@ $(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h chaos_test_model.h 
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ $(TESTS) $(CORE) $(COMMON_SRC)
 
 clean:
-	rm -f $(PROGRAMS)
+	rm -f $(PROGRAMS) $(LIB) chaos_face.o
 
-.PHONY: all install check check-only clean
+.PHONY: all install install-staging check check-only clean

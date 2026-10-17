@@ -126,6 +126,12 @@ struct binding {
 	// SRUN set and muir resumes it running; 0 when it was found halted and
 	// is written so; -1 in a sidecar written before the line was.
 	int running;
+	// **THE CADR's CHAOSNET ADDRESS**, the one the checkpoint's switches
+	// are written at (`bind_chaos_address`): muir's `IoBoard::load` refuses
+	// a resume at any other, so the resume line names it as
+	// `--chaos-address`.  0 on QUUX and in a sidecar written before the
+	// line was, whose resume then names none.
+	unsigned chaos_address;
 };
 
 void bind_init(struct binding *b);
@@ -212,10 +218,29 @@ int bind_revision_packed(unsigned revision);
 int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
 		      unsigned most_units, unsigned *units, char *err, size_t errlen);
 
+// muir's own default Chaosnet address, `chaos::Config::default()`.
+#define BIND_CHAOS_DEFAULT 0177001u
+
+// **THE ADDRESS A CADR's CHECKPOINT IS WRITTEN AT IS THE INTERFACE's OWN.**
+// The fabric's Chaosnet interface holds the sixteen address switches in a
+// register, which `cadr-chaosnet` sets from the card's flags, and muir
+// refuses to resume a checkpoint whose switches are not the address it is
+// given.  So the interface is read, as `cadr-chaosnet` reads it: `f` is its
+// face, opened with `chaos_face_open` at `CHAOS_REG_BASE` (NULL when it could
+// not be opened), `chaos_face_ident` must read "CHAO", and the switches are
+// `chaos_face_address`.  `asked` is 1 when `--chaos-address` gave
+// `asked_address`, which wins; when it is not the interface's, `msg` says so.
+// An interface that cannot be read, or whose switches read 0 (nothing has
+// set them), gives the address asked or else muir's default, and `msg` says
+// that too.  Returns the address; `msg` holds one line to say, or is empty.
+struct chaos_face;
+unsigned bind_chaos_address(struct chaos_face *f, int asked, unsigned asked_address,
+			    char *msg, size_t n);
+
 // The command a resume takes, into `out`.  The packs in unit order, the
 // checkpoint last, which is the order muir's own usage puts them in.  It
 // names everything muir needs to take the file as the board ran it: on the
-// CADR the timing model and the boards; on QUUX the revision, as the
+// CADR the timing model, the boards and the Chaosnet address; on QUUX the revision, as the
 // environment's `MUIR_QUUX_REVISION=` before the command, K and the video
 // controller's size.
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);

@@ -298,17 +298,22 @@ anywhere in that stream would break it.
     boards: 32
     microcycles: 1234567890
     ns: 6172839506
+    chaos-address: 177201
     running: yes
     machine-halted-first: yes
     packs-program-stopped: unknown
     packs: 1
     pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
-    resume: cadr --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
+    resume: cadr --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --chaos-address 177201 --resume muir-20260911-193000.chk
 
 `running` says whether the file records the machine running (`yes`, it was
 running when the program halted it) or halted (`no`). The `resume` line is
 the command, to be run as written, that resumes the file as the board ran
-it. A QUUX checkpoint's sidecar also carries the revision, the
+it. A CADR checkpoint's sidecar carries the Chaosnet address the checkpoint
+was written at, and its line names it as `--chaos-address`, since muir refuses
+to resume a checkpoint at any other address. A sidecar written before the
+address was named carries no `chaos-address`, and its line names none.
+A QUUX checkpoint's sidecar also carries the revision, the
 microcycle's length in ticks, K, and the video controller's size, and its
 line names all three, the revision as the environment's `MUIR_QUUX_REVISION`
 before the command, since muir's `quux` refuses a checkpoint of another
@@ -386,7 +391,7 @@ The list, with what is written and what it costs a resume.
 | the display's mode register, its sync RAM, its vertical-interrupt flag | clear | the **picture** is read, out of DDR, word for word, and so is **the color map**, off the console face's page 4. Register 4 is write only on the Xbus, the RAMs being off the board, so that page is the only way to ask what a color is, and the fabric keeps the sixteen entries as muir does. The sync program is 4,096 bytes and no readout reaches it, so a resumed machine runs MIT's PROM from its power-on instant; the flag is set again at the next frame |
 | the I/O board, whole: the keyboard, the mouse, the sixty-cycle interval, and the microsecond clock | idle, with the mouse's two quadrature phases at 2, which is what a fresh mouse has | **the microsecond clock is the one that matters.** `(TIME)` is that counter shifted, and off it hang the wall clock, `PROCESS-SLEEP`, every Chaosnet timer and the scheduler, so a resumed machine's time of day starts again from zero. Nothing it computes depends on the clock being continuous; what it will see is one very long or very short interval at the seam |
 | the serial line's registers | idle | the CADR's serial line is in `cadr_io_board.sv` and has no readout |
-| the Chaosnet interface | idle, with its switches at the address `--chaos-address` names | `IoBoard::load` refuses a checkpoint whose address is not the resuming machine's, so the two have to agree; muir's own default is used unless told otherwise. **The address is OCTAL**, as muir's own flag takes it — see below |
+| the Chaosnet interface | idle, with its switches at the address the fabric's interface holds, or the one `--chaos-address` names | `IoBoard::load` refuses a checkpoint whose address is not the resuming machine's, so the two have to agree, and the resume line names it. The program reads the interface's address as `cadr-chaosnet` reads it; muir's own default is used only when the interface cannot be read or its switches read 0. **The address is OCTAL**, as muir's own flag takes it — see below |
 | the bus cycle in flight — the address and word in the air, the responder, three absolute deadlines | idle | nothing, and this is what makes the whole thing possible: muir's own rule for a netlist checkpoint is that it is taken "between cycles with nothing in flight", and a machine the console has halted at a microcycle boundary is such a point |
 | the bus interface's memory-board refresh model and its own state | a machine that has just been built | **the resumed machine's clock is not the board's.** The elapsed time is real — it is the fabric's own tick count on the 10 ns grid, `CHK_GRID_NS` — but the refresh one-shot fires once, early, for nothing. This is the one place the file knowingly hands muir a machine that is not bit-for-bit the board's |
 | how long the machine has stalled, and how many bus cycles it has made | zero | nothing computes from either; they are totals muir keeps |
@@ -618,6 +623,29 @@ fabric's power-on convention, which nothing fetches); every other byte is
 muir's. A run muir refuses, a file device with a command queued, the
 board's writer must refuse too. The mutation records `quux15-readout-*`,
 `quux15-checkpoint-*` and the devices' time words are caught there.
+
+## The CADR's address is the interface's own
+
+On the CADR the program reads the address the fabric's Chaosnet interface
+holds, as `cadr-chaosnet` reads it: the interface's face at its base, its
+identity word, then the switches, which `cadr-chaosnet` set when it started.
+The checkpoint's switches are written at that address, and the sidecar's
+resume line names it. A checkpoint of a board at 177201 written at muir's
+default, 177001, or a resume line naming no address, is refused: "switches
+read 177201, this machine's 177001".
+
+`--chaos-address` still wins. When it differs from the interface's address,
+the program says so, naming both, because muir would refuse the checkpoint
+at the board's own address. When the interface cannot be read, or its
+switches read 0 because nothing has set them, the program says so and writes
+the address asked, or muir's default.
+
+QUUX has no Chaosnet. Its checkpoint keeps the address asked, or muir's
+default, and its resume line names none.
+
+The package's check holds all of this on a model of the interface's face.
+Mutant 54 takes muir's default whatever the interface holds, and mutant 55
+drops the address from the resume line; the check fails on both.
 
 ## `--chaos-address` is octal, as muir's is
 

@@ -49,7 +49,9 @@
 // `--already-halted` takes the machine as running when the count still
 // stands there (`bind_halted_here`).  The sidecar's `running:` line says
 // which, and its resume line names what muir needs to take the file as the
-// board ran it: on QUUX the revision and K.
+// board ran it: on QUUX the revision and K, and on the CADR its Chaosnet
+// address, which is the one the fabric's interface holds unless
+// `--chaos-address` says otherwise (`bind_chaos_address`).
 //
 // **AND THE PACKS ARE READ AT THE SAME INSTANT AS THE MACHINE.**  A
 // checkpoint carries the blocks a run has written and never the disk, so a
@@ -85,6 +87,7 @@
 #include "cadr/cadr_log.h"
 #include "cadr/cadr_mem.h"
 #include "cadr_image.h"
+#include "chaos_face.h"
 #include "chk.h"
 #include "chk_rtl.h"
 #include "pack_bind.h"
@@ -99,8 +102,6 @@
 // QUUX revision 13's main memory, packed storage below the display.
 #define DDR_MAIN13_BASE  CADR_BOARD_QUUX13_MAIN_BASE
 
-// muir's own default Chaosnet address, `chaos::Config::default()`.
-#define DEFAULT_CHAOS_ADDRESS 0177001u
 // **THE MACHINE'S OWN MAIN MEMORY IS THE CONSOLE'S PAGE 2 WORD 37**, in
 // 64K-word units: the CADR's memory boards, muir's `--main-memory-boards`, or
 // QUUX's amount, muir's `--main-memory-size`, sixteen units a megaword; the
@@ -329,7 +330,8 @@ int main(int argc, char **argv)
 	unsigned boards = 0;	/* 64K-word units: the machine's own unless a flag says */
 	const char *boards_arg = NULL;	/* the CADR's --boards */
 	const char *size_arg = NULL;	/* QUUX's --main-memory-size */
-	unsigned long chaos = DEFAULT_CHAOS_ADDRESS;
+	unsigned long chaos = BIND_CHAOS_DEFAULT;
+	int chaos_asked = 0;
 	int want_display = 1, leave_halted = 0, guard = 1;
 	int already_halted = 0, no_packs = 0, halt_only = 0, start_only = 0;
 	int packs_stopped = 0;
@@ -381,6 +383,7 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			chaos = v;
+			chaos_asked = 1;
 		} else if (!strcmp(a, "--no-display")) {
 			want_display = 0;
 		} else if (!strcmp(a, "--packs-stopped")) {
@@ -550,6 +553,26 @@ int main(int argc, char **argv)
 		}
 		sync_k = k;
 		(void)l;
+	}
+	// **THE CADR's CHAOSNET ADDRESS IS THE INTERFACE's OWN**, read as
+	// `cadr-chaosnet` reads it: the guard, the interface's face at
+	// `CHAOS_REG_BASE`, "CHAO", then the switches.  muir refuses to resume a
+	// checkpoint at any address but its switches', so the file and the
+	// resume line carry this one (`bind_chaos_address`).  QUUX has no
+	// Chaosnet, and its checkpoint keeps the address asked or muir's default.
+	if (!quux) {
+		struct chaos_face cf;
+		int opened = 0;
+		if ((!guard || cadr_guard(fd, "the Chaosnet interface") == 0) &&
+		    chaos_face_open(&cf, fd, CHAOS_REG_BASE) == 0)
+			opened = 1;
+		char msg[512];
+		chaos = bind_chaos_address(opened ? &cf : NULL, chaos_asked, (unsigned)chaos,
+					   msg, sizeof msg);
+		if (msg[0])
+			say("%s", msg);
+		if (opened)
+			chaos_face_close(&cf);
 	}
 	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
 	// words, sizes and main memory are its own (contract G2 appendix A1.13),
@@ -904,6 +927,7 @@ int main(int argc, char **argv)
 	bind.video_width = quux ? img.video_width : 0u;
 	bind.video_height = quux ? img.video_height : 0u;
 	bind.running = ran;
+	bind.chaos_address = quux ? 0u : (unsigned)chaos;
 	bind.microcycles = img.cycles;
 	// Revision 15's instant is in units of 0.5 ns.
 	bind.ns = img.rev15 ? img.q15.ns / 2u : (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;

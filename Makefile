@@ -5519,6 +5519,16 @@ CHECKPOINT_HALT_MUTANTS := 49 50
 # back, and the mutant, the line naming the board's path again, must fail
 # there.
 CHECKPOINT_SIDECAR_MUTANTS := 51
+# **THE CADR's CHAOSNET ADDRESS, AND ITS MUTANTS, 54 AND 55.**  muir refuses
+# to resume a checkpoint at any address but the one its switches carry, so
+# the CADR's are the address the fabric's interface holds, read as
+# `cadr-chaosnet` reads it (`pack_bind.c`'s `bind_chaos_address`), and the
+# resume line names it.  The host check holds both on a model of the
+# interface's face (`checkpoint_test.c`'s `chaos_address_check`), and each
+# mutant must fail there: the interface not read, and the line without the
+# address.
+CHECKPOINT_CHAOS_MUTANTS := 54 55
+CHECKPOINT_CHAOS_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -5547,11 +5557,12 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(READOUT_SRC)/cadr_image.h \
                           $(DISK_PACKS_SRC)/quux_disk.c $(DISK_PACKS_SRC)/quux_disk.h \
                           $(DISK_PACKS_SRC)/q8_disks.sha256 \
+                          $(CHECKPOINT_CHAOS_SRC)/chaos_face.c $(CHECKPOINT_CHAOS_SRC)/chaos_face.h \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
 	    Q13CHK=$(CHECKPOINT_WORK)/quux13.chk \
 	    Q13HDCHK=$(CHECKPOINT_WORK)/quux13hd.chk Q14CHK=$(CHECKPOINT_WORK)/quux14.chk Q8_DISKS=$(Q8_DISKS)
-	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
+	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host CHAOS=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir-sim/Cargo.toml \
@@ -5630,6 +5641,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the sidecar's resume line: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the sidecar's resume line --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_CHAOS_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the Chaosnet address's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^checkpoint: FAIL: the Chaosnet address: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the Chaosnet address: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the Chaosnet address's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 
@@ -5881,6 +5902,7 @@ $(BUILD)/disk_packs.pass: $(wildcard $(DISK_PACKS_SRC)/*.c) $(wildcard $(DISK_PA
 # was gated by whoever remembered, which is the shape this file already
 # records for the terminal's own tests.
 $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
+                        $(CHAOSNET_SRC)/Makefile \
                         $(wildcard $(CHAOSNET_SRC)/*.h) \
                         $(wildcard $(COMMON_SRC)/cadr/*.h) \
                         $(CHAOSNET_SRC)/chaos_mutations.txt \
@@ -5891,7 +5913,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(COMMON_SRC)/fault.sh \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
-	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
+	$(MAKE) -C $(CHAOSNET_SRC) all libcadr-chaos-face.a COMMON=host
 	$(MAKE) -C $(CHAOSNET_SRC) clean
 	@echo "chaosnet: the program builds, its packet, its register face and CHUDP agree with muir, and its init script waits for the network"
 	@touch $@
@@ -6436,7 +6458,7 @@ $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
 	@rm -rf $(DE25_LINUX_WORK) && mkdir -p $(DE25_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(DE25_LINUX_WORK)/package
 	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
-	    MAKEFLAGS= $(BR_MAKE) -s -C $(DE25_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host \
+	    MAKEFLAGS= $(BR_MAKE) -s -C $(DE25_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host CHAOS=host \
 	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_DE25_NANO"; \
 	    cp $(DE25_LINUX_WORK)/package/$$p/src/$$p $(DE25_LINUX_WORK)/bin/; \
 	done
@@ -6521,7 +6543,7 @@ $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
 	@rm -rf $(KR260_LINUX_WORK) && mkdir -p $(KR260_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(KR260_LINUX_WORK)/package
 	@set -e; for p in $(DE25_LINUX_PROGRAMS) cadr-displayport; do \
-	    MAKEFLAGS= $(BR_MAKE) -s -C $(KR260_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host \
+	    MAKEFLAGS= $(BR_MAKE) -s -C $(KR260_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host CHAOS=host \
 	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_KR260"; \
 	    cp $(KR260_LINUX_WORK)/package/$$p/src/$$p $(KR260_LINUX_WORK)/bin/; \
 	done

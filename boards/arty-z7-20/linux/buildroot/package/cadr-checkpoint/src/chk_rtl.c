@@ -400,7 +400,9 @@ static void emit_serial(struct chk *w)
 // `Machine::with_memory_boards` plugs one in and `IoBoard::load` refuses a
 // checkpoint that has none where the machine does --- and then refuses again
 // if the switches disagree with the address the resume was given.  So this is
-// written at muir's own default and `--chaos-address` moves it.
+// written at the address the program declares: on the CADR the one the
+// interface's register holds (`pack_bind.h`'s `bind_chaos_address`), and
+// `--chaos-address` moves it; on QUUX muir's own default.
 static void emit_chaos(struct chk *w, const struct chk_declared *d)
 {
 	chk_u16(w, (uint16_t)d->chaos_address);	/* DECLARED */
@@ -1627,8 +1629,9 @@ static const char *const kMissing[] = {
 	"    interval and THE MICROSECOND CLOCK, which is the CADR's whole",
 	"    timebase.  A resumed machine's time of day starts again.",
 	"the serial line's registers and the Chaosnet interface's.  The",
-	"    Chaosnet's switches are written at the address --chaos-address",
-	"    names, because a resume refuses a checkpoint that disagrees.",
+	"    Chaosnet's switches are written at the address the interface",
+	"    holds, or the one --chaos-address names, because a resume refuses",
+	"    a checkpoint that disagrees; the resume line names it.",
 	"the bus cycle in flight, if there was one: the address and word in the",
 	"    air, the responder and three absolute deadlines.  The file is of a",
 	"    HALTED machine at a microcycle boundary, where there is none.",
@@ -1910,6 +1913,10 @@ const char *chk_rtl_mutation(void)
 	return "the Chaosnet interface's six bytes of version 54 left out, version 49's interface";
 #elif CHK_MUTATE == 53
 	return "the Chaosnet interface's read register written 1, where a fresh interface's is 0";
+#elif CHK_MUTATE == 54
+	return "the CADR's Chaosnet address taken as muir's default, whatever the interface holds";
+#elif CHK_MUTATE == 55
+	return "the CADR's resume line without its Chaosnet address";
 #else
 	return NULL;
 #endif

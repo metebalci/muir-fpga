@@ -37,9 +37,17 @@ CADR_CHAOSNET_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-chaosnet/src
 CADR_CHAOSNET_SITE_METHOD = local
 CADR_CHAOSNET_LICENSE = AGPL-3.0-or-later
 CADR_CHAOSNET_DEPENDENCIES = cadr-common
+# **AND THE INTERFACE'S FACE, STAGED**, a static library and `chaos_face.h`,
+# which `cadr-checkpoint` links to read the address the interface holds as
+# this program reads it.
+CADR_CHAOSNET_INSTALL_STAGING = YES
 
 define CADR_CHAOSNET_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
+endef
+
+define CADR_CHAOSNET_INSTALL_STAGING_CMDS
+	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) DESTDIR=$(STAGING_DIR) install-staging
 endef
 
 define CADR_CHAOSNET_INSTALL_TARGET_CMDS

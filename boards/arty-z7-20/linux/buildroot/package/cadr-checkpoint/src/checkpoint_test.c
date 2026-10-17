@@ -29,8 +29,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "cadr/cadr_mem.h"
 #include "cadr_image.h"
 #include "chk.h"
+#include "chaos_face.h"
 #include "chk_rtl.h"
 #include "pack_bind.h"
 #include "sha256.h"
@@ -1046,6 +1048,192 @@ static void memory_words_check(const char *side)
 	}
 }
 
+// ---- the CADR's Chaosnet address, the interface's own --------------------
+//
+// **THE ADDRESS IS READ OFF THE INTERFACE, AS `cadr-chaosnet` READS IT.**  The
+// board's interface holds the switches `cadr-chaosnet` set, and muir refuses
+// to resume a checkpoint at any address but the one its switches carry: a
+// checkpoint written at muir's default on a board at 177201, and a resume
+// line naming no address, was refused on the board ("switches read 177201,
+// this machine's 177001").  So the face below is the interface's register
+// table as `chaos_face.h` gives it, and the checkpoint, the sidecar and its
+// resume line are each held to carry the address it holds.  Every failure
+// prints one line under one prefix, which mutants 54 and 55 are judged by.
+
+struct chaos_model {
+	uint32_t ident, myaddr;
+	unsigned reads;
+};
+
+static uint32_t chaos_model_read(struct chaos_face *f, unsigned word)
+{
+	struct chaos_model *m = f->ctx;
+	++m->reads;
+	if (word == CHAOS_IDENT)
+		return m->ident;
+	if (word == CHAOS_MYADDR)
+		return m->myaddr;
+	return 0;
+}
+
+static void chaos_model_write(struct chaos_face *f, unsigned word, uint32_t v)
+{
+	(void)f;
+	(void)word;
+	(void)v;
+}
+
+static void chaos_fail(const char *what, unsigned long long got, unsigned long long want)
+{
+	fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: %s is %llo, wanting %llo\n",
+		what, got, want);
+	++bad;
+}
+
+static unsigned chaos_resolve(uint32_t ident, uint32_t myaddr, int asked, unsigned asked_address,
+			      char *msg, size_t n)
+{
+	struct chaos_model m = { ident, myaddr, 0 };
+	struct chaos_face f = { chaos_model_read, chaos_model_write, &m };
+	return bind_chaos_address(&f, asked, asked_address, msg, n);
+}
+
+static void chaos_address_check(const struct cadr_image *img, const struct chk_declared *decl,
+				const char *work)
+{
+	char msg[512];
+
+	// 1. The interface holds 177201 and no flag is given: 177201.
+	const unsigned a = chaos_resolve(CHAOS_IDENT_WORD, 0177201u, 0, 0, msg, sizeof msg);
+	if (a != 0177201u)
+		chaos_fail("the interface's 177201 with no --chaos-address", a, 0177201u);
+
+	// ... and the checkpoint carries it: the body at that address is one
+	// byte apart from the body at muir's default, and that byte is the
+	// switches' low byte, 0201.
+	{
+		struct chk_declared d = *decl;
+		d.chaos_address = BIND_CHAOS_DEFAULT;
+		struct chk b0, b1;
+		body_of(img, &d, &b0);
+		d.chaos_address = a;
+		body_of(img, &d, &b1);
+		const long at = one_byte_apart(&b0, &b1);
+		if (at < 0 || b1.p[at] != 0201u || b0.p[at] != 0001u)
+			chaos_fail("the checkpoint's switches, the byte apart from 177001's",
+				   at < 0 ? 0 : b1.p[at], 0201u);
+		chk_free(&b0);
+		chk_free(&b1);
+	}
+
+	// ... and the resume line names it, on the board and from the sidecar
+	// read back, as `--verify` prints it.
+	{
+		struct binding b, rd;
+		bind_init(&b);
+		b.boards = 32;
+		b.chaos_address = a;
+		b.running = 1;
+		snprintf(b.checkpoint, sizeof b.checkpoint, "/mnt/card/c.chk");
+		char cmd[4096], side[400];
+		static const char want[] = "cadr --rtl --timing-model fpga --main-memory-boards 32 "
+			"--chaos-address 177201 --resume c.chk";
+		bind_resume_command(&b, "c.chk", cmd, sizeof cmd);
+		if (strcmp(cmd, want) != 0) {
+			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the resume line is [%s], "
+				"wanting [%s]\n", cmd, want);
+			++bad;
+		}
+		snprintf(side, sizeof side, "%s/chaos.chk%s", work, BIND_SUFFIX);
+		char err[1024] = "";
+		bind_init(&rd);
+		if (bind_write(&b, side, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
+			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the sidecar: %s\n", err);
+			++bad;
+		} else {
+			// The read back goes down `chk_chaos_address`, which mutant 8
+			// replaces; that mutant is judged by the file muir refuses,
+			// and the parser's own spellings are skipped under it too.
+#if CHK_MUTATE != 8
+			if (rd.chaos_address != 0177201u)
+				chaos_fail("the sidecar's address read back", rd.chaos_address, 0177201u);
+			bind_resume_command(&rd, "c.chk", cmd, sizeof cmd);
+			if (strcmp(cmd, want) != 0) {
+				fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the resume line "
+					"from the sidecar read back is [%s], wanting [%s]\n", cmd, want);
+				++bad;
+			}
+#endif
+			if (sidecar_has(side, "chaos-address: 177201", 1) != 1)
+				chaos_fail("the sidecar's chaos-address lines", 0, 1);
+			if (sidecar_has(side, "resume: ./c.chk", 0) != 0 ||
+			    sidecar_has(side, "resume: cadr --rtl --timing-model fpga --main-memory-boards 32 "
+					"--chaos-address 177201 --resume ./c.chk", 1) != 1)
+				chaos_fail("the sidecar's resume line with the address", 0, 1);
+		}
+		remove(side);
+		// A sidecar written before the line names no address.
+		bind_init(&rd);
+		FILE *sf = fopen(side, "w");
+		if (sf) {
+			fprintf(sf, "format: %s\nmachine: cadr\nboards: 32\n", BIND_FORMAT);
+			fclose(sf);
+		}
+		if (bind_read(&rd, side, err, sizeof err) != 0 || rd.chaos_address != 0)
+			chaos_fail("an old sidecar's address", rd.chaos_address, 0);
+		remove(side);
+		// QUUX's line is as it was: QUUX has no Chaosnet.
+		b.quux = 1;
+		b.revision = 15;
+		b.sync_k = 0;
+		bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+		if (strstr(cmd, "--chaos-address")) {
+			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: QUUX's resume line "
+				"names one: [%s]\n", cmd);
+			++bad;
+		}
+	}
+
+	// 2. --chaos-address the interface's own: that, and nothing to say of
+	// a disagreement.
+	unsigned got = chaos_resolve(CHAOS_IDENT_WORD, 0177201u, 1, 0177201u, msg, sizeof msg);
+	if (got != 0177201u)
+		chaos_fail("--chaos-address 177201 on an interface at 177201", got, 0177201u);
+	if (strstr(msg, "177001") || strstr(msg, "refuse")) {
+		fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: an agreeing flag said [%s]\n", msg);
+		++bad;
+	}
+
+	// 3. --chaos-address another: the flag wins, and the program says the
+	// two disagree, naming both.
+	got = chaos_resolve(CHAOS_IDENT_WORD, 0177201u, 1, 0177100u, msg, sizeof msg);
+	if (got != 0177100u)
+		chaos_fail("--chaos-address 177100 on an interface at 177201", got, 0177100u);
+	if (!strstr(msg, "177100") || !strstr(msg, "177201")) {
+		fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: a disagreeing flag said [%s], "
+			"which names not both 177100 and 177201\n", msg);
+		++bad;
+	}
+
+	// 4. An interface that is not there, or whose switches nothing set:
+	// the flag, or else muir's default, and said.
+	got = chaos_resolve(CADR_IDENT_NONE, 0177201u, 0, 0, msg, sizeof msg);
+	if (got != BIND_CHAOS_DEFAULT || !msg[0])
+		chaos_fail("no interface (\"NONE\") and no flag", got, BIND_CHAOS_DEFAULT);
+	got = chaos_resolve(CHAOS_IDENT_WORD, 0, 0, 0, msg, sizeof msg);
+	if (got != BIND_CHAOS_DEFAULT || !msg[0])
+		chaos_fail("switches at 0 and no flag", got, BIND_CHAOS_DEFAULT);
+	got = chaos_resolve(CHAOS_IDENT_WORD, 0, 1, 0177100u, msg, sizeof msg);
+	if (got != 0177100u)
+		chaos_fail("switches at 0 and --chaos-address 177100", got, 0177100u);
+	got = bind_chaos_address(NULL, 0, 0, msg, sizeof msg);
+	if (got != BIND_CHAOS_DEFAULT || !msg[0])
+		chaos_fail("no face at all and no flag", got, BIND_CHAOS_DEFAULT);
+
+	printf("checkpoint: the CADR's Chaosnet address is the interface's own, 177201 in the "
+	       "checkpoint and on the resume line, and a flag that disagrees is said\n");
+}
+
 int main(int argc, char **argv)
 {
 	// **THE SCRATCH DIRECTORY IS NOT OPTIONAL.**  Half of what this file
@@ -1856,6 +2044,7 @@ int main(int argc, char **argv)
 	// reads RUN and SRUN from, and not on whatever the function touched.
 	if (run_state_check(&img, &decl, "the CADR") != 0)
 		return 1;
+	chaos_address_check(&img, &decl, work);
 
 	if (out) {
 		if (chk_write_file(out, "rtl", 1, &body) != 0) {

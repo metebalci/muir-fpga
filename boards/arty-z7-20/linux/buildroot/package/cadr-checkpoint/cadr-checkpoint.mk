@@ -44,11 +44,16 @@
 # build/checkpoint.pass` at the repository root, where muir opens the file
 # this writes and writes its own, and the two are compared byte for byte.
 
+# **AND THE CHAOSNET INTERFACE'S FACE IS cadr-chaosnet's**, staged the same
+# way: the CADR's checkpoint is written at the address the interface holds,
+# read as that program reads it, and its header joins the readout's in
+# `STAGING_DIR/usr/include/cadr`.
+
 CADR_CHECKPOINT_VERSION = 0
 CADR_CHECKPOINT_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-checkpoint/src
 CADR_CHECKPOINT_SITE_METHOD = local
 CADR_CHECKPOINT_LICENSE = AGPL-3.0-or-later
-CADR_CHECKPOINT_DEPENDENCIES = cadr-common cadr-readout cadr-disk-packs
+CADR_CHECKPOINT_DEPENDENCIES = cadr-common cadr-readout cadr-disk-packs cadr-chaosnet
 
 define CADR_CHECKPOINT_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) \

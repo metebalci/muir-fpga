@@ -4,6 +4,8 @@
 // The pack binding, made and read back.  `pack_bind.h` says what it is for.
 
 #include "pack_bind.h"
+#include "chaos_face.h"
+#include "chk_rtl.h"
 #include "quux_disk.h"
 #include "readout.h"
 
@@ -280,6 +282,14 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 	if (!b->quux)
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 				       " --main-memory-boards %u", b->boards);
+	// **AND THE CADR's CHAOSNET ADDRESS**, the checkpoint's switches, which
+	// muir refuses a resume at any other address than (`bind_chaos_address`).
+	// QUUX has no Chaosnet, and its line names none.
+#if CHK_MUTATE != 55
+	if (!b->quux && b->chaos_address)
+		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+				       " --chaos-address %o", b->chaos_address);
+#endif
 	snprintf(out + at, at < n ? n - at : 0, " --resume %s", chk);
 }
 
@@ -368,6 +378,8 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 		if (b->video_width)
 			fprintf(f, "video-size: %ux%u\n", b->video_width, b->video_height);
 	}
+	if (!b->quux && b->chaos_address)
+		fprintf(f, "chaos-address: %o\n", b->chaos_address);
 	fprintf(f, "running: %s\n", b->running > 0 ? "yes" : "no");
 	fprintf(f, "machine-halted-first: %s\n", b->machine_halted_first ? "yes" : "no");
 	fprintf(f, "packs-program-stopped: %s\n", b->packs_program_stopped ? "yes" : "unknown");
@@ -622,6 +634,15 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			}
 			b->video_width = w;
 			b->video_height = h;
+		} else if ((v = field(line, "chaos-address")) != NULL) {
+			unsigned a = 0;
+			if (chk_chaos_address(v, &a) != 0) {
+				note(err, errlen, "%s: chaos-address \"%s\", which is not an "
+				     "octal Chaosnet address", path, v);
+				fclose(f);
+				return -1;
+			}
+			b->chaos_address = a;
 		} else if ((v = field(line, "running")) != NULL) {
 			b->running = strcmp(v, "yes") == 0;
 		} else if ((v = field(line, "pack")) != NULL) {
@@ -701,4 +722,55 @@ int bind_verify(struct binding *b, int *chk_moved, char *err, size_t errlen)
 		}
 	}
 	return moved;
+}
+
+
+// --- the CADR's Chaosnet address -------------------------------------------
+
+unsigned bind_chaos_address(struct chaos_face *f, int asked, unsigned asked_address,
+			    char *msg, size_t n)
+{
+	if (n)
+		msg[0] = '\0';
+	// `cadr-chaosnet`'s reading: "CHAO" first, before any other word is
+	// believed, then the switches.  `chaos_face_ident` says what it found
+	// when it is not the interface.
+	int have = 0;
+	uint16_t holds = 0;
+	if (f && chaos_face_ident(f) == 0) {
+		have = 1;
+		holds = chaos_face_address(f);
+	}
+#if CHK_MUTATE == 54
+	have = 0;
+#endif
+	const unsigned fallback = asked ? asked_address : BIND_CHAOS_DEFAULT;
+	if (!have) {
+		note(msg, n, "the Chaosnet interface cannot be read, so the checkpoint is "
+		     "written at %o, %s", fallback,
+		     asked ? "as --chaos-address asks" : "muir's own default");
+		return fallback;
+	}
+	if (holds == 0) {
+		note(msg, n, "the Chaosnet interface's switches read 0: nothing has set them "
+		     "(cadr-chaosnet sets them when it starts), so the checkpoint is "
+		     "written at %o, %s", fallback,
+		     asked ? "as --chaos-address asks" : "muir's own default");
+		return fallback;
+	}
+	if (!asked) {
+		note(msg, n, "the Chaosnet interface holds address %o, and the checkpoint "
+		     "is written at it", holds);
+		return holds;
+	}
+	if (asked_address == holds) {
+		note(msg, n, "the Chaosnet interface holds address %o, as --chaos-address "
+		     "says", holds);
+		return holds;
+	}
+	note(msg, n, "--chaos-address %o, and the Chaosnet interface holds %o: the "
+	     "checkpoint is written at %o, as asked, and muir resumes it only at %o, "
+	     "refusing it at the board's own %o", asked_address, holds, asked_address,
+	     asked_address, holds);
+	return asked_address;
 }
