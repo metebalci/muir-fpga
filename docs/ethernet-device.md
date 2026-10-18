@@ -277,9 +277,29 @@ file device's 164. A TX_CONS or RX_CONS write is accepted when the device is
 enabled, the epoch is the current one and the index moves forward no further
 than its producer, and RX_CONS by at least one. It lands the clock after its
 write, as a file device completion does, and a disable in the clock between
-drops it. At RX_CONS's landing the fabric sweeps the whole cache, as at a file
-device completion, before the machine sees 251 move. A COUNTS write lands at
-its edge.
+drops it. A COUNTS write lands at its edge.
+
+**Line clearing, and 251 after it.** RX_CONS's landing moves a target, and the
+host reads RX_CONS back as that target at once. The machine reads 251, which
+follows the target one entry at a time. For each entry the fabric's engine
+reads the entry's three words from main memory: the buffer, its room and the
+length. It reads them over block-disk's transfer channel while no transfer
+holds it, after dropping the line that channel holds, so the words are main
+memory's. With n the length clamped to the room and to 1,514 bytes, it clears
+the cache line of every word from the buffer's first to its ceil(n / 4)th, and
+then the entry's own line, one set a clock: at most 49. Only then does 251 move
+by one. Lookups never wait for the engine. A disable or a reset stops it, and
+the halt's drain waits until it is done.
+
+With nothing else on the transfer channel or the cache's valid maps, 251 moves
+at the edge of the clock T = R + 9 + L after the landing's clock, where R is
+the port's read latency in clocks at the board's period (the first figure of a
+trace's `# port` line) and L the number of the buffer's lines cleared (0 when
+n is 0). So 251 reads the new index from clock T + 1 after the landing. At 10 ns, with R = 35, a 42-byte frame in an
+aligned buffer gives T = 46, and a 1,514-byte one T = 92. A walk holding the
+channel, a processor's fill holding the port's fill, and a fill's install in
+the clock of a clear each add their clocks. muir sweeps the whole cache at the
+landing instead, so its 251 moves at the landing's edge.
 
 ## What holds it
 
@@ -325,5 +345,12 @@ register 240 to 257 must read as muir's. Then it checks each rule of the
 host's side with the case just outside it. The core's `ethernet` group at
 revision 16 (`golden/src/quux15_ethernet.rs`, `quux15_ethernet.quux.r16.pass`)
 holds the rest clock for clock to muir's pipeline: the registers, the held
-writes, transmits and deliveries with the testbench as the program, the
-sweep and the interrupt.
+writes, transmits and deliveries with the testbench as the program, and the
+interrupt. The module check plays the core's side of the engine too, its
+grant, its fill and its clears each delayed at random, and holds each
+delivery's clears, line by line, and 251's move after the last. The core's
+`lineclear` group at revision 16 (`quux15_lineclear.quux.r16.pass`) is a run
+judged by its results: through a ring of one entry, a 42-byte frame and then a
+1,514-byte one, the processor reading a word of the buffer's lines and the
+entry before each delivery, so the cache holds them, and again after, into a
+page held to muir's.

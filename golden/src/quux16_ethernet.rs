@@ -25,8 +25,10 @@
 //! host H L A M G              the host writes 253-257 (hex)
 //! counts C                    the host's COUNTS, 241's counters in their places
 //! tx I                        the host moves 245 to I under the epoch
-//! rx I                        the host moves 251 to I under the epoch, one
-//!                             delivery: the cache made coherent
+//! rx I E W0 W1 W2             the host moves 251 to I under the epoch, one
+//!                             delivery, the entry at E holding W0-W2 (hex):
+//!                             the line-clearing engine reads them and clears
+//!                             the buffer's lines and the entry's
 //! = W0 ... W15                240-257 as muir reads them now (hex)
 //! ```
 //!
@@ -142,11 +144,20 @@ impl Run {
             self.out.push(format!("tx {tx:x}"));
         }
         if on {
-            // One move a delivery, as the program makes them.
+            // One move a delivery, as the program makes them, with the
+            // entry's address and its three words as the delivery left them,
+            // which the line-clearing engine reads.
+            let (base, log2) = (self.d.read(0o246) as usize, self.d.read(0o247));
             let mut r = self.rx;
             while r != rx {
+                let e = base + 8 * (r as usize % (1usize << log2));
                 r = r.wrapping_add(1);
-                self.out.push(format!("rx {r:x}"));
+                self.out.push(format!(
+                    "rx {r:x} {e:x} {:x} {:x} {:x}",
+                    self.main[e],
+                    self.main[e + 1],
+                    self.main[e + 2]
+                ));
             }
         }
         self.tx = tx;

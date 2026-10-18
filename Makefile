@@ -367,14 +367,16 @@ QUUX15_PERIODS_regread := 20 36
 # testbench refuses a trace of another revision: the `ethernet` group
 # (`golden/src/quux15_ethernet.rs`), the registers, the held writes of 244
 # and 250, transmits and deliveries with the testbench as the device's
-# host, the sweep and the interrupt; and revision 15's file device and
-# network groups again at revision 16, whose 140-157 and 160-171 are
-# revision 15's; and the checkpoints group at revision 16, the board's file
-# (version 57, the Ethernet device's state read off the core's readout) held
-# to muir's byte for byte, the `ethernet` group's runs halted across them
-# among it.
-QUUX16_GROUPS := ethernet filedev network checkpoints
+# host, and the interrupt; the `lineclear` group, a run judged by its
+# results, which holds the line clearing at each delivery apart from its
+# clocks; and revision 15's file device and network groups again at
+# revision 16, whose 140-157 and 160-171 are revision 15's; and the
+# checkpoints group at revision 16, the board's file (version 57, the
+# Ethernet device's state read off the core's readout) held to muir's byte
+# for byte, the `ethernet` group's runs halted across them among it.
+QUUX16_GROUPS := ethernet lineclear filedev network checkpoints
 QUUX15_PERIODS_ethernet := 20 17 36
+QUUX15_PERIODS_lineclear := 20 17 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
 # The PDL buffer's redirect inside the buffer at the board's 18 ns and at

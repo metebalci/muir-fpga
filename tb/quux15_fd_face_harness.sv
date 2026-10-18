@@ -109,7 +109,9 @@ module quux15_fd_face_harness #(
   logic [11:0] chaos_bits;
   logic [31:0] eth_rdata;
   logic [15:0] eth_tx_prod, eth_rx_prod;
-  logic        eth_sweep;
+  logic        eth_e_want, eth_e_start, eth_e_rd, eth_c_req, eth_busy;
+  logic [27:0] eth_e_addr;
+  logic [25:0] eth_c_line;
   /* verilator lint_on UNUSEDSIGNAL */
 
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) dev (
@@ -122,7 +124,10 @@ module quux15_fd_face_harness #(
       .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
       // Revision 15's: no Ethernet device.
       .eth_we(1'b0), .eth_widx(5'd0), .eth_wdata(32'd0), .eth_ridx(5'd0), .eth_rdata(eth_rdata),
-      .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod), .eth_sweep(eth_sweep),
+      .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod),
+      .eth_e_grant(1'b0), .eth_e_want(eth_e_want), .eth_e_start(eth_e_start), .eth_e_rd(eth_e_rd),
+      .eth_e_addr(eth_e_addr), .eth_e_done(1'b0), .eth_e_data(40'd0),
+      .eth_c_req(eth_c_req), .eth_c_line(eth_c_line), .eth_c_done(1'b0), .eth_busy(eth_busy),
       .bd_present(1'b0), .bd_start(bd_start), .bd_st_cmd(bd_st_cmd), .bd_st_clp(bd_st_clp),
       .bd_st_da(bd_st_da), .bd_walking(1'b0), .bd_charge(1'b0), .bd_fin(1'b0),
       .bd_fin_lma(28'd0), .bd_fin_da(29'd0), .bd_fin_past_end(1'b0), .bd_fin_nxm(1'b0),

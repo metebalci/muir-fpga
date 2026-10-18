@@ -14,9 +14,10 @@
 // mouse, the network's cable and the file device's host sit still.
 //
 // **A FEW OF THE DEVICE'S OWN SIGNALS ARE BROUGHT OUT**, beside what the
-// processor can read: the sweep, the interrupt as the clock's write leaves
-// it, and 244 and 250 as the host's side reads them, so that each landing
-// is measured by the clock.
+// processor can read: the interrupt as the clock's write leaves it, and 244
+// and 250 as the host's side reads them, so that each landing is measured by
+// the clock; and the line-clearing engine's port, whose other side, the
+// core's port, the testbench plays.
 
 `default_nettype none
 
@@ -69,8 +70,21 @@ module quux16_ethernet_harness #(
     input  var logic [7:0]  prod_k,
     input  var logic [31:0] prod_data,
 
+    // --- the line-clearing engine's port, the core's part played by the
+    // testbench: the transfer channel's grant and its words, the sets' clears
+    input  var logic        e_grant,
+    output var logic        e_want,
+    output var logic        e_start,
+    output var logic        e_rd,
+    output var logic [27:0] e_addr,
+    input  var logic        e_done,
+    input  var logic [39:0] e_data,
+    output var logic        c_req,
+    output var logic [25:0] c_line,
+    input  var logic        c_done,
+    output var logic        eth_busy,
+
     // --- the device's own, measured by the clock
-    output var logic        eth_sweep,
     output var logic        int_now,
     output var logic [15:0] eth_tx_prod,
     output var logic [15:0] eth_rx_prod,
@@ -122,7 +136,10 @@ module quux16_ethernet_harness #(
       .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0),
       .host_ridx(4'd2), .host_rdata(fd_rdata), .fd_complete(fd_complete),
       .eth_we(host_we), .eth_widx(host_widx), .eth_wdata(host_wdata), .eth_ridx(host_ridx),
-      .eth_rdata(host_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod), .eth_sweep(eth_sweep),
+      .eth_rdata(host_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod),
+      .eth_e_grant(e_grant), .eth_e_want(e_want), .eth_e_start(e_start), .eth_e_rd(e_rd),
+      .eth_e_addr(e_addr), .eth_e_done(e_done), .eth_e_data(e_data),
+      .eth_c_req(c_req), .eth_c_line(c_line), .eth_c_done(c_done), .eth_busy(eth_busy),
       .bd_present(1'b0), .bd_start(bd_start), .bd_st_cmd(bd_st_cmd), .bd_st_clp(bd_st_clp),
       .bd_st_da(bd_st_da), .bd_walking(1'b0), .bd_charge(1'b0), .bd_fin(1'b0),
       .bd_fin_lma(28'd0), .bd_fin_da(29'd0), .bd_fin_past_end(1'b0), .bd_fin_nxm(1'b0),

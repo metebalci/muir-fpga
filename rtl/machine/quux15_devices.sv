@@ -108,8 +108,10 @@ module quux15_devices #(
 
     // The Ethernet device's host (`quux16_ethernet.sv`, revision 16): its
     // side by index, `quux_ed_face.sv`'s map, one write and one read a
-    // clock; 244 and 250 as this clock leaves them; and an RX_CONS move
-    // landing this clock, which makes the cache coherent (the port's sweep).
+    // clock; 244 and 250 as this clock leaves them; and its line-clearing
+    // engine's reads of an entry through the port's transfer channel and its
+    // sets' clears (`quux16_ethernet.sv`'s `e_*`, `c_*`), and whether it is
+    // at work, which the halt's drain waits for.
     input  var logic        eth_we,
     input  var logic [4:0]  eth_widx,
     input  var logic [31:0] eth_wdata,
@@ -117,7 +119,17 @@ module quux15_devices #(
     output var logic [31:0] eth_rdata,
     output var logic [15:0] eth_tx_prod,
     output var logic [15:0] eth_rx_prod,
-    output var logic        eth_sweep,
+    input  var logic        eth_e_grant,
+    output var logic        eth_e_want,
+    output var logic        eth_e_start,
+    output var logic        eth_e_rd,
+    output var logic [27:0] eth_e_addr,
+    input  var logic        eth_e_done,
+    input  var logic [39:0] eth_e_data,
+    output var logic        eth_c_req,
+    output var logic [25:0] eth_c_line,
+    input  var logic        eth_c_done,
+    output var logic        eth_busy,
 
     // Block-disk's pack and its walk (`quux15_block_walk.sv`): a pack on
     // unit 0; START taken for a walk, with the registers it reads; the walk
@@ -661,7 +673,10 @@ module quux15_devices #(
         .held(prod_v && (prod_k == 8'o244 || prod_k == 8'o250)), .held_rx(prod_k == 8'o250),
         .held_data(prod_data[15:0]),
         .irq(ed_irq), .irq_state(ed_irq_state),
-        .tx_prod_now(eth_tx_prod), .rx_prod_now(eth_rx_prod), .sweep(eth_sweep),
+        .tx_prod_now(eth_tx_prod), .rx_prod_now(eth_rx_prod),
+        .e_grant(eth_e_grant), .e_want(eth_e_want), .e_start(eth_e_start), .e_rd(eth_e_rd),
+        .e_addr(eth_e_addr), .e_done(eth_e_done), .e_data(eth_e_data),
+        .c_req(eth_c_req), .c_line(eth_c_line), .c_done(eth_c_done), .busy_lc(eth_busy),
         .host_we(eth_we), .host_widx(eth_widx), .host_wdata(eth_wdata),
         .host_ridx(eth_ridx), .host_rdata(eth_rdata),
         .ro_k(ro_k[2:0]), .ro_word(ed_ro));
@@ -672,10 +687,16 @@ module quux15_devices #(
     assign ed_irq_state = 1'b0;
     assign eth_tx_prod = 16'd0;
     assign eth_rx_prod = 16'd0;
-    assign eth_sweep = 1'b0;
     assign eth_rdata = 32'd0;
+    assign eth_e_want = 1'b0;
+    assign eth_e_start = 1'b0;
+    assign eth_e_rd = 1'b0;
+    assign eth_e_addr = 28'd0;
+    assign eth_c_req = 1'b0;
+    assign eth_c_line = 26'd0;
+    assign eth_busy = 1'b0;
     logic eth_unused;
-    assign eth_unused = ^{eth_we, eth_widx, eth_wdata, eth_ridx};
+    assign eth_unused = ^{eth_we, eth_widx, eth_wdata, eth_ridx, eth_e_grant, eth_e_done, eth_e_data, eth_c_done};
   end
 
   // ================================================================ word 100

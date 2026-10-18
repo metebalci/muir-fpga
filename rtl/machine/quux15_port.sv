@@ -149,6 +149,15 @@ module quux15_port #(
     // The transfer's words still on the port: queued, in flight or filling.
     output var logic        d_busy,
 
+    // --- C: a set's clear, revision 16's line clearing (QUUX's Ethernet
+    // --- contract, §2.5 (ii); `quux16_ethernet.sv`): both ways of `c_line`'s
+    // --- set made invalid, as a transfer's write clears them, held until
+    // --- `c_done`, in a clock no install and no transfer's write takes the
+    // --- valid maps' write ports.  Lookups do not wait for it.
+    input  var logic        c_req,
+    input  var logic [25:0] c_line,
+    output var logic        c_done,
+
     // --- The tick's answers: error responses landed this clock (word 225),
     // --- and the queue's and the in-flight list's depths as the clock ends,
     // --- the processor's entries.
@@ -562,19 +571,21 @@ module quux15_port #(
   logic          v_we0, v_we1;
   logic [SB-1:0] v_wa;
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid0 (
-      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(!d_push && !c_done),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v0p), .rbit1(v0t), .rbit2(v0w));
   quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid1 (
-      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push && !c_done),
       .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
       .rbit0(v1p), .rbit1(v1t), .rbit2(v1w));
   // The valid maps' writes: a fill's install, or a transfer's write
-  // clearing both ways of its set, in a clock with no install.
+  // clearing both ways of its set, in a clock with no install; or a set's
+  // clear, in a clock with neither.
   always_comb begin
-    v_we0 = (install && !victim) || d_push;
-    v_we1 = (install && victim) || d_push;
-    v_wa  = d_push ? set_of({1'b0, d_addr}) : f_set;
+    c_done = c_req && !install && !d_push;
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || d_push || c_done;
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : c_done ? set_of({c_line, 3'd0}) : f_set;
   end
 
   // The buffer's next entry to write, and the RAMs' ports this clock.

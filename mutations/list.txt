@@ -30729,13 +30729,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note (muir's `SweepMissesASet`): the response read over a line read before
 @note the command reads the old word.
 @old
-    v_we0 = (install && !victim) || d_push;
-    v_we1 = (install && victim) || d_push;
-    v_wa  = d_push ? set_of({1'b0, d_addr}) : f_set;
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || d_push || c_done;
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : c_done ? set_of({c_line, 3'd0}) : f_set;
 @new
-    v_we0 = (install && !victim) || d_push || (sweep_go && !install && !d_push && !last_fill_way);
-    v_we1 = (install && victim) || d_push || (sweep_go && !install && !d_push && last_fill_way);
-    v_wa  = d_push ? set_of({1'b0, d_addr}) : install ? f_set : last_fill_set;
+    v_we0 = (install && !victim) || d_push || c_done || (sweep_go && !install && !d_push && !last_fill_way);
+    v_we1 = (install && victim) || d_push || c_done || (sweep_go && !install && !d_push && last_fill_way);
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : c_done ? set_of({c_line, 3'd0}) : install ? f_set : last_fill_set;
 @end
 
 @mutation quux15-sweep-holds-no-lookup
@@ -30830,9 +30830,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A completion the host made drops nothing of the cache: the response
 @note read over a line read before the command reads the old word.
 @old
-      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
+      .empty(port_empty), .sweep_go(fd_complete),
 @new
-      .empty(port_empty), .sweep_go((fd_complete && 1'b0) || eth_sweep),
+      .empty(port_empty), .sweep_go(fd_complete && 1'b0),
 @end
 
 @mutation quux15-fd-host-refusal-not-sticky
@@ -32941,11 +32941,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note page in way 1 stays, where muir's `clear_set` clears both, and the
 @note probe after the transfer hits it (`read`).
 @old
-    v_we0 = (install && !victim) || d_push;
-    v_we1 = (install && victim) || d_push;
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || d_push || c_done;
 @new
-    v_we0 = (install && !victim) || d_push;
-    v_we1 = (install && victim);
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || c_done;
 @end
 
 @mutation quux15-bd-no-set-cleared
@@ -32953,11 +32953,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_port.sv
 @note A transfer's write clears nothing: the page's old lines stay valid.
 @old
-    v_we0 = (install && !victim) || d_push;
-    v_we1 = (install && victim) || d_push;
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || d_push || c_done;
 @new
-    v_we0 = (install && !victim);
-    v_we1 = (install && victim);
+    v_we0 = (install && !victim) || c_done;
+    v_we1 = (install && victim) || c_done;
 @end
 
 @mutation quux15-bd-read-allocates
@@ -34042,9 +34042,9 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @file rtl/machine/quux15_port.sv
 @note The hard reset clears way 0's valid bits and not way 1's.
 @old
-      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push && !c_done),
 @new
-      .clk(clk), .rst(1'b0 && hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push),
+      .clk(clk), .rst(1'b0 && hard), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(!d_push && !c_done),
 @end
 
 @mutation quux15-hard-reset-clears-after-the-release
@@ -34053,12 +34053,12 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @note The cache cleared a hundred clocks after the hard reset ends, the core
 @note running: lookups are granted before the clear lands.
 @old
-  logic        fd_complete, eth_sweep;
+  assign bd_done = !eth_own && pd_done;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(core_rst), .hard(rst),
 @new
-  logic        fd_complete, eth_sweep;
+  assign bd_done = !eth_own && pd_done;
   logic [6:0]  hard_late;
   always_ff @(posedge clk) hard_late <= rst ? 7'd1 : (hard_late != 7'd0 ? hard_late + 7'd1 : 7'd0);
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
@@ -34744,6 +34744,7 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
 @old
         on_w = 1'b0; ie_w = 1'b0;
         tx_prod_w = '0; tx_cons_w = '0; rx_prod_w = '0; rx_cons_w = '0; rx_taken_w = '0;
+        rx_target_w = '0;
       end else if (on_w) begin
 @new
         on_w = 1'b0; ie_w = 1'b0;
@@ -34964,16 +34965,6 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
   assign tx_ok    = in_epoch && h_index - tx_chost <= tx_prod - tx_chost + 16'd1;
 @end
 
-@mutation eth-delivery-by-nothing
-@check quux16_ethernet_module_quux
-@file rtl/machine/quux16_ethernet.sv
-@note RX_CONS moving 251 by nothing is taken, and sweeps the cache.
-@old
-  assign rx_ok    = in_epoch && h_index != rx_chost && h_index - rx_chost <= rx_prod - rx_chost;
-@new
-  assign rx_ok    = in_epoch && h_index - rx_chost <= rx_prod - rx_chost;
-@end
-
 @mutation eth-delivery-past-250
 @check quux16_ethernet_module_quux
 @file rtl/machine/quux16_ethernet.sv
@@ -34987,7 +34978,7 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
 @mutation eth-delivery-lands-disabled
 @check quux16_ethernet_module_quux
 @file rtl/machine/quux16_ethernet.sv
-@note A delivery a disable overtook still lands, and sweeps.
+@note A delivery a disable overtook still lands, and its lines are cleared.
 @old
   assign rx_land = rx_pub && on;
 @new
@@ -35004,34 +34995,217 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
   assign tx_land = tx_pub;
 @end
 
-@mutation eth-no-sweep
+@mutation eth-moves-without-the-entry-cleared
 @check quux16_ethernet_module_quux
 @file rtl/machine/quux16_ethernet.sv
-@note A delivery makes nothing coherent.
+@note 251 moves in the entry's clock whether or not its set's clear was taken.
 @old
-    sweep = rx_land;
+    e_move  = es == E_ENTRY && c_done && on;
 @new
-    sweep = rx_land && !rx_land;
+    e_move  = es == E_ENTRY && on;
 @end
 
-@mutation eth-sweep-a-clock-early
+@mutation eth-length-clamped-at-1517
 @check quux16_ethernet_module_quux
 @file rtl/machine/quux16_ethernet.sv
-@note The sweep at RX_CONS's write, a clock before 251's landing.
+@note The length clamped at 1,517 bytes, 380 words, not 1,514: one line past
+@note the longest frame's from a buffer five words into its line.
 @old
-    sweep = rx_land;
+    if (e_n > 32'd1514) e_n = 32'd1514;
 @new
-    sweep = h_rx && rx_ok && rx_land == rx_land;
+    if (e_n > 32'd1517) e_n = 32'd1517;
 @end
 
-@mutation eth-core-no-sweep
-@check quux15_ethernet_quux_r16
+@mutation eth-length-not-clamped-to-the-room
+@check quux16_ethernet_module_quux
 @file rtl/machine/quux16_ethernet.sv
-@note A delivery makes nothing coherent: the core reads the line it held.
+@note The length the host wrote, not clamped to the room.
 @old
-    sweep = rx_land;
+    e_n     = e_data[31:0] < e_room ? e_data[31:0] : e_room;
 @new
-    sweep = rx_land && !rx_land;
+    e_n     = e_data[31:0] | (e_room & 32'd0);
+@end
+
+@mutation eth-entry-line-not-cleared
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The entry's own line not cleared: the buffer's last line again.
+@old
+    c_line  = {1'b0, es == E_ENTRY ? e_entry[27:3] : e_line};
+@new
+    c_line  = {1'b0, e_line};
+@end
+
+@mutation eth-engine-keeps-the-held-line
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note No START before the entry's read: the channel's line from before reads
+@note the entry as it stood then.
+@old
+    e_start = es == E_START;
+@new
+    e_start = 1'b0;
+@end
+
+@mutation eth-disable-leaves-the-engine-running
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A disable does not stop the engine: it clears on after it.
+@old
+    if (rst || !on_w) begin
+      es <= E_IDLE;
+@new
+    if (rst) begin
+      es <= E_IDLE;
+@end
+
+@mutation eth-clears-a-line-past-the-buffer
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The buffer's last line one past its last word's, at a buffer ending at
+@note a line's end.
+@old
+          e_last <= 25'((32'(e_buf) + e_words - 32'd1) >> 3);
+@new
+          e_last <= 25'((32'(e_buf) + e_words) >> 3);
+@end
+
+@mutation eth-buffer-lines-without-their-clears
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note A buffer's line passed whether or not its clear was taken.
+@old
+        E_CLR:   if (c_done) begin
+@new
+        E_CLR:   if (1'b1) begin
+@end
+
+@mutation eth-room-read-from-word-2
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The room read from the entry's word 2, the length, not word 1.
+@old
+    e_addr  = e_entry + (es == E_RD1 ? 28'd1 : es == E_RD2 ? 28'd2 : 28'd0);
+@new
+    e_addr  = e_entry + (es == E_RD1 ? 28'd2 : es == E_RD2 ? 28'd2 : 28'd0);
+@end
+
+@mutation eth-entry-slot-unmasked
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The entry at 251 itself, not 251 within the ring.
+@old
+    e_slot  = rx_cons & ((16'd1 << rx_log2) - 16'd1);
+@new
+    e_slot  = rx_cons;
+@end
+
+@mutation eth-host-reads-251-not-the-target
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note RX_CONS on the host's side reads 251, not the target it wrote.
+@old
+  assign rx_chost = rx_land ? rx_pub_to : rx_target;
+@new
+  assign rx_chost = rx_land ? rx_pub_to : rx_cons;
+@end
+
+@mutation eth-entry-done-without-its-clear
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The engine idle after the entry's clock whether or not its clear was
+@note taken, and 251 not moved.
+@old
+        E_ENTRY: if (c_done) es <= E_IDLE;
+@new
+        E_ENTRY: es <= E_IDLE;
+@end
+
+@mutation eth-engine-takes-the-channel-ungranted
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note The engine starts on the transfer channel without its grant.
+@old
+        E_GRANT: if (e_grant) es <= E_START;
+@new
+        E_GRANT: if (e_grant || 1'b1) es <= E_START;
+@end
+
+@mutation eth-busy-only-while-the-engine-runs
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note Busy only once the engine has left idle: not in the clock after the
+@note landing, which the halt's drain then passes.
+@old
+    busy_lc = on && (es != E_IDLE || rx_cons != rx_target);
+@new
+    busy_lc = on && es != E_IDLE;
+@end
+
+@mutation eth-landing-sets-no-target
+@check quux16_ethernet_module_quux
+@file rtl/machine/quux16_ethernet.sv
+@note RX_CONS's landing does not move the target: nothing is cleared and 251
+@note never moves.
+@old
+    if (rx_land) rx_target_w = rx_pub_to;
+@new
+    if (rx_land) rx_target_w = rx_target;
+@end
+
+@mutation eth-core-clear-not-written
+@check quux15_lineclear_quux_r16
+@file rtl/machine/quux15_port.sv
+@note A set's clear taken and written to neither valid map: the core reads
+@note the lines it held before the delivery.
+@old
+    v_we0 = (install && !victim) || d_push || c_done;
+    v_we1 = (install && victim) || d_push || c_done;
+@new
+    v_we0 = (install && !victim) || d_push;
+    v_we1 = (install && victim) || d_push;
+@end
+
+@mutation eth-core-clears-the-next-set
+@check quux15_lineclear_quux_r16
+@file rtl/machine/quux15_port.sv
+@note A clear written to the set after its line's.
+@old
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : c_done ? set_of({c_line, 3'd0}) : f_set;
+@new
+    v_wa  = d_push ? set_of({1'b0, d_addr}) : c_done ? set_of({c_line + 26'd1, 3'd0}) : f_set;
+@end
+
+@mutation eth-core-start-not-passed
+@check quux15_lineclear_quux_r16
+@file rtl/machine/quux15_core.sv
+@note The engine's START does not reach the channel: the second delivery
+@note reads the entry's line as the first left it.
+@old
+      .d_done(pd_done), .d_rdata(bd_rdata), .d_start(bd_start || eth_e_start), .d_busy(bd_busy),
+@new
+      .d_done(pd_done), .d_rdata(bd_rdata), .d_start(bd_start || (eth_e_start && 1'b0)), .d_busy(bd_busy),
+@end
+
+@mutation eth-core-entry-at-the-walks-address
+@check quux15_lineclear_quux_r16
+@file rtl/machine/quux15_core.sv
+@note The channel's address block-disk's while the engine holds it.
+@old
+      .d_addr(eth_own ? eth_e_addr : bd_addr), .d_wdata(bd_wdata),
+@new
+      .d_addr((eth_own && 1'b0) ? eth_e_addr : bd_addr), .d_wdata(bd_wdata),
+@end
+
+@mutation eth-core-drain-ignores-the-engine
+@check quux15_checkpoints_quux_r16
+@file rtl/machine/quux15_core.sv
+@note The halt's drain does not wait for the engine: a checkpoint taken
+@note between RX_CONS's landing and 251's move holds 251 behind muir's.
+@old
+             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n && !eth_busy;
+@new
+             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n;
 @end
 
 @mutation eth-counts-unmasked
@@ -35224,16 +35398,6 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
         || (ETHERNET && k >= 8'o240 && k <= 8'o257);
 @new
         || (ETHERNET && k >= 8'o240 && k <= 8'o247);
-@end
-
-@mutation eth-delivery-not-swept
-@check quux15_ethernet_quux_r16
-@file rtl/machine/quux15_core.sv
-@note RX_CONS's landing does not reach the port's sweep.
-@old
-      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
-@new
-      .empty(port_empty), .sweep_go(fd_complete || (eth_sweep && 1'b0)),
 @end
 
 @mutation eth-held-word-forgotten

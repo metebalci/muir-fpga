@@ -2837,8 +2837,9 @@ for _p in QUUX15_CORE:
 # `quux15_<group>.quux.r16.pass`): the core built with revision 16's
 # MACHINE-ID, and so with the Ethernet device, its testbench refusing a
 # trace of another revision.
-QUUX16_GROUPS = ("ethernet", "filedev", "network", "checkpoints")
+QUUX16_GROUPS = ("ethernet", "lineclear", "filedev", "network", "checkpoints")
 QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
+QUUX15_PERIODS_OF["lineclear"] = (20, 17, 36)
 for _p in QUUX16_GROUPS:
     CHECKS["quux15_%s_quux_r16" % _p] = dict(
         CHECKS["quux15_alu_quux"],

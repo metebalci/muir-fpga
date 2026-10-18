@@ -1734,6 +1734,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "regread" => quux15_regread::regread(period),
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "ethernet" => quux15_ethernet::ethernet(),
+        "lineclear" => quux15_ethernet::lineclear(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],

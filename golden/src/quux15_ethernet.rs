@@ -20,7 +20,7 @@
 //!              length, 245 passing both 20 us apart and the refusal counted
 //!   receive    three buffers given, the first's line read before, so that
 //!              the cache holds it; an ARP frame delivered, its line read
-//!              again after the sweep, its length, status <8> and word 100
+//!              again after the delivery, its length, status <8> and word 100
 //!              <8> under the interrupt enable, 252 taking it back; a second
 //!              delivered; an IPv6 frame dropped by the type filter, an IPv4
 //!              frame by the IPv4 checks and one too long for its buffer
@@ -34,6 +34,14 @@
 //!   hostwords  253-257 other than muir's defaults, read, and a frame to
 //!              that MAC address delivered; the checkpoints group at
 //!              revision 16 halts each of these runs at points across it
+//!
+//! **THE `lineclear` GROUP**, one run judged by its results (`# results-only`):
+//! a ring of one entry, a 42-byte frame and then a 1,514-byte one delivered
+//! through it, the entry written again between; before each, a word in its
+//! buffer's lines and the entry's length read, so that the cache holds them,
+//! and after, read again into a page held to muir's.  It holds the fabric's
+//! line clearing (§2.5 (ii)) apart from the clocks it takes, which muir's
+//! sweep at RX_CONS does not model.
 //!
 //! **WHAT THE TESTBENCH IS TOLD IS WHAT muir's DEVICE DID, BY CLOCK**, each
 //! `<clock>` the first after the tick whose machine has it, as the file
@@ -62,7 +70,8 @@
 use muir::engine::Engine;
 use muir::ethernet_device::{Host, RX_BASE, RX_CONS, RX_PROD, RX_SIZE, STATUS, Script, TX_CONS, TX_PROD};
 use muir::isa::asm::{
-    ADD, ALU, JUMP, N, P, POPJ, SETA, START_READ, SUB, a_src, filler, m_dest, m_src, target,
+    ADD, ALU, JUMP, MD, N, P, POPJ, SETA, SETM, START_READ, START_WRITE, SUB, a_src, filler, m_dest, m_src,
+    target,
 };
 use muir::machine::Word;
 use muir::pipeline::{Pipeline, PortTiming};
@@ -85,6 +94,10 @@ const FRAME: u64 = 0o6000;
 const BUF0: u64 = 0o10000;
 const BUF1: u64 = 0o12000;
 const BUF2: u64 = 0o14000;
+/// A buffer for the longest frame, and the page a run judged by its
+/// results stores what it read into.
+const BIG: u64 = 0o20000;
+const RES: u64 = 0o30000;
 
 /// 241's counters' places.
 const COUNTS_MASK: u32 = 0xFFFF_FEF0;
@@ -246,6 +259,14 @@ fn delay(p: &mut Preset, m: u64, n: u64) {
 fn rings(p: &mut Preset, tl: Word, rl: Word, control: Word) {
     p.write(TX_RING, reg(0o242)).write(tl, reg(0o243)).write(RX_RING, reg(0o246));
     p.write(rl, reg(0o247)).write(control, reg(0o240));
+}
+
+/// M `m` written to main memory's word `a`.
+fn store(p: &mut Preset, m: u64, a: u64) {
+    let va = p.k(PHYS | a);
+    p.op(ALU | SETM | m_src(m) | MD);
+    p.op(ALU | SETA | a_src(va) | START_WRITE);
+    p.fill(2);
 }
 
 fn finish(name: &str, p: &Preset, frames: Vec<(u64, Vec<u8>)>) -> Case {
@@ -427,5 +448,64 @@ pub fn ethernet() -> Vec<Case> {
     let mut c = finish("hostwords", &p, vec![(3000, f), (3200, frame(false, 42))]);
     c.eth.as_mut().expect("the run's frames").host = Some(host);
     v.push(c);
+
     v
+}
+
+/// **The run judged by its results**, its own group so that it holds the
+/// fabric's line clearing while the clocked runs above wait for muir to
+/// model it.
+pub fn lineclear() -> Vec<Case> {
+    // **JUDGED BY ITS RESULTS**, not by the clock, so that it holds the
+    // fabric's line clearing whatever its clocks.  A ring of one entry, so
+    // that both deliveries read the same entry: first a 42-byte frame into
+    // a buffer of 64 bytes, then, the entry given back and written again,
+    // a 1,514-byte frame into a buffer of 1,536.  Before each, a word of
+    // its buffer's lines (every other line of the long frame's and its
+    // last, the control store's 512 words being the bound) and the entry's
+    // length read, so that the cache holds them; after it, the same words
+    // read again, once 251 has moved, and stored into a page held to
+    // muir's at the end.
+    let mut p = run();
+    p.main.push((RX_RING as usize, BUF0));
+    p.main.push((RX_RING as usize + 1, 64));
+    let small: Vec<u64> = vec![BUF0, BUF0 + 10, RX_RING + 2];
+    let big: Vec<u64> = (0..48u64)
+        .filter(|l| l % 2 == 0 || *l == 47)
+        .map(|l| BIG + 8 * l + (l & 7))
+        .chain([RX_RING + 2])
+        .collect();
+    for &a in small.iter().chain(&big) {
+        if a != RX_RING + 2 {
+            p.main.push((a as usize, 0o5252525252 ^ a));
+        }
+    }
+    rings(&mut p, 0, 0, 1);
+    let mut res = RES;
+    for (n, words) in [(1, &small), (2, &big)] {
+        if n == 2 {
+            p.write(1, reg(0o252));
+            p.write(BIG, PHYS | RX_RING).write(1536, PHYS | (RX_RING + 1));
+        }
+        for &a in words.iter() {
+            p.read(PHYS | a, 0o20);
+        }
+        p.write(n, reg(0o250));
+        wait_for(&mut p, 0o251, n);
+        for &a in words.iter() {
+            p.read(PHYS | a, 0o20);
+            store(&mut p, 0o20, res);
+            res += 1;
+        }
+    }
+    p.stop();
+    let mut c = finish("lineclear", &p, vec![(6000, frame(false, 42)), (10000, frame(false, 1514))]);
+    c.disk = Some(super::quux15_blockdisk::DiskRun {
+        blocks: 64,
+        latency: 40,
+        pages: vec![RES as u32],
+        results_only: true,
+        ..super::quux15_blockdisk::DiskRun::default()
+    });
+    vec![c]
 }

@@ -136,7 +136,8 @@
 // block `# endblock <block> <hash>`, the store's dirty slots written back
 // first.  **A RUN JUDGED BY ITS RESULTS** (`# results-only <park> <clocks>`)
 // carries no row: the core runs until it has committed its park and is
-// quiet, and the pages and blocks are held to muir's; `# read-at-ar`, its
+// quiet, and the pages and blocks are held to muir's, and the Ethernet
+// device's 244 and 250 are not held to muir's clocks; `# read-at-ar`, its
 // memory answers a read with the words as they stood when the read's
 // address was taken.
 //
@@ -972,7 +973,10 @@ class Bench {
       why = host_why_;
       return false;
     }
-    if (!eth_take(d, t, why)) return false;
+    // A run judged by its results is not held to the clocks muir's 244
+    // and 250 moved at: the fabric's line clearing takes clocks muir's
+    // sweep does not, and a write of 250 after a delivery comes later.
+    if (!run_.results_only && !eth_take(d, t, why)) return false;
     // The doorbell: the fabric's, at the clocks and values the host saw.
     bool want = false;
     uint64_t value = 0;

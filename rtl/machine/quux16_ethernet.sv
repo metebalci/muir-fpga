@@ -84,11 +84,23 @@
 // WRITE**, as the file device's completion does, so that a move written at
 // clock k - 1 is muir's at clock k; a disable in the clock between drops it.
 //
-// **THE CACHE IS MADE COHERENT AT RX_CONS's LANDING, BEFORE THE MACHINE SEES
-// 251 MOVE** (§2.5): `sweep` is the whole-cache sweep the file device's
-// completion takes (`quux15_port.sv`'s `sweep_go`), whose lookups wait until
-// it is done (§2.5 (i)).  It is made at one place below, `coherence`, so
-// that line clearing (§2.5 (ii)) can take its place if M-refill chooses it.
+// **THE CACHE IS MADE COHERENT BY LINE CLEARING, AND 251 MOVES ONLY AFTER
+// THE LAST SET** (§2.5 (ii), M-refill's choice; lookups never wait).  An
+// RX_CONS move sets the TARGET, which the host's side reads back at once;
+// 251, which the machine reads, follows it an entry at a time, by the
+// engine below (`coherence`): it reads the entry at slot 251 itself, out of
+// main memory, through the port's transfer channel beside block-disk's
+// (`e_*`, which the core grants it while no walk holds the channel): word 0
+// the buffer, word 1 its room, word 2 the length; it clears the sets of the
+// buffer's ceil(n / 4) words' lines, n the length clamped to the room and to
+// 1,514 bytes, and then the entry's line, one set a clock through the
+// port's valid maps (`c_*`), at most 49; and then 251 moves by one.  So it
+// trusts only what the processor posted, words 0 and 1, and a length kept
+// within them.  A disable or a reset drops what is under way; the halt's
+// drain waits for the engine (`busy`).  With nothing else on the channel or
+// the valid maps, 251 moves at the edge of clock T = R + 9 + L after the
+// landing's, R the port's read latency in clocks and L the buffer's lines
+// cleared (`docs/ethernet-device.md`, Line clearing).
 //
 // **THE FOUR COUNTERS AND 253-257 ARE THE HOST'S TO SET AND THIS DEVICE'S TO
 // KEEP** (§2.4.1, §2.7): only the program sees a frame dropped, and only the
@@ -136,8 +148,22 @@ module quux16_ethernet #(
     // 244 and 250 as this clock leaves them, which the host's side reads.
     output var logic [15:0] tx_prod_now,
     output var logic [15:0] rx_prod_now,
-    // An RX_CONS move landing this clock: the cache made coherent.
-    output var logic        sweep,
+    // **THE LINE-CLEARING ENGINE'S PORT** (`coherence`, below): its read of
+    // the entry through the port's transfer channel, granted by the core
+    // (`e_grant`): `e_start` a clock before, dropping the channel's line,
+    // then a word at `e_addr` held until `e_done`, its word `e_data`; a set's
+    // clear held until `c_done`; and the engine at work or owed work.
+    input  var logic        e_grant,
+    output var logic        e_want,
+    output var logic        e_start,
+    output var logic        e_rd,
+    output var logic [27:0] e_addr,
+    input  var logic        e_done,
+    input  var logic [39:0] e_data,
+    output var logic        c_req,
+    output var logic [25:0] c_line,
+    input  var logic        c_done,
+    output var logic        busy_lc,
 
     // The host's side, by index (above): one write and one read a clock, a
     // read's word the clock after its index.
@@ -188,6 +214,16 @@ module quux16_ethernet #(
   logic [27:0] tx_base, rx_base;
   logic [3:0]  tx_log2, rx_log2;
   logic [15:0] tx_prod, tx_cons, rx_prod, rx_cons, rx_taken;
+  // The host's RX_CONS, which 251 follows.
+  logic [15:0] rx_target;
+
+  // The engine (`coherence`, below).
+  typedef enum logic [2:0] { E_IDLE, E_GRANT, E_START, E_RD0, E_RD1, E_RD2, E_CLR, E_ENTRY } estate_e;
+  estate_e     es;
+  logic        e_move;
+  logic [27:0] e_entry, e_buf;
+  logic [31:0] e_room;
+  logic [24:0] e_line, e_last;
 
   // The host's: the counters and 253-257 from the configuration, which no
   // reset reaches; the claim and the epoch likewise.
@@ -217,15 +253,17 @@ module quux16_ethernet #(
   logic        on_w, ie_w, refused_w, fault_w;
   logic [27:0] tx_base_w, rx_base_w;
   logic [3:0]  tx_log2_w, rx_log2_w;
-  logic [15:0] tx_prod_w, tx_cons_w, rx_prod_w, rx_cons_w, rx_taken_w;
+  logic [15:0] tx_prod_w, tx_cons_w, rx_prod_w, rx_cons_w, rx_taken_w, rx_target_w;
   always_comb begin
     on_w = on; ie_w = ie; refused_w = refused; fault_w = fault;
     tx_base_w = tx_base; rx_base_w = rx_base; tx_log2_w = tx_log2; rx_log2_w = rx_log2;
     tx_prod_w = tx_prod; tx_cons_w = tx_cons; rx_prod_w = rx_prod; rx_cons_w = rx_cons;
-    rx_taken_w = rx_taken;
-    // The host's move, in this clock's `advance`.
+    rx_taken_w = rx_taken; rx_target_w = rx_target;
+    // The host's move, in this clock's `advance`; and the engine's step of
+    // 251, its last set cleared.
     if (tx_land) tx_cons_w = tx_pub_to;
-    if (rx_land) rx_cons_w = rx_pub_to;
+    if (rx_land) rx_target_w = rx_pub_to;
+    if (e_move) rx_cons_w = rx_cons + 16'd1;
     // 244 or 250, held until the port was empty (`port_events`).
     if (held && on_w && !held_rx) begin
       if (held_data - tx_cons_w > 16'd1 << tx_log2_w || held_data - tx_cons_w < tx_prod_w - tx_cons_w)
@@ -252,6 +290,7 @@ module quux16_ethernet #(
       end else if (on_w && !wdata[0]) begin
         on_w = 1'b0; ie_w = 1'b0;
         tx_prod_w = '0; tx_cons_w = '0; rx_prod_w = '0; rx_cons_w = '0; rx_taken_w = '0;
+        rx_target_w = '0;
       end else if (on_w) begin
         ie_w = wdata[8];
       end
@@ -270,6 +309,7 @@ module quux16_ethernet #(
     if (dev_reset) begin
       on_w = 1'b0; ie_w = 1'b0; refused_w = 1'b0; fault_w = 1'b0;
       tx_prod_w = '0; tx_cons_w = '0; rx_prod_w = '0; rx_cons_w = '0; rx_taken_w = '0;
+      rx_target_w = '0;
     end
   end
   assign tx_prod_now = tx_prod_w;
@@ -277,10 +317,56 @@ module quux16_ethernet #(
   assign irq       = ie_w && rx_cons_w != rx_taken_w;
   assign irq_state = ie && rx_cons != rx_taken;
 
-  // **THE COHERENCE STEP** (§2.5): the whole-cache sweep at RX_CONS's
-  // landing, the mechanism M-refill decides.
+  // **THE COHERENCE STEP** (§2.5 (ii)): line clearing, entry by entry, 251
+  // following the host's target.  The entry's three words are read out of
+  // main memory after an `e_start` that drops the channel's line, so that
+  // no word the host wrote behind it is read stale; the buffer's lines are
+  // cleared from its first word's to its last's, n the length clamped to the
+  // room and to 1,514 bytes (none when n is 0), then the entry's line; and
+  // 251 moves at the edge that takes the entry line's clear, so the machine
+  // reads it from the clock after.
+  logic [31:0] e_n, e_words;
+  logic [15:0] e_slot;
   always_comb begin : coherence
-    sweep = rx_land;
+    e_slot  = rx_cons & ((16'd1 << rx_log2) - 16'd1);
+    e_entry = rx_base + {9'd0, e_slot, 3'd0};
+    e_want  = es == E_GRANT || es == E_START || es == E_RD0 || es == E_RD1 || es == E_RD2;
+    e_start = es == E_START;
+    e_rd    = es == E_RD0 || es == E_RD1 || es == E_RD2;
+    e_addr  = e_entry + (es == E_RD1 ? 28'd1 : es == E_RD2 ? 28'd2 : 28'd0);
+    // The length, clamped to the room and to the longest Ethernet frame.
+    e_n     = e_data[31:0] < e_room ? e_data[31:0] : e_room;
+    if (e_n > 32'd1514) e_n = 32'd1514;
+    e_words = (e_n + 32'd3) >> 2;
+    c_req   = es == E_CLR || es == E_ENTRY;
+    c_line  = {1'b0, es == E_ENTRY ? e_entry[27:3] : e_line};
+    e_move  = es == E_ENTRY && c_done && on;
+    busy_lc = on && (es != E_IDLE || rx_cons != rx_target);
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst || !on_w) begin
+      es <= E_IDLE;
+    end else begin
+      unique case (es)
+        E_IDLE:  if (rx_cons != rx_target) es <= E_GRANT;
+        E_GRANT: if (e_grant) es <= E_START;
+        E_START: es <= E_RD0;
+        E_RD0:   if (e_done) begin e_buf <= e_data[27:0]; es <= E_RD1; end
+        E_RD1:   if (e_done) begin e_room <= e_data[31:0]; es <= E_RD2; end
+        E_RD2:   if (e_done) begin
+          e_line <= e_buf[27:3];
+          e_last <= 25'((32'(e_buf) + e_words - 32'd1) >> 3);
+          es     <= e_words == 32'd0 ? E_ENTRY : E_CLR;
+        end
+        E_CLR:   if (c_done) begin
+          if (e_line == e_last) es <= E_ENTRY;
+          e_line <= e_line + 25'd1;
+        end
+        E_ENTRY: if (c_done) es <= E_IDLE;
+        default: es <= E_IDLE;
+      endcase
+    end
   end
 
   // ================================================================ the host
@@ -289,7 +375,7 @@ module quux16_ethernet #(
   logic [15:0] tx_chost, rx_chost, h_index;
   logic        in_epoch, h_tx, h_rx, tx_ok, rx_ok, h_claim;
   assign tx_chost = tx_land ? tx_pub_to : tx_cons;
-  assign rx_chost = rx_land ? rx_pub_to : rx_cons;
+  assign rx_chost = rx_land ? rx_pub_to : rx_target;
   assign h_index  = host_wdata[15:0];
   assign in_epoch = on && host_wdata[31:16] == epoch;
   assign h_tx     = host_we && host_widx == H_TX_CONS;
@@ -302,13 +388,13 @@ module quux16_ethernet #(
     if (rst) begin
       on <= 1'b0; ie <= 1'b0; refused <= 1'b0; fault <= 1'b0;
       tx_base <= '0; rx_base <= '0; tx_log2 <= '0; rx_log2 <= '0;
-      tx_prod <= '0; tx_cons <= '0; rx_prod <= '0; rx_cons <= '0; rx_taken <= '0;
+      tx_prod <= '0; tx_cons <= '0; rx_prod <= '0; rx_cons <= '0; rx_taken <= '0; rx_target <= '0;
       tx_pub <= 1'b0; rx_pub <= 1'b0; tx_pub_to <= '0; rx_pub_to <= '0;
     end else begin
       on <= on_w; ie <= ie_w; refused <= refused_w; fault <= fault_w;
       tx_base <= tx_base_w; rx_base <= rx_base_w; tx_log2 <= tx_log2_w; rx_log2 <= rx_log2_w;
       tx_prod <= tx_prod_w; tx_cons <= tx_cons_w; rx_prod <= rx_prod_w; rx_cons <= rx_cons_w;
-      rx_taken <= rx_taken_w;
+      rx_taken <= rx_taken_w; rx_target <= rx_target_w;
       tx_pub <= h_tx && tx_ok;
       rx_pub <= h_rx && rx_ok;
       if (h_tx && tx_ok) tx_pub_to <= h_index;
@@ -411,7 +497,7 @@ module quux16_ethernet #(
   end
 
   logic unused;
-  assign unused = ^{rd, counts[8], counts[3:0], wdata[31:28]};
+  assign unused = ^{rd, counts[8], counts[3:0], wdata[31:28], e_data[39:32]};
 
 endmodule
 

@@ -1554,10 +1554,27 @@ module quux15_core #(
   logic [28:0] bd_fin_da;
   logic [31:0] bd_st_cmd;
   logic [39:0] bd_wdata, bd_rdata;
-  // A completion the file device's host made, landing this clock, or on
-  // revision 16 an RX_CONS move of the Ethernet device's host: the whole
+  // A completion the file device's host made, landing this clock: the whole
   // cache swept (`quux15_devices.sv`).
-  logic        fd_complete, eth_sweep;
+  logic        fd_complete;
+  // **REVISION 16's LINE CLEARING** (QUUX's Ethernet contract, §2.5 (ii);
+  // `quux16_ethernet.sv`'s engine): the port's transfer channel, D, is the
+  // engine's while it reads an entry, granted while no walk holds it (no
+  // walk running, none of its words on the port, no START now), and the
+  // walk's again once the engine's three words are read; a walk started
+  // meanwhile waits.  The engine's START drops the channel's line, so its
+  // words are main memory's.  Its sets' clears go to the port's valid maps
+  // (C).  The halt's drain waits for the engine.
+  logic        eth_e_want, eth_e_start, eth_e_rd, eth_c_req, eth_c_done, eth_busy, eth_own;
+  logic [27:0] eth_e_addr;
+  logic [25:0] eth_c_line;
+  logic        pd_done;
+  always_ff @(posedge clk) begin
+    if (core_rst) eth_own <= 1'b0;
+    else if (!eth_e_want) eth_own <= 1'b0;
+    else if (!bd_walking && !bd_busy && !bd_start && !bd_req) eth_own <= 1'b1;
+  end
+  assign bd_done = !eth_own && pd_done;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
                 .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(core_rst), .hard(rst),
@@ -1566,10 +1583,12 @@ module quux15_core #(
       .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(md),
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
-      .d_req(bd_req), .d_write(bd_write), .d_addr(bd_addr), .d_wdata(bd_wdata),
-      .d_done(bd_done), .d_rdata(bd_rdata), .d_start(bd_start), .d_busy(bd_busy),
+      .d_req(eth_own ? eth_e_rd : bd_req), .d_write(!eth_own && bd_write),
+      .d_addr(eth_own ? eth_e_addr : bd_addr), .d_wdata(bd_wdata),
+      .d_done(pd_done), .d_rdata(bd_rdata), .d_start(bd_start || eth_e_start), .d_busy(bd_busy),
+      .c_req(eth_c_req), .c_line(eth_c_line), .c_done(eth_c_done),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
-      .empty(port_empty), .sweep_go(fd_complete || eth_sweep),
+      .empty(port_empty), .sweep_go(fd_complete),
       .hold(port_hold), .quiet(port_quiet),
       .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
@@ -1699,7 +1718,10 @@ module quux15_core #(
       .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
       .host_ridx(host_ridx), .host_rdata(host_rdata), .fd_complete(fd_complete),
       .eth_we(eth_we), .eth_widx(eth_widx), .eth_wdata(eth_wdata), .eth_ridx(eth_ridx),
-      .eth_rdata(eth_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod), .eth_sweep(eth_sweep),
+      .eth_rdata(eth_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod),
+      .eth_e_grant(eth_own), .eth_e_want(eth_e_want), .eth_e_start(eth_e_start), .eth_e_rd(eth_e_rd),
+      .eth_e_addr(eth_e_addr), .eth_e_done(eth_own && pd_done), .eth_e_data(bd_rdata),
+      .eth_c_req(eth_c_req), .eth_c_line(eth_c_line), .eth_c_done(eth_c_done), .eth_busy(eth_busy),
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
       .rd_word(dev_rd_word), .rd_built(dev_rd_built), .rd_release(n_rgr_rel),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
@@ -3370,7 +3392,7 @@ module quux15_core #(
     cprod_v_n = take_cmd_prod || (cprod_v && !port_empty);
     drain_end = (draining_now || stepping || step_go) && errhalt == 2'd0 && !errhalt_now
              && !ex_v_n && !wb_v_n && !rd_v_n && !cs_v_n && port_idle_n
-             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n;
+             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n && !eth_busy;
     // A HALT word under ERROR-STOP-ENABLE: the machine drains (`ex.halt`).
     halt_set  = commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
   end
