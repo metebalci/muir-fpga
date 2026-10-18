@@ -118,9 +118,9 @@ module quux15_de25 #(
     parameter string PROM_HEX = "build/quux15_transfer_prom.hex",
     // **THE PERIOD**, in units of 0.5 ns: the one place it is decided on
     // this board, which `build.sh` sets from `PERIOD_NS` and asks the PLL
-    // for.  22.5 ns, the board's binding fit's and its period in the
+    // for.  25 ns, the board's at revisions 15 and 16 and its period in the
     // goldens.
-    parameter int unsigned PERIOD = 45,
+    parameter int unsigned PERIOD = 50,
     // **THE REVISION**, QUUX's, 15 or 16 (QUUX's Ethernet contract, §10):
     // MACHINE-ID's revision field, and on 16 the Ethernet device, its page
     // at the pack side's base + 0x5000 for `quux-ethernet-device`.  One

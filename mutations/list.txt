@@ -33758,11 +33758,22 @@ if [ "$revision" -ge 15 ] && [ "$machine" = nothing ]; then
 @check machine_param
 @file boards/de25-nano/quartus/build.sh
 @note Revision 15 on the DE25-Nano built at the provisional 27 ns when no
-@note period is asked, not the binding fit's 22.5 ns.
+@note period is asked, not the board's 25 ns.
 @old
-period_ns=${PERIOD_NS:-22.5}
+period_ns=${PERIOD_NS:-25}
 @new
 period_ns=${PERIOD_NS:-27}
+@end
+
+@mutation machine-param-the-de25-q15-period-left-at-22.5
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note Revision 15 and 16 on the DE25-Nano built at the old 22.5 ns when no
+@note period is asked, which revision 16's fit misses, not the board's 25 ns.
+@old
+period_ns=${PERIOD_NS:-25}
+@new
+period_ns=${PERIOD_NS:-22.5}
 @end
 
 @mutation machine-param-the-de25-takes-prom-off-revision-15
@@ -33801,12 +33812,23 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @mutation quux15-de25-own-period-left-at-27
 @check quux15_de25_param
 @file boards/de25-nano/quux15_de25.sv
-@note The top's own period left at the provisional 27 ns, not the binding
-@note fit's 22.5 ns.
+@note The top's own period left at the provisional 27 ns, not the board's
+@note 25 ns.
 @old
-    parameter int unsigned PERIOD = 45,
+    parameter int unsigned PERIOD = 50,
 @new
     parameter int unsigned PERIOD = 54,
+@end
+
+@mutation quux15-de25-own-period-left-at-22.5
+@check quux15_de25_param
+@file boards/de25-nano/quux15_de25.sv
+@note The top's own period left at the old 22.5 ns, which revision 16's fit
+@note misses, not the board's 25 ns.
+@old
+    parameter int unsigned PERIOD = 50,
+@new
+    parameter int unsigned PERIOD = 45,
 @end
 
 @mutation quux15-de25-own-period-left-at-27-console
@@ -33815,7 +33837,7 @@ if [ -n "${PROM_SHA256:-}" ] && [ -n "$prom_sha" ]; then
 @note The top's own period left at the provisional 27 ns: the console's
 @note word 40 reads 54.
 @old
-    parameter int unsigned PERIOD = 45,
+    parameter int unsigned PERIOD = 50,
 @new
     parameter int unsigned PERIOD = 54,
 @end

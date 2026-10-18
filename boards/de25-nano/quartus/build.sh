@@ -47,7 +47,7 @@
 # **`REVISION=15` BUILDS QUUX REVISION 15**, `boards/de25-nano/quux15_de25.sv`
 # with `MACHINE=quux WORD_BITS=40`, always the whole board (`DDR=1 HDMI=1`),
 # into `build/de25-quux15-ddr-hdmi/`.  Its period is `PERIOD_NS`, in whole or
-# half nanoseconds, 22.5 unless asked, the board's binding fit's: the I/O PLL
+# half nanoseconds, 25 unless asked, the board's: the I/O PLL
 # is asked for 2,000 / (2 x `PERIOD_NS`) MHz, the top level is given the
 # period in units of 0.5 ns, and `quux15_sta_check.tcl` refuses a build whose
 # machine clock is not the period asked.  Its boot PROM is PROM 2002
@@ -149,7 +149,8 @@ fi
 # **REVISION 15'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked
 # for it and the timing check reads it back.  Ten to 63.5, the core's
 # `period` being seven bits of 0.5 ns.  Revisions 13 and 14 run at the tick.
-period_ns=${PERIOD_NS:-22.5}
+# 25 by default, the board's at revisions 15 and 16.
+period_ns=${PERIOD_NS:-25}
 period_half=0
 if [ "$revision" -ge 15 ]; then
     case $period_ns in
@@ -741,6 +742,8 @@ if [ "$fault" -eq 0 ] && [ "$revision" -ge 15 ]; then
     [ "${got##*/}" = "${prom_image##*/}" ] \
         || refuse "synthesis gave u_core PROM_HEX '${got:-nothing}', wanting $prom_image; see $dir/$rpt"
     got=$(q15_param quux15_de25 '|' REVISION)
+    [ -n "$got" ] || got=$(sed -n 's/^; REVISION *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1 \
+                           | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }')
     [ "$got" = "$revision" ] || refuse "synthesis gave the top level REVISION '${got:-nothing}', wanting $revision; see $dir/$rpt"
     say "synthesis gave the top level PERIOD $period_half, REVISION $revision, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
 elif [ "$fault" -eq 0 ]; then

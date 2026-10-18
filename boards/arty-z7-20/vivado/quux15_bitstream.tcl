@@ -5,10 +5,10 @@
 # (`boards/arty-z7-20/quux15_arty.sv`).
 #
 #     make build/boot_prom.quux15.hex
-#     PERIOD_NS=48 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
+#     PERIOD_NS=50 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
 #
 # Run from the repository root.  `PERIOD_NS` is the machine's period, the
-# MMCM's divide (48 by default, where MP8's trial fit closed); `PROM` the boot
+# MMCM's divide (50 by default, the board's period); `PROM` the boot
 # PROM's image, a 64-bit word a line, PROM 2002 (`build/boot_prom.quux15.hex`)
 # by default and a test program (`golden/src/quux15.rs --prom`) only when
 # named; `OUTDIR` where it all goes (`build/bitstream-arty-quux15`).  The
@@ -19,7 +19,7 @@
 # board's pins, the display's clocks as `bitstream.tcl` asserts them, a floor
 # under the machine's size, and `rams_enable_check.tcl` last.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xc7z020clg400-1"}]
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 48}]
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 50}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
 # `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
 # (QUUX's Ethernet contract, §10), the top's generic and the output's name.

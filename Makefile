@@ -388,9 +388,9 @@ QUUX15_PERIODS_redirect := 36 20
 # `golden/src/quux15.rs`'s `--board`, on the core built with the board's
 # `CACHE_WORDS`.  The Kria KR260's are muir's defaults, so its traces carry
 # no board in their names; another board's do, `.p<P>.<board>.golden`.
-# The periods are in units of 0.5 ns: the Kria's 19 ns, its binding fit's;
-# the Arty Z7-20's 48 ns, its trial fit's; and the DE25-Nano's 22.5 ns, its
-# binding fit's.  A board's period moves here and nowhere else.
+# The periods are in units of 0.5 ns, the boards' periods for revisions 15
+# and 16: the Kria's 20 ns, the Arty Z7-20's 50 ns and the DE25-Nano's 25 ns.
+# A board's period moves here and nowhere else.
 # `boardcache` is the board's cache at its own
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
 # that differ in the set's top bit alone, the way each set used last under
@@ -402,9 +402,9 @@ QUUX15_BOARDS := kria de25 arty
 QUUX15_CACHE_kria := 65536
 QUUX15_CACHE_de25 := 16384
 QUUX15_CACHE_arty := 4096
-QUUX15_PERIOD_kria := 38
-QUUX15_PERIOD_de25 := 45
-QUUX15_PERIOD_arty := 96
+QUUX15_PERIOD_kria := 40
+QUUX15_PERIOD_de25 := 50
+QUUX15_PERIOD_arty := 100
 quux15_board_tag = $(if $(filter kria,$(1)),,.$(1))
 QUUX15_BOARD_TRACES = $(foreach b,$(QUUX15_BOARDS),$(foreach g,$(QUUX15_MEMSIDE),\
                         $(BUILD)/quux15_$(g).quux.p$(QUUX15_PERIOD_$(b))$(call quux15_board_tag,$(b)).golden))
@@ -3637,9 +3637,9 @@ QUUX15_DE25_FACES := rtl/plumbing/cadr_input_cables.sv rtl/plumbing/cadr_gp0_def
 QUUX15_DE25_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv $(QUUX15_DE25_CORE_SRC) $(QUUX15_F2SDRAM) \
                    $(QUUX15_DE25_FACES) boards/de25-nano/quux15_de25.sv
 QUUX15_DE25_STUBS := tb/cadr_de25_stubs.sv tb/quux15_altdpram_model.sv
-# The period the flow is asked for, in nanoseconds, whole or a half; 22.5 by
-# default, the board's binding fit's and its period in the goldens
-# (`QUUX15_PERIOD_de25`, in units of 0.5 ns).
+# The period the flow is asked for, in nanoseconds, whole or a half; 25 by
+# default, the board's period at revisions 15 and 16 and its period in the
+# goldens (`QUUX15_PERIOD_de25`, in units of 0.5 ns).
 PERIOD_NS ?= $(shell echo $(QUUX15_PERIOD_de25) | awk '{ p = $$1 / 2; print (p == int(p)) ? int(p) : p }')
 
 # **LINTED AS THE FLOW BUILDS IT, EVERY LINTED FILE IN THE FLOW'S LIST, AND
@@ -3691,8 +3691,8 @@ $(BUILD)/quux15_de25.pass: $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) \
 # the cache's 16K words, main memory's 32M and the two bases, one write ID,
 # the video controller's 1280 by 1024 at the core, the face and the display
 # output, VESA's raster, the board name, the period at the core and the
-# face, and every time in clocks, at 10, 22, 22.5, 23 and 24 ns; and the
-# top's own period, the board's binding fit's 22.5 ns.
+# face, and every time in clocks, at 10, 22.5, 24, 25 and 26 ns; and the
+# top's own period, the board's 25 ns.
 $(BUILD)/quux15_de25_param.pass: tools/quux15_de25_param_check.py tools/machine_param_check.py \
         tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
                                  $(QUUX15_DE25_SRC) $(QUUX15_DE25_STUBS) | $(BUILD)
@@ -4058,7 +4058,7 @@ de25: $(if $(filter 15 16,$(REVISION)),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(
 	    boards/de25-nano/quartus/build.sh $(DE25_SRC)
 
 # **AND EVERY MACHINE AND REVISION STILL SYNTHESIZES ON QUARTUS**: the
-# CADR, QUUX revision 13 and QUUX revision 14, each through `build.sh` with
+# CADR and QUUX revisions 13, 14, 15 and 16, each through `build.sh` with
 # `DE25_SYN_ONLY=1`, which stops after synthesis and its checks.  A change
 # made for one revision can leave another unbuildable, and only a tool says
 # so: revision 14's PDL redirect put registers into revision 13's buffer
@@ -4066,8 +4066,8 @@ de25: $(if $(filter 15 16,$(REVISION)),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(
 # fit.  No simulation sees it, and a fit of the revision that was being
 # worked on does not either.  Where no Quartus is configured
 # (`QUARTUS_ROOTDIR`, or the board's `local.conf`), the pass says it was
-# skipped and is not written, so it runs again where Quartus is.  Revision
-# 15 is synthesized with the transfer test program as its boot PROM
+# skipped and is not written, so it runs again where Quartus is.  Revisions
+# 15 and 16 are synthesized with the transfer test program as their boot PROM
 # (`PROM`), which `make check` builds, because nothing in `make check` reads
 # PROM 2002's image (`QUUX15_PROM_2002`, above).
 DE25_SYN_FLOW := boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/project.tcl \
@@ -4078,12 +4078,12 @@ $(BUILD)/de25_syn.pass: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI)
                         $(QUUX15_DE25_SRC) $(BUILD)/quux15_transfer_prom.hex | $(BUILD)
 	@if [ -z "$$QUARTUS_ROOTDIR" ] && ! grep -qs '^[[:space:]]*QUARTUS_ROOTDIR' boards/de25-nano/local.conf; then \
 	   echo "de25_syn: skipped --- no Quartus here (QUARTUS_ROOTDIR, or boards/de25-nano/local.conf)"; exit 0; fi; \
-	 for b in cadr:32: quux:40:13 quux:40:14 quux:40:15; do \
+	 for b in cadr:32: quux:40:13 quux:40:14 quux:40:15 quux:40:16; do \
 	   m=$${b%%:*}; r=$${b##*:}; w=$${b#*:}; w=$${w%%:*}; \
 	   log=$(BUILD)/de25_syn.$$m$$r.log; \
 	   $(MAKE) --no-print-directory -o $(BUILD)/boot_prom.hex -o $(BUILD)/sync_prom.hex \
 	       -o $(BUILD)/boot_prom.quux13.hex -o $(BUILD)/boot_prom.quux14.hex -o $(BUILD)/quux15_transfer_prom.hex \
-	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} $$([ "$$r" = 15 ] && echo PROM=$(BUILD)/quux15_transfer_prom.hex) \
+	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} $$(case "$$r" in 15|16) echo PROM=$(BUILD)/quux15_transfer_prom.hex;; esac) \
 	       DDR=1 HDMI=1 DE25_SYN_ONLY=1 > $$log 2>&1 \
 	     || { echo "de25_syn: $$m $${r:+revision $$r} does NOT synthesize on Quartus; see $$log"; \
 	          grep -h '^de25: REFUSED' $$log; exit 1; }; \
@@ -4871,13 +4871,13 @@ $(BUILD)/display_out_kr260.quux.pass: $(BUILD)/obj_display_out_kr260_quux/Vcadr_
 
 # **AND AS REVISION 15'S KRIA BUILDS IT** (`boards/kria-kr260/quux15_kr260.sv`):
 # the same picture and raster, the memory side at the machine's period,
-# 19 ns, the slowest the board's fits have been asked for, where the fetch
+# 20 ns, the board's and the slowest its fits have been asked for, where the fetch
 # has the fewest clocks a line to keep up in; and its configurations W, U
 # and R, the `bow` and `err_clear` that board drives.
 $(BUILD)/obj_display_out_kr260_quux15/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
                                                          tb/cadr_display_out_tb.cpp \
                                                          boards/kria-kr260/display_raster.mk | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=19000' \
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=20000' \
 	    -Mdir $(BUILD)/obj_display_out_kr260_quux15 \
 	    $(DISPLAY_KR260_G) -GPIC_W=1920 -GPIC_H=1080 -GWORDS_PER_LINE=60 -GCOLOR_BASE=470024192 \
 	    --top-module cadr_display_out \

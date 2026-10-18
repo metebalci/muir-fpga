@@ -56,9 +56,10 @@ import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_arty"
-# The periods the board's fits are asked for (MP8 step 0: 44, 47, 48), and
-# 10 ns, the tick, where a figure left at its tick count agrees by accident.
-PERIODS = (10, 44, 47, 48)
+# The periods the board's fits are asked for (MP8 step 0: 44, 47, 48; the
+# board's own 50), and 10 ns, the tick, where a figure left at its tick count
+# agrees by accident.
+PERIODS = (10, 44, 47, 48, 50)
 # Written here apart from the top: contract HD's video controller and board
 # name, Q-MP6's cache, contract G2 §3's main memory, `cadr_ddr_map.sv`'s Arty
 # bases, and VESA DMT's 1280 by 1024 at 60 Hz (`docs/display-output.md`).

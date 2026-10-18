@@ -144,10 +144,10 @@ set quux15_rules {
     {block-disk's block store}    {*u_core|walk|blk_ram_rtl_*}    {*u_core|walk|chb_we*} {*u_core|walk|chb_a\[*}
 }
 
-if {$machine eq "quux" && $revision eq "15"} {
+if {$machine eq "quux" && $revision in {15 16}} {
     set n 0
     foreach {what mems we wa} $quux15_rules { rams_rule $what $mems $we $wa; incr n }
-    puts "RAMS: ok      revision 15: all $n RAMs written at one write address were found,"
+    puts "RAMS: ok      revision $revision: all $n RAMs written at one write address were found,"
     puts "RAMS:         and write where the RTL says"
 } elseif {$machine eq "quux"} {
     set n 0

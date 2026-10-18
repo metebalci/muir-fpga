@@ -2096,7 +2096,7 @@ CHECKS = {
                   "-GSPREAD=1"],
         "golden": None,
     },
-    # And as revision 15's Kria builds it: the memory side at 19 ns, and the
+    # And as revision 15's Kria builds it: the memory side at 20 ns, and the
     # configurations of `bow` and `err_clear` (the Makefile's
     # `display_out_kr260.quux15.pass`).
     "display_out_kr260_quux15": {
@@ -2104,7 +2104,7 @@ CHECKS = {
         "top": "cadr_display_out",
         "tb": "tb/cadr_display_out_tb.cpp",
         "flags": ["-O2", "-CFLAGS",
-                  "-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=19000",
+                  "-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=20000",
                   "-GH_ACTIVE=1920", "-GH_FRONT=88", "-GH_SYNC=44", "-GH_BACK=148",
                   "-GV_ACTIVE=1080", "-GV_FRONT=4", "-GV_SYNC=5", "-GV_BACK=36",
                   "-GPIC_W=1920", "-GPIC_H=1080", "-GWORDS_PER_LINE=60",

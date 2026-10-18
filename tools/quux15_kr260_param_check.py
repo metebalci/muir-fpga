@@ -52,9 +52,9 @@ import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_kr260"
-# The periods the board's fits are asked for, and 10 ns, the tick, where a
-# figure left at its tick count agrees by accident.
-PERIODS = (10, 13, 18, 19)
+# The periods the board's fits are asked for, its own 20 ns among them, and
+# 10 ns, the tick, where a figure left at its tick count agrees by accident.
+PERIODS = (10, 13, 18, 19, 20)
 # Contract HD: the Kria's video controller.  Written here apart from the top.
 VIDEO = (1920, 1080)
 # Contract HD: the Kria's board name, feature words 20-24.  Written here apart

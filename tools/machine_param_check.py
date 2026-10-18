@@ -68,14 +68,15 @@ such read-back.  It does not check where either flow writes its build.
 
 **AND THE DE25-NANO'S REVISION 15 BUILDS AT ITS BINDING PERIOD FROM PROM
 2002 BY DEFAULT**, as the Kria KR260's and the Arty Z7-20's flows do: its
-`build.sh`, asked for no period and no PROM, says 22.5 ns, the binding fit's,
+`build.sh`, asked for no period and no PROM, says 25 ns, the board's,
 and `build/boot_prom.quux15.hex`; it takes the image `PROM` names; it holds
 the image to `PROM_SHA256` when given, refusing one that differs and taking
 one that agrees; and it refuses `PROM` on any other revision.  With
 `--make`, which the Makefile passes and the mutation runner's copy (which has
 no Makefile) does not, `make -n de25 ... REVISION=15` hands `build.sh` the
-period 22.5, PROM 2002's image and that image's digest, written here apart
-from the Makefile, and with `PROM` named, that image and no digest.
+period 25, PROM 2002's image and that image's digest, written here apart
+from the Makefile, and with `PROM` named, that image and no digest; and
+revision 16 at the same period, from both.
 
 Exit status 0 when every case agrees, 1 otherwise, with each case's line
 printed either way.
@@ -197,10 +198,10 @@ BOARDS = {
 # A name that is not a machine, and close enough to one to be a typing slip.
 NOT_A_MACHINE = "cdr"
 
-# The DE25-Nano's revision 15 by default: the binding fit's period, and PROM
+# The DE25-Nano's revision 15 by default: the board's period, and PROM
 # 2002 assembled for revision 15, its image's path and digest (the Makefile's
 # `QUUX15_PROM_2002_SHA256`, written again here).
-DE25_Q15_PERIOD_NS = "22.5"
+DE25_Q15_PERIOD_NS = "25"
 DE25_Q15_PROM = "build/boot_prom.quux15.hex"
 DE25_Q15_PROM_SHA256 = "2b27752f9327d5ed3e61c7af39777d8ebf7e6ab971f6fdaa2e56bfe1c88cdb1c"
 DE25_Q15_TEST_PROM = "build/quux15_transfer_prom.hex"
@@ -1124,6 +1125,9 @@ def main():
                       q15_make,
                       ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_PROM,
                        "PROM_SHA256=%s" % DE25_Q15_PROM_SHA256], [])
+            make_flow("make de25 REVISION=16 hands build.sh %s ns" % DE25_Q15_PERIOD_NS,
+                      ["MACHINE=quux", "WORD_BITS=40", "REVISION=16", "DDR=1", "HDMI=1"],
+                      ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_PROM], [])
             make_flow("make de25 REVISION=15 PROM=%s hands build.sh that image and no digest" % DE25_Q15_TEST_PROM,
                       q15_make + ["PROM=%s" % DE25_Q15_TEST_PROM],
                       ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_TEST_PROM], ["PROM_SHA256="])
