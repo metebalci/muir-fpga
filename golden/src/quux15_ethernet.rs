@@ -33,7 +33,9 @@
 //!              back and lowers the level
 //!   hostwords  253-257 other than muir's defaults, read, and a frame to
 //!              that MAC address delivered; the checkpoints group at
-//!              revision 16 halts each of these runs at points across it
+//!              revision 16 halts each of these runs at points across it,
+//!              and each that receives inside its first delivery's line
+//!              clearing, 15 clocks after the frame arrives
 //!
 //! **THE `lineclear` GROUP**, one run judged by its results (`# results-only`):
 //! a ring of one entry, a 42-byte frame and then a 1,514-byte one delivered

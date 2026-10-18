@@ -373,7 +373,8 @@ QUUX15_PERIODS_regread := 20 36
 # revision 16, whose 140-157 and 160-171 are revision 15's; and the
 # checkpoints group at revision 16, the board's file (version 57, the
 # Ethernet device's state read off the core's readout) held to muir's byte
-# for byte, the `ethernet` group's runs halted across them among it.
+# for byte, the `ethernet` group's runs halted across them among it, and
+# those that receive halted inside a delivery's line clearing.
 QUUX16_GROUPS := ethernet lineclear filedev network checkpoints
 QUUX15_PERIODS_ethernet := 20 17 36
 QUUX15_PERIODS_lineclear := 20 17 36

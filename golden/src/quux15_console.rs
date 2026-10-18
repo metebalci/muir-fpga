@@ -613,10 +613,22 @@ pub fn checkpoints(period: u64) -> Vec<Case> {
     // halted at points across them, rings set up, frames delivered and
     // counted, transmits sent and waiting, 253-257 the host's.
     if super::revision() == 16 {
+        // And each run that receives halted 15 clocks after its first
+        // frame arrives, inside that delivery's line clearing, which the
+        // halt's drain waits out (QUUX's Ethernet contract, §2.5 (ii)).
+        let mut clearing = Vec::new();
         for c in super::quux15_ethernet::ethernet() {
             let name = format!("eth-{}", c.name);
+            if let Some(&(first, _)) = c.eth.as_ref().and_then(|r| r.frames.first()) {
+                let mut h = c.clone();
+                h.name = format!("{name}-{}", first + 15);
+                h.script = checkpoint_at(first + 15);
+                h.micro_check = false;
+                clearing.push(h);
+            }
             add(&name, c, 4);
         }
+        v.extend(clearing);
     }
     v
 }

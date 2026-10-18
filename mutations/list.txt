@@ -35205,7 +35205,7 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
 @old
              && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n && !eth_busy;
 @new
-             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n;
+             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n && !(eth_busy && 1'b0);
 @end
 
 @mutation eth-counts-unmasked
