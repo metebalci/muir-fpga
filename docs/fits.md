@@ -36,10 +36,18 @@ The Arty Z7-20's and the DE25-Nano's revision 15 is 1280 by 1024, with a
 cache of 4K words on the Arty Z7-20 and 16K on the DE25-Nano. The Kria
 KR260's is 1920 by 1080, with a cache of 64K words.
 
+The DE25-Nano's logic is Quartus's ALMs used in final placement, the ALMs
+the design occupies; in brackets, its ALMs needed, which adds Quartus's
+estimate of the ALMs that packing leaves unusable and subtracts those dense
+packing would recover. The CADR's DE25-Nano row of `c3b8fd2`, below, gives
+both too, read from a re-run of that fit, which reproduced its 16,504 ALMs
+needed and 135 M20K; the DE25-Nano's other rows give ALMs needed alone. The
+setup slack is the worst over every clock.
+
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
 | Arty Z7-20 | QUUX revision 15, 48 ns | +0.493 ns | +0.024 ns | 28,766 of 53,200 LUTs, 54.07% | 96 of 140 BRAM tiles | 8,838 of 13,300 | `aa4a6ad` | clean | 2026-10-15 |
-| DE25-Nano | QUUX revision 15, 22.5 ns | +0.002 ns | 0.000 ns | 37,690 of 46,800 ALMs, 81% | 162 of 358 M20K | --- | `b1b4bcb` | clean | 2026-10-15 |
+| DE25-Nano | QUUX revision 15, 22.5 ns | +0.002 ns | 0.000 ns | 35,063 of 46,800 ALMs used in placement, 75% (37,690 needed) | 162 of 358 M20K | --- | `b1b4bcb` | clean | 2026-10-15 |
 | Kria KR260 | QUUX revision 15, 19 ns | +0.013 ns | +0.012 ns | 31,622 of 117,120 LUTs, 27.00% | 43.5 of 144 BRAM tiles, 14 of 64 URAM | 6,170 of 14,640 CLBs | `f4df742` | clean | 2026-10-15 |
 
 The Arty Z7-20's passed its RAM enable check over 198 ports, with the
@@ -67,7 +75,7 @@ stamp reads `c3b8fd20`, the tree clean.
 | Cora Z7-07S | CADR | +0.280 ns | +0.010 ns | 14,033 of 14,400 LUTs, 97.45% | 43 of 50 BRAM tiles | 4,361 of 4,400 | `c3b8fd2` | clean | 2026-10-07 |
 | Kria KR260 | CADR | +1.987 ns | +0.015 ns | 15,309 of 117,120 LUTs, 13.07% | 41 of 144 BRAM tiles | 3,247 of 14,640 CLBs | `c3b8fd2` | clean | 2026-10-07 |
 | Kria KR260 | QUUX revision 13, K = 4 | +0.460 ns | +0.015 ns | 22,996 of 117,120 LUTs, 19.63% | 76 of 144 BRAM tiles | 4,345 of 14,640 CLBs | `c3b8fd2` | clean | 2026-10-07 |
-| DE25-Nano | CADR | +2.353 ns | 0.000 ns | 16,504 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `c3b8fd2` | clean | 2026-10-08 |
+| DE25-Nano | CADR | +2.353 ns | 0.000 ns | 18,108 of 46,800 ALMs used in placement, 39% (16,504 needed) | 135 of 358 M20K | --- | `c3b8fd2` | clean | 2026-10-08 |
 | DE25-Nano | QUUX revision 13 | +1.520 ns | 0.000 ns | 29,969 of 46,800 ALMs, 64% | 205 of 358 M20K | --- | `c3b8fd2` | clean | 2026-10-08 |
 
 Each passed its RAM enable check: the Arty Z7-20's over 98 and 131 ports,
