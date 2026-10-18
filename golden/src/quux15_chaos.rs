@@ -83,10 +83,11 @@ const PEER: u16 = 0o3040;
 
 /// **Revision 15's time base**, which is what makes muir's interface keep
 /// revision 15's rules: units of 0.5 ns on a clock of `PERIOD` of them, 8.5
-/// ns, muir's default. With no time base set muir counts nanoseconds and
-/// keeps the CADR board's rules --- CRC Error the running check register
-/// while a frame is taken, the line idle at the fourth `FCLK^` rise --- which
-/// are not this interface's.
+/// ns, the period this group's traces are made at, its own and not muir's
+/// default (`muir::clock::PERIOD_15`, 10 ns). With no time base set muir
+/// counts nanoseconds and keeps the CADR board's rules --- CRC Error the
+/// running check register while a frame is taken, the line idle at the fourth
+/// `FCLK^` rise --- which are not this interface's.
 const PERIOD: u64 = 17;
 const TIME: TimeBase = TimeBase::half_ns(PERIOD);
 
