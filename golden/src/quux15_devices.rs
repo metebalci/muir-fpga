@@ -449,10 +449,14 @@ pub fn filedev() -> Vec<(String, Preset)> {
 
 /// **The completion's sweep at a board's cache** (`boardcache`): LOG of
 /// "ab", and while it is answered a loop that reads RESP_PROD and then a
-/// line of main memory and takes its word, so that a read of the line waits
-/// on the completion's sweep wherever its cache words / 512 clocks end, and
-/// misses after it; the response read last.
-pub fn sweep_reads() -> Preset {
+/// line of main memory `reads` times and takes its word, so that a read of
+/// the line waits on the completion's sweep wherever its cache words / 512
+/// clocks end, and misses after it; the response read last.  `lead` fillers
+/// before the loop move its phase against the completion's clock, so that
+/// among the runs a read of the line waits out the sweep's last clock at
+/// any period: one read an iteration leaves gaps longer than a 256-set
+/// sweep's 8 clocks, three back to back do not.
+pub fn sweep_reads(lead: usize, reads: u32) -> Preset {
     use muir::file_device::op;
     const LINE: u64 = 0o2000;
     let mut p = run();
@@ -464,13 +468,18 @@ pub fn sweep_reads() -> Preset {
     p.read(PHYS | LINE, 0o20);
     p.write(1, reg(0o164));
     let (at, one, line) = (p.k(reg(0o170)), p.k(1), p.k(PHYS | LINE));
+    if lead > 0 {
+        p.fill(lead);
+    }
     let top = p.at();
     p.op(ALU | SETA | a_src(at) | START_READ);
     p.fill(1);
     p.op(ALU | AND | SRC_MD | a_src(one) | a_dest(TESTED));
-    p.op(ALU | SETA | a_src(line) | START_READ);
-    p.fill(1);
-    p.op(ALU | SETM | SRC_MD | m_dest(0o21));
+    for _ in 0..reads {
+        p.op(ALU | SETA | a_src(line) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o21));
+    }
     p.op(jcond(3) | a_src(TESTED) | m_src(M_ZERO) | target(top) | N);
     p.fill(1);
     p.read(PHYS | RESP_RING, 0o22).read(PHYS | LINE, 0o23);

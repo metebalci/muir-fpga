@@ -1708,7 +1708,10 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "boardcache" => {
             let mut v: Vec<Case> =
                 quux15_memside::board_cache(cache_words()).into_iter().map(|(n, p)| p.case(&n)).collect();
-            v.push(quux15_devices::sweep_reads().case("sweep"));
+            v.push(quux15_devices::sweep_reads(0, 1).case("sweep"));
+            for lead in 0..3 {
+                v.push(quux15_devices::sweep_reads(lead, 3).case(&format!("sweep-dense-{lead}")));
+            }
             v
         }
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],

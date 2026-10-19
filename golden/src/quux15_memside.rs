@@ -28,7 +28,8 @@
 //!             bits' group edges, two lines that differ in the set's top
 //!             bit alone, the way each set used last against reads and
 //!             walks that overfill two sets (`recency`), and the file
-//!             device's completion sweeping it under a loop of reads
+//!             device's completion sweeping it under a loop of reads, one
+//!             read of a line an iteration and three, at three phases
 //!             (`quux15_devices.rs`'s `sweep_reads`)
 //!
 //! `randmem` and `matrixmem` are `quux15_preset.rs`'s random programs and
