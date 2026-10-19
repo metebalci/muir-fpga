@@ -8,22 +8,23 @@
 #     PERIOD_NS=50 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
 #
 # Run from the repository root.  `PERIOD_NS` is the machine's period, the
-# MMCM's divide (50 by default, the board's period); `PROM` the boot
-# PROM's image, a 64-bit word a line, PROM 2002 (`build/boot_prom.quux15.hex`)
-# by default and a test program (`golden/src/quux15.rs --prom`) only when
-# named; `OUTDIR` where it all goes (`build/bitstream-arty-quux15`).  The
-# memories are placed as `quux15_ram.xdc` says, and asked after synthesis;
+# MMCM's divide (by default the board's period, 50 at revision 15 and 55 at
+# revision 16); `PROM` the boot PROM's image, a 64-bit word a line, PROM
+# 2002 (`build/boot_prom.quux15.hex`) by default and a test program
+# (`golden/src/quux15.rs --prom`) only when named; `OUTDIR` where it all
+# goes (`build/bitstream-arty-quux15`).  The memories are placed as `quux15_ram.xdc` says, and asked after synthesis;
 # the report says the period the fit met and the area, and the bitstream
 # carries the tree's build stamp.  It is the Kria KR260's flow
 # (`boards/kria-kr260/vivado/quux15_bitstream.tcl`) on this part, with the
 # board's pins, the display's clocks as `bitstream.tcl` asserts them, a floor
 # under the machine's size, and `rams_enable_check.tcl` last.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xc7z020clg400-1"}]
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 50}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
 # `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
 # (QUUX's Ethernet contract, §10), the top's generic and the output's name.
 set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 15}]
+# The board's period: 50 ns at revision 15, 55 ns at revision 16.
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
 if {$revision ni {15 16}} {
     puts "Q15ARTY: FAILED --- REVISION=$revision is not 15 or 16"
     exit 1

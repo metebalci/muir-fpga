@@ -3008,7 +3008,7 @@ CHECKS["quux15_arty"] = {
 # each period.  Refusing is being caught.
 CHECKS["quux15_arty_param"] = {
     "kind": "script",
-    "sources": ["boards/arty-z7-20/quux15_arty.sv"],
+    "sources": ["boards/arty-z7-20/quux15_arty.sv", "boards/arty-z7-20/vivado/quux15_bitstream.tcl"],
     "cmd": ["tools/quux15_arty_param_check.py"] + CHECKS["quux15_arty"]["stubs"] + [
         "rtl/machine/cadr_tick_pkg.sv"] + CHECKS["quux15_arty"]["extra"] + CHECKS["quux15_arty"]["sources"],
     "top": None,

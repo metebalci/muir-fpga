@@ -35592,6 +35592,39 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
       .MACHINE_ID({16'h5155, 12'(15 + 0 * REVISION), 4'd4}),
 @end
 
+@mutation quux15-arty-q16-own-period-at-50
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note Revision 16's top built at revision 15's 50 ns when no period is
+@note given, which its fit misses, not the board's 55 ns.
+@old
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 55 : 50
+@new
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 50 : 50
+@end
+
+@mutation quux15-arty-q16-bitstream-period-at-50
+@check quux15_arty_param
+@file boards/arty-z7-20/vivado/quux15_bitstream.tcl
+@note The bitstream's flow builds revision 16 at 50 ns when no period is
+@note asked, not the board's 55 ns.
+@old
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
+@new
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 50 : 50)}]
+@end
+
+@mutation quux15-arty-q15-bitstream-period-at-55
+@check quux15_arty_param
+@file boards/arty-z7-20/vivado/quux15_bitstream.tcl
+@note The bitstream's flow builds revision 15 at revision 16's 55 ns when
+@note no period is asked, not the board's 50 ns.
+@old
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
+@new
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 55)}]
+@end
+
 @mutation eth-kr260-page-a-page-off
 @check quux15_reset_kr260_r16
 @file boards/kria-kr260/quux15_kr260.sv

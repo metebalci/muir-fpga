@@ -36,6 +36,10 @@ clock), the microcycle lamp's `HOLD_T` and the disk lamp's `DISK_LIT_T`
 top's arithmetic.  A top that left any of them at its tick count passes at
 10 ns and is caught at every other period.
 
+**THE BOARD'S PERIOD BY REVISION**: 50 ns at revision 15 and 55 ns at
+revision 16, the top's own `PERIOD_NS` and the bitstream flow's default when
+no period is asked, each held to the figure written here.
+
 **THE VALUE IS READ AT THE INSTANCE, NOT INFERRED FROM THE TEXT**: Verilator
 elaborates the top at each period, after a lint with `-Wall`, and writes its
 tree as JSON, as `tools/machine_param_check.py` does for the other tops.
@@ -57,9 +61,14 @@ import ethernet_page_check  # noqa: E402
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_arty"
 # The periods the board's fits are asked for (MP8 step 0: 44, 47, 48; the
-# board's own 50), and 10 ns, the tick, where a figure left at its tick count
-# agrees by accident.
-PERIODS = (10, 44, 47, 48, 50)
+# board's own, 50 at revision 15 and 55 at revision 16), and 10 ns, the tick,
+# where a figure left at its tick count agrees by accident.
+PERIODS = (10, 44, 47, 48, 50, 55)
+# The board's period by revision, written here apart from the top and from
+# the bitstream's flow: what a build that names no period gets.
+OWN = {15: 50, 16: 55}
+BITSTREAM_TCL = "boards/arty-z7-20/vivado/quux15_bitstream.tcl"
+TCLSH = os.environ.get("TCLSH", "tclsh")
 # Written here apart from the top: contract HD's video controller and board
 # name, Q-MP6's cache, contract G2 §3's main memory, `cadr_ddr_map.sv`'s Arty
 # bases, and VESA DMT's 1280 by 1024 at 60 Hz (`docs/display-output.md`).
@@ -242,6 +251,41 @@ def at_period(period, sources, scratch, revision=15):
         say(True, what)
 
 
+def own_period(sources, scratch, revision):
+    """The top elaborated with no period given, and the bitstream's flow asked
+    for none: each is the board's period at `revision`."""
+    want = OWN[revision]
+    base = [VERILATOR, "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+            "-Iboards/arty-z7-20", "--top-module", TOP, "-GREVISION=%d" % revision]
+    mdir = tempfile.mkdtemp(dir=scratch)
+    rc, out = run(base[:1] + ["--json-only", "-Mdir", mdir] + base[1:] + sources)
+    if rc != 0:
+        say(False, "REVISION=%d, the top's own period: the JSON dump failed:\n%s" % (revision, out.strip()))
+        return
+    with open(os.path.join(mdir, "V%s.tree.json" % TOP)) as f:
+        tree = json.load(f)
+    shutil.rmtree(mdir, True)
+    got = top_param(tree, "PERIOD_NS")
+    what = "REVISION=%d, the top's own PERIOD_NS is %d ns, the board's" % (revision, want)
+    say(got == want, what if got == want else "%s --- it is %s" % (what, got))
+    got = pin_const(tree, "u_core", "period")
+    what = "REVISION=%d, the top's own period reaches u_core's period pin as %d" % (revision, 2 * want)
+    say(got == 2 * want, what if got == 2 * want else "%s --- it is tied to %s" % (what, got))
+    # The flow's own: its lines that set the revision and the period, run
+    # with REVISION set and no PERIOD_NS, as Vivado would run them.
+    with open(BITSTREAM_TCL) as f:
+        lines = [l for l in f if l.startswith(("set revision ", "set period "))]
+    script = os.path.join(scratch, "period_%d.tcl" % revision)
+    with open(script, "w") as f:
+        f.write("set ::env(REVISION) %d\nunset -nocomplain ::env(PERIOD_NS)\n" % revision)
+        f.writelines(lines)
+        f.write("puts $period\n")
+    rc, out = run([TCLSH, script])
+    what = "REVISION=%d, %s builds at %d ns when no period is asked" % (revision, BITSTREAM_TCL, want)
+    say(rc == 0 and out.strip() == str(want), what if rc == 0 and out.strip() == str(want)
+        else "%s --- it gives %r" % (what, out.strip()))
+
+
 def main():
     sources = sys.argv[1:]
     if not sources:
@@ -253,6 +297,7 @@ def main():
     scratch = tempfile.mkdtemp(prefix="quux15_arty_param.", dir="build")
     try:
         for r in (15, 16):
+            own_period(sources, scratch, r)
             for p in PERIODS:
                 at_period(p, sources, scratch, r)
     finally:

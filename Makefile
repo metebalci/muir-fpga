@@ -3601,6 +3601,7 @@ $(BUILD)/quux15_arty.pass: $(QUUX15_ARTY_SRC) $(BOARD_STUBS) \
 # period the board's fits are asked for and at 10 ns.
 $(BUILD)/quux15_arty_param.pass: tools/quux15_arty_param_check.py tools/machine_param_check.py \
         tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
+        boards/arty-z7-20/vivado/quux15_bitstream.tcl \
                                  $(QUUX15_ARTY_SRC) $(BOARD_STUBS) | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_arty_param_check.py \
 	    $(BOARD_STUBS) $(QUUX15_ARTY_SRC)

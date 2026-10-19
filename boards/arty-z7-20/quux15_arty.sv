@@ -93,14 +93,15 @@
 
 module quux15_arty #(
     parameter string PROM_HEX = "build/quux15_transfer_prom.hex",
-    // **THE PERIOD**, in nanoseconds: the MMCM's divide below, the one place
-    // it is decided on this board: the board's 50 ns.
-    parameter int unsigned PERIOD_NS = 50,
     // **THE REVISION**, QUUX's, 15 or 16 (QUUX's Ethernet contract, §10):
     // MACHINE-ID's revision field, and on 16 the Ethernet device, its page
     // at the pack side's base + 0x5000 for `quux-ethernet-device`.  One
     // design for both, the flow choosing it.
-    parameter int unsigned REVISION = 15
+    parameter int unsigned REVISION = 15,
+    // **THE PERIOD**, in nanoseconds: the MMCM's divide below, the one place
+    // it is decided on this board: the board's, 50 ns at revision 15 and 55
+    // ns at revision 16.
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 55 : 50
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
