@@ -1788,8 +1788,8 @@ Read the figures with the probe stopped: while it runs they move, and a sum
 read beside its count may be a clock apart. Lost is set when an address
 arrives with the probe's queue full or an answer with it empty, which would
 put the timing out of step with the bridge; saturated when a count reaches all
-ones, which stops both directions. A latency over 2^20 - 1 clocks, about 24 ms
-at 23 ns and 20 ms at 19 ns, reads short.
+ones, which stops both directions. A latency over 2^20 - 1 clocks, about 26 ms
+at 25 ns and 21 ms at 20 ns, reads short.
 
 `build/quux15_face.pass` drives each of these words over AXI: every key, a key
 with a strobe off, another value, and the word's own read-back written, which

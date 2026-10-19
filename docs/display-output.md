@@ -1359,10 +1359,10 @@ same edge as the clear wins. The console's word 42 reads both and clears them
 low, so there nothing changes. Every revision 15 top level drives both.
 
 **The sleep's second is the period's.** The top computes `SECOND_T` from its
-period, a second to the nearest clock: 52,631,579 at 19 ns.
+period, a second to the nearest clock: 50,000,000 at 20 ns.
 
 `build/display_out_kr260.quux15.pass` builds the display as this board does and
-runs the memory side at 19 ns. Beside the QUUX configurations it adds three:
+runs the memory side at 20 ns. Beside the QUUX configurations it adds three:
 black-on-white, every pixel compared against the picture shown the other way;
 the port slowed and the clear pulsed once the underrun is up, which must take
 it down and see it rise again; and every beat answered with an error for two
@@ -1397,8 +1397,9 @@ console's word 42 reads and clears the two sticky faults.
 **The board differs, and the design does not.** The mode is the board's, and
 changing it needs a fit (1. The video mode): 1280 by 1024 here and 1920 by
 1080 on the Kria KR260. The sleep's second is counted in clocks of the board's
-period, to the nearest clock: 20,833,333 at the Arty Z7-20's 48 ns and
-44,444,444 at the DE25-Nano's 22.5 ns.
+period, to the nearest clock: 20,000,000 at the Arty Z7-20's 50 ns,
+18,181,818 at its revision 16's 55 ns, and 40,000,000 at the DE25-Nano's 25
+ns.
 
 **What holds it.** `build/display_out.quux.pass` builds the display at the
 picture these two boards pass it, with the configurations the Kria KR260's

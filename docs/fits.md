@@ -25,10 +25,42 @@ reports none.
 
 ## From a clean tree
 
+These fits are QUUX revisions 15 and 16's at the boards' periods, with muir
+pinned at `692ba52` and PROM 2002 in the boot PROM: 20 ns on the Kria KR260
+and 25 ns on the DE25-Nano at both revisions, and on the Arty Z7-20 50 ns at
+revision 15 and 55 ns at revision 16. The Arty Z7-20's revision 16 was built
+from `d2e674d`, its stamp reading `d2e674d0`, and the other five from
+`653e575`, their stamps reading `653e5750`, every tree clean. The caches and pictures are those of the fits below: 64K words
+and 1920 by 1080 on the Kria KR260, 16K words on the DE25-Nano and 4K on the
+Arty Z7-20, both 1280 by 1024. The DE25-Nano's logic is its ALMs used in
+final placement, with its ALMs needed in brackets, as below.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 15, 50 ns | +0.477 ns | +0.032 ns | 28,848 of 53,200 LUTs, 54.23% | 96.5 of 140 BRAM tiles | 8,776 of 13,300 | `653e575` | clean | 2026-10-18 |
+| Arty Z7-20 | QUUX revision 16, 55 ns | +0.550 ns | +0.024 ns | 29,814 of 53,200 LUTs, 56.04% | 96.5 of 140 BRAM tiles | 8,955 of 13,300 | `d2e674d` | clean | 2026-10-19 |
+| DE25-Nano | QUUX revision 15, 25 ns | +2.080 ns | +0.002 ns | 34,941 of 46,800 ALMs used in placement, 75% (37,487 needed) | 163 of 358 M20K | --- | `653e575` | clean | 2026-10-18 |
+| DE25-Nano | QUUX revision 16, 25 ns | +1.298 ns | 0.000 ns | 35,476 of 46,800 ALMs used in placement, 76% (39,562 needed) | 163 of 358 M20K | --- | `653e575` | clean | 2026-10-19 |
+| Kria KR260 | QUUX revision 15, 20 ns | +0.280 ns | +0.014 ns | 31,770 of 117,120 LUTs, 27.13% | 44 of 144 BRAM tiles, 14 of 64 URAM | 6,276 of 14,640 CLBs | `653e575` | clean | 2026-10-18 |
+| Kria KR260 | QUUX revision 16, 20 ns | +0.528 ns | +0.011 ns | 33,062 of 117,120 LUTs, 28.23% | 44 of 144 BRAM tiles, 14 of 64 URAM | 6,303 of 14,640 CLBs | `653e575` | clean | 2026-10-18 |
+
+The Arty Z7-20's revision 16 missed 50 ns by 2.065 ns: its worst path runs
+from the MMU's `a_idx_q` to the core's `rd_pdl_fix` through 78 logic levels,
+two thirds of its 51.762 ns in routing, and no bitstream was written. That
+revision runs at 55 ns on this board, where its worst path runs the same
+way, from `a_idx_q` to `rd_pdl_fix`, 54.146 ns through 79 logic levels. The Arty Z7-20's fits read the machine's
+clock back as 50.000 and 55.000 ns, and each passed its RAM enable check over
+199 ports. The DE25-Nano's flow read the machine's
+clock back as 25.000 ns at both revisions. At revision 15 its worst setup
+path is an HDMI output pin, and the machine clock's own worst setup slack is
++2.256 ns; at revision 16 the worst is the machine clock's, from the port's
+fill head to the core's `rd_pdl_fix`, at the slow corners at 0 °C. The Kria
+KR260's worst setup paths are the machine clock's at both revisions.
+
 These fits are QUUX revision 15's on the Arty Z7-20, the DE25-Nano and the
 Kria KR260, with muir pinned at `f77695c` and PROM 2002 in the boot PROM.
-Revision 15 has no K: its clock is the period its fit closes at, 48 ns on
-the Arty Z7-20, 22.5 ns on the DE25-Nano and 19 ns on the Kria KR260. The
+Revision 15 has no K: its clock was then the period its fit closed at, 48 ns
+on the Arty Z7-20, 22.5 ns on the DE25-Nano and 19 ns on the Kria KR260. The
 Arty Z7-20's was built from `aa4a6ad`, its stamp reading `aa4a6ad0`, the
 DE25-Nano's from `b1b4bcb`, its stamp reading `b1b4bcb0`, and the Kria
 KR260's from `f4df742`, its stamp reading `f4df7420`, all three trees clean.
