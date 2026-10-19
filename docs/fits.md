@@ -58,7 +58,8 @@ path is an HDMI output pin, and the machine clock's own worst setup slack is
 fill head to the core's `rd_pdl_fix`, at the slow corners at 0 °C. The Kria
 KR260's worst setup paths are the machine clock's at both revisions.
 
-These fits are QUUX revision 15's on the Arty Z7-20, the DE25-Nano and the
+These are earlier fits, kept as a record and superseded by the rows above.
+They are QUUX revision 15's on the Arty Z7-20, the DE25-Nano and the
 Kria KR260, with muir pinned at `f77695c` and PROM 2002 in the boot PROM.
 Revision 15 has no K: its clock was then the period its fit closed at, 48 ns
 on the Arty Z7-20, 22.5 ns on the DE25-Nano and 19 ns on the Kria KR260. The

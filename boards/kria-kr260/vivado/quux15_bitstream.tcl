@@ -35,7 +35,7 @@ if {![file exists $prom]} {
     exit 1
 }
 file mkdir $outdir
-puts "Q15BIT: QUUX revision 15 on the Kria KR260 at $period ns, the PROM $prom"
+puts "Q15BIT: QUUX revision $revision on the Kria KR260 at $period ns, the PROM $prom"
 
 set sources [list \
     rtl/machine/cadr_tick_pkg.sv rtl/plumbing/cadr_ddr_map.sv \

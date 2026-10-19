@@ -18,6 +18,7 @@ part family.
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | Built by Quartus. Runs on silicon with its memory, its band and its display, and boots from power alone. |
+| `kria-kr260/` | AMD Kria KR260 | XCK26 | Built by Vivado. Runs on silicon with its memory, its band and its display, and boots Linux from its card. |
 
 **`de25-nano/` holds the whole board.** It has a top level, a Quartus flow, a
 pin file transcribed from Terasic's user manual, the processor's
@@ -28,6 +29,16 @@ boards' exceptions written again for Quartus. On the board it boots Linux
 from its card, loads a band and puts the machine's screen on a monitor, and
 its QSPI flash carries this project's phase-1 bitstream, so it comes up from
 power with nothing else attached.
+
+**`kria-kr260/` holds the whole board, and its part is a Zynq UltraScale+.**
+It has two top levels, `cadr_kr260.sv` for the CADR and `quux15_kr260.sv` for
+QUUX, their pin files, a generated wrapper for the part's `PS8` processing
+system, a Vivado flow, a device tree and a Buildroot image. The machine's
+clock is the carrier's 25 MHz through an `MMCME4_BASE`, not one of the
+processing system's. The part's memory ports are 128 bits wide, and the fabric
+is built at that width. The board's QSPI flash holds the factory U-Boot, which
+runs this project's `boot.scr` from the card, so nothing here writes the flash.
+Its video leaves through DisplayPort.
 
 **Every board here has a processing system beside its fabric, and that is
 deliberate.** What a board has to bring is main memory, a card the machine's
@@ -88,10 +99,12 @@ boot ROM reads `BOOT.BIN` from the root of the first FAT partition and nowhere
 else, the SPL asks for `u-boot.img` by that name at the root, and `uEnv.txt` is
 imported before any board name is known.
 
-**Those names are the Zynq boards' and not a rule for every part.** The
+**Those names are the Arty Z7-20's and not a rule for every part.** The
 DE25-Nano's first-stage loader is in the QSPI flash rather than in a file on
-the card, so its root carries `u-boot.itb` and no `BOOT.BIN` at all. Everything
-else about the card is the machine's and is the same on all three.
+the card, so its root carries `u-boot.itb` and no `BOOT.BIN` at all. The Kria
+KR260's whole loader is the factory U-Boot in its QSPI flash, so its root
+carries `boot.scr` and neither `BOOT.BIN` nor `u-boot.img`. Everything else
+about the card is the machine's and is the same on all three.
 
 **`packs/`, `sys/` and `site/` are on every card even when they are empty**,
 because an empty folder with a name on it is what tells somebody where a band
@@ -198,6 +211,10 @@ file that is mostly commented-out pins is a constraint file nobody reads.
 **The Arty Z7-20 calls the clock port `sysclk`**, whatever Digilent's own
 schematic name for it is, and the debug probe's own constraint file groups the
 JTAG readout's clock apart from `sysclk` and everything generated from it.
+
+**The Kria KR260's pin file takes its package pins and standards from AMD's
+own KR260 board files and platform XDCs**, and says in its header that which
+LED is which and the fan's sense were seen on the board.
 
 **The DE25-Nano's pin file is this project's own.** It is transcribed from
 Terasic's user manual, because Terasic grants no redistribution of its golden

@@ -77,7 +77,7 @@ if {$revision ni {13 14 15 16}} {
 # Revision 16 is revision 15's top level with the Ethernet device.
 set rev15 [expr {$revision in {15 16}}]
 if {$rev15 && (!$ddr || !$hdmi || $probe_depth > 0 || $fault || $machine ne "quux")} {
-    puts "project: REVISION 15 is QUUX's whole board: DDR and HDMI, no probe, no fault bitstream"
+    puts "project: REVISION $revision is QUUX's whole board: DDR and HDMI, no probe, no fault bitstream"
     exit 1
 }
 set period [expr {[info exists ::env(PERIOD)] ? $::env(PERIOD) : 0}]
