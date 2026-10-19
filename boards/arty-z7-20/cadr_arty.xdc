@@ -45,8 +45,7 @@ set_property -dict { PACKAGE_PIN G14   IOSTANDARD LVCMOS33 } [get_ports { led5_b
 
 ## Buttons. **BTN0 boots the machine** --- it is `-BOOT2`, the button MIT put
 ## on the CADR's light panel --- and **BTN1 resets the whole fabric**. Those
-## two are the same buttons on every board in this repository, the Cora
-## Z7-07S having two and no more. BTN2 and BTN3 are pins the board has and
+## two are the same buttons on every board in this repository. BTN2 and BTN3 are pins the board has and
 ## this does not use, brought out so the port list matches the board rather
 ## than the design.
 set_property -dict { PACKAGE_PIN D19 IOSTANDARD LVCMOS33 } [get_ports { btn[0] }]

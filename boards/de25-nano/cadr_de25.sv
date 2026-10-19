@@ -1747,8 +1747,7 @@ module cadr_de25 #(
       // board built with the display these reach it and it answers; on a
       // board built without, the sleep is not fitted and word 36 reads
       // `UNMAPPED`, and what a write to word 34 asks for is held and read
-      // back with nothing behind it --- which is what the Cora Z7-07S does,
-      // and a console is for saying so.
+      // back with nothing behind it, and a console is for saying so.
       .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
       .steady_lamps(con_steady_lamps),
       .mem_boards(con_mem_boards),
@@ -2080,8 +2079,7 @@ module cadr_de25 #(
   // answer; the machine's second map port stands at entry zero and nothing
   // reads what comes back; the console still answers word 34 with what it
   // would show, which is what a console is for, and word 36 reads `UNMAPPED`,
-  // which is what a board with no timer to report has to say.  The Cora
-  // Z7-07S is the same board on the other vendor.
+  // which is what a board with no timer to report has to say.
   assign dm_araddr   = 32'd0;
   assign dm_arlen    = 4'd0;
   assign dm_arsize   = 2'b11;

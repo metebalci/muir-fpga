@@ -53,15 +53,15 @@
 # **AND THE CARD MIRRORS THE SERVER**, which is why the board's own files are
 # in a folder named for it, and the name is the board's own directory under
 # `boards/`.  One TFTP server serves more than one board here and every
-# board's files carry the same names, so a flat server root would hand a Cora
-# the Arty's bitstream --- a bitstream for the wrong part, which configures
+# board's files carry the same names, so a flat server root would hand
+# another board the Arty's bitstream --- a bitstream for the wrong part, which configures
 # nothing and says nothing about why.  A card belongs to one board, so the
 # folder is not what keeps two boards' files apart on it; what it buys is that
 # the card and the server hold the same thing in the same place, and that a
 # file copied from one to the other keeps its path.  It is also what makes a
 # card built for the wrong board say so: the loader asks for its OWN folder,
-# so a Cora handed the Arty's card prints `Unable to read file
-# cora-z7-07s/zImage` within a second of power-on and goes on saying it.
+# so another board handed the Arty's card prints `Unable to read file
+# <its folder>/zImage` within a second of power-on and goes on saying it.
 #
 # **ONE PARTITION MEANS THE LOADER'S FILES ARE NO LONGER BEHIND A READ-ONLY
 # MOUNT**, and that is a protection given up deliberately rather than
@@ -123,16 +123,17 @@ IMAGES=${IMAGES:-$HOME/.cache/muir-fpga-buildroot/out/images}
 HOSTBIN=${HOSTBIN:-$(dirname "$IMAGES")/host/bin}
 OUT=${OUT:-build/sd/buildroot}
 # WHICH BOARD, AND WHY IT IS TWO VARIABLES RATHER THAN A NAME.  This script
-# stages a card for a board, and a second Zynq board is a second device tree
-# and a second directory under `boards/` with everything else the same --- the
+# stages a card for a board, and another Zynq board is another device tree
+# and another directory under `boards/` with everything else the same --- the
 # layout, the packs, the `fpgarc`, the `cadrrc` and `quuxrc`, the U-Boot environment and
 # every warning below are the machine's and not the part's.  So the board
 # enters as the two things that differ: where its `linux/` directory is, and
 # what its compiled device tree is called.  Both default to the Arty Z7-20's,
 # so a run that sets neither is the run this script has always been.
 #
-#     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-#         BIT=build/cora-ddr/cadr_cora.bit boards/arty-z7-20/linux/mksd-buildroot.sh
+#     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+#         IMAGES=<the DE25-Nano's images> BIT=<a .core.rbf> \
+#         boards/arty-z7-20/linux/mksd-buildroot.sh
 #
 # `local.conf` is read out of `$BOARD_DIR/linux/`, so each board has its own
 # server address, MAC and Chaosnet numbers --- which two boards on one network

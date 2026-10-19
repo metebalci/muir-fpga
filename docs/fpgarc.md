@@ -881,8 +881,7 @@ hold is a lie about the machine.
 ## `--no-blinking-leds`
 
 The board's activity lamps hold a level instead of blinking. On the Arty Z7-20
-those are LD1, the fabric's clock, and LD2, the microcycles. On the Cora Z7-07S
-it is LD1's green. The fabric comes up blinking, and a card that says nothing
+those are LD1, the fabric's clock, and LD2, the microcycles. The fabric comes up blinking, and a card that says nothing
 keeps the blink.
 
 Steady, the clock lamp is the clock generator's lock and the microcycle lamp is

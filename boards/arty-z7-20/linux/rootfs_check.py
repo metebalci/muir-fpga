@@ -4,7 +4,7 @@
 #
 # THE IMAGE IS THE TARGET TREE IT WAS MADE FROM, OR THE BUILD FAILS.
 #
-# **Why this exists.**  `make buildroot-cora` once wrote a root filesystem
+# **Why this exists.**  A board's image build once wrote a root filesystem
 # image that was OLDER than the packages in its own target directory, exited 0
 # and said nothing: the image was written at 16:46, `cadr-console` was built at
 # 16:47 and installed into `output/target` at 16:48, and the image was never
@@ -57,10 +57,9 @@
 # under `package/` joins the set by existing; a typed list would rot, and the
 # one in the Makefile's BR_RECONFIGURE had already rotted once.
 #
-# **The .config decides which packages count**, so this is one script for both
-# boards: the Cora Z7-07S has no USB input and its `.config` says so, and a
-# guard demanding `usr/bin/cadr-usb-input` of that image would be wrong about
-# the machine that was asked for.
+# **The .config decides which packages count**, so this is one script for every
+# board: a board whose `.config` leaves out a package, USB input say, would be
+# wrong to have `usr/bin/cadr-usb-input` demanded of its image.
 #
 # **The image is opened rather than trusted.**  `rootfs.cpio.uboot` is a
 # U-Boot legacy image --- a 64-byte header carrying the payload's length and
@@ -424,8 +423,9 @@ def expected_files(external, config, origins=None):
     """Every path our enabled packages put on the target.
 
     `external` is a BR2_EXTERNAL as Buildroot takes it, so it may name more
-    than one tree: the Cora Z7-07S's image is built from both, its own holding
-    only the board and every package being the other's.  A `config` of None
+    than one tree: the DE25-Nano's and the Kria KR260's images are built from
+    two, their own holding only the board and every package being the Arty
+    Z7-20's.  A `config` of None
     counts every package, which is what `packages` below asks."""
     roots = [os.path.join(tree, "package") for tree in external.split(":")]
     if not any(os.path.isdir(r) for r in roots):

@@ -4,9 +4,9 @@
 # The DE25-Nano's BR2_EXTERNAL tree: no packages, and the hooks that put this
 # board's files where Buildroot's own options cannot.
 #
-# NO `include $(wildcard .../package/*/*.mk)` HERE, for the Cora Z7-07S's
-# reason: the packages are the Arty Z7-20's tree's, that tree includes them,
-# and this build is given both trees.
+# NO `include $(wildcard .../package/*/*.mk)` HERE, because the packages are
+# the Arty Z7-20's tree's, that tree includes them, and this build is given
+# both trees.
 #
 # THE RESERVED-MEMORY NODE IS THIS BOARD'S OWN FILE, boards/de25-nano/linux/
 # cadr-reserved.dtsi, and not the Zynq boards' one.  The machine's region is
@@ -28,9 +28,8 @@
 # board/intel/agilex5-socdk/.
 #
 # **THE HOOKS HAVE NAMES OF THEIR OWN, CADR_DE25_*, AND SO DOES THE
-# ENVIRONMENT FILE**, for the reason the Cora Z7-07S's external.mk gives: every
-# tree's external.mk is included into one make, so the Arty Z7-20's hooks run
-# on this build too.  They are harmless here --- they copy the Zynq boards'
+# ENVIRONMENT FILE**, because every tree's external.mk is included into one
+# make, so the Arty Z7-20's hooks run on this build too.  They are harmless here --- they copy the Zynq boards'
 # reservation into arch/arm64/boot/dts/xilinx/, which our tree does not
 # include, and the Zynq boards' environment into board/xilinx/zynq/, which this
 # U-Boot does not build --- and a hook of ours under their name would replace

@@ -4468,12 +4468,12 @@ if lift_board_facts "$WORK/lay/board.sh" \
 		[ "$r13_ok" = yes ] \
 			&& ok "REVISION=13 on the $b stages $q13tree as $b/$tree.dtb and $q13loader as $loader"
 	done
-	if lay_out cora-z7-07s zynq-cora-z7-07s.dtb 13 2>/dev/null; then
-		fail "REVISION=13 on the Cora Z7-07S made a card, which carries no revision 13"
-	elif grep -q "REVISION=13 on cora-z7-07s" "$WORK/lay/err"; then
-		ok "and REVISION=13 on the Cora Z7-07S is refused by name"
+	if lay_out not-a-board not-a-board.dtb 13 2>/dev/null; then
+		fail "REVISION=13 on a board that carries no revision 13 made a card"
+	elif grep -q "REVISION=13 on not-a-board" "$WORK/lay/err"; then
+		ok "and REVISION=13 on a board that carries no revision 13 is refused by name"
 	else
-		fail "REVISION=13 on the Cora Z7-07S failed, but not by name: $(cat "$WORK/lay/err")"
+		fail "REVISION=13 on a board that carries no revision 13 failed, but not by name: $(cat "$WORK/lay/err")"
 	fi
 fi
 
@@ -4570,7 +4570,7 @@ if lift '# **ETHADDR IS A MAC OR NOTHING.**' 'fi  # ETHADDR is a MAC or nothing'
    && lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
         '# whether the card says the fabric was configured before U-Boot ran' \
         "$WORK/uenv/uenv.sh"; then
-	for spec in de25-nano:cadr.core.rbf arty-z7-20:cadr.bit cora-z7-07s:cadr.bit; do
+	for spec in de25-nano:cadr.core.rbf arty-z7-20:cadr.bit; do
 		b=${spec%%:*}; fab=${spec#*:}
 		for mac in 02:00:00:00:00:01 02:00:5E:AB:cd:EF; do
 			if ! mac_out "$b" "$fab" "$mac"; then
@@ -4640,7 +4640,7 @@ mkdir -p "$WORK/uenv"
 if lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
         '# whether the card says the fabric was configured before U-Boot ran' \
         "$WORK/uenv/uenv.sh"; then
-	for spec in arty-z7-20:cadr.bit cora-z7-07s:cadr.bit de25-nano:cadr.core.rbf; do
+	for spec in arty-z7-20:cadr.bit de25-nano:cadr.core.rbf; do
 		b=${spec%%:*}; fab=${spec#*:}
 		tmpl="$TREE/boards/$b/linux/buildroot/board/$b/uEnv.txt.in"
 		card="$WORK/uenv/out/card/uEnv.txt"
@@ -4877,7 +4877,6 @@ EOF_SPEC
 	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four and $fault out of $board/, and uEnv.txt from the root"
 done <<'ENVS'
 boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage=cadr_fabric_card=fault.bit
-boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage=cadr_fabric_card=fault.bit
 boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image=cadr_rbf_card=fault.core.rbf
 ENVS
 
@@ -7946,12 +7945,10 @@ sandbox
 mkdir -p "$WORK/rd"
 if lift_readme "$WORK/rd"; then
 	readme_bad=0
-	for b in arty-z7-20 cora-z7-07s de25-nano kria-kr260; do
+	for b in arty-z7-20 de25-nano kria-kr260; do
 		for rel in "" 1; do
 			for m in cadr quux; do
-				# QUUX is revision 13, on the three boards that run it; the
-				# Cora Z7-07S builds the CADR alone.
-				[ "$m:$b" != quux:cora-z7-07s ] || continue
+				# QUUX is revision 13, on the three boards that run it.
 				rm -rf "$WORK/rd/card"; mkdir -p "$WORK/rd/card"
 				# A release card names its system, 1003 for the CADR's and 2001
 				# for QUUX's.

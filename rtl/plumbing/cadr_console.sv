@@ -217,8 +217,7 @@
 //                   bit 0       the lamps are steady
 //
 //                 Two lamps take it on the Arty Z7-20 --- LD1, the clock, and
-//                 LD2, the microcycles --- and one on the Cora Z7-07S, LD1's
-//                 green.  Steady, the clock lamp is the clock generator's
+//                 LD2, the microcycles.  Steady, the clock lamp is the clock generator's
 //                 lock and the microcycle lamp is lit for a moment after each
 //                 microcycle; `rtl/plumbing/cadr_lamp_clock.sv` and
 //                 `rtl/plumbing/cadr_lamp_microcycle.sv` say why each.  What

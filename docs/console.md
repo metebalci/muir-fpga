@@ -186,8 +186,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  them blink again, which is what the fabric comes up with.  It
                  reads back a marker of `LD` in the top half and the setting
                  in bit 0.  Steady, the Arty Z7-20's LD1 is the clock
-                 generator's lock and its LD2, like the Cora Z7-07S's green,
-                 is lit while microcycles retire and dark a moment after they
+                 generator's lock and its LD2 is lit while microcycles retire and dark a moment after they
                  stop.  `cadr-console blinking-leds [on|off]` reads and sets it
     36 SLEEP    **how long the board's own display output waits before it
                  stops the link and the monitor sleeps.**  A write whose top

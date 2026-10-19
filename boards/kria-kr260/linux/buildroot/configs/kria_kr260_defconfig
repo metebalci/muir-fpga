@@ -12,8 +12,7 @@
 # it.
 #
 # **IT NEEDS BOTH EXTERNAL TREES**, because the packages live in the Arty
-# Z7-20's and this one holds only the board, as the Cora Z7-07S's and the
-# DE25-Nano's do:
+# Z7-20's and this one holds only the board, as the DE25-Nano's does:
 #
 #     BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/kria-kr260/linux/buildroot
 #
@@ -109,9 +108,9 @@ BR2_CADR_BOARD_KR260=y
 # reader, USB 0424:2240, and not as the processor's first SD device; the
 # overlay's /etc/cadr/card.sh says how, and S80cadr-disk-packs reads it.
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_CADR_KR260_PATH)/board/kria-kr260/rootfs-overlay"
-# The Arty Z7-20's post-build script, unchanged, for the reason the Cora
-# Z7-07S's defconfig gives: it asserts that the image holds only the programs
-# the packages install.  Then this board's own, which takes the kernel's
+# The Arty Z7-20's post-build script, unchanged: it asserts that the image
+# holds only the programs the packages install, because Buildroot never
+# removes what a package stopped installing.  Then this board's own, which takes the kernel's
 # loadable modules back out of the image.
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/post-build.sh $(BR2_EXTERNAL_CADR_KR260_PATH)/board/kria-kr260/post-build.sh"
 # And after the images: the CADR's tree and boot.scr.

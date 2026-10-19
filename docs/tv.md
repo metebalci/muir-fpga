@@ -687,9 +687,6 @@ both slacks moved down by about a quarter of a nanosecond, which is the
 placement noise this project has measured twice --- so the direction is
 believable and the last digit is not.
 
-**The Cora is the board to watch**: it is at 93.4% of its slices and 83.0%
-of its block RAM, and the binding one did not move.
-
 ## Which board
 
 `--tv-board` is muir's flag and the fabric takes the same word. muir has one
@@ -797,11 +794,7 @@ instance is not elaborated and the color addresses give the NXM whatever the
 console asks for. It is one on every board here: the two Zynq boards declare a
 top-level `LMTV` of their own and default it to 1, and
 `boards/de25-nano/cadr_de25.sv` passes none at all, so its machine takes
-`cadr_machine`'s own default, which is 1 as well. The Cora Z7-07S is
-the one where the question is live: with the board fitted it routes and closes
-at +0.203 ns and 93.6% of its lookup tables, built from a clean tree at
-`5833ae8`, which fits and leaves almost nothing. Those lookup tables sit in
-97.4% of the part's slices.
+`cadr_machine`'s own default, which is 1 as well.
 
 **What silicon has shown.** On a Zynq board the console fits and unfits the
 color board while the machine runs, and MIT's own `COLOR-EXISTS-P` body, typed

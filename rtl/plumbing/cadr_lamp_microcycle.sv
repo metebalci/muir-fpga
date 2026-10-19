@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The microcycle lamp: LD2 on the Arty Z7-20, LD1's green on the Cora Z7-07S.
+// The microcycle lamp: LD2 on the Arty Z7-20.
 // It says the machine is retiring microcycles, and it says it one of two ways.
 //
 // **BLINKING, WHICH IS THE DEFAULT.**  Bit 19 of a count of retired

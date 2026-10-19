@@ -511,9 +511,9 @@ BTN1 is the fabric's reset. It throws away the machine's whole state and every
 register in the design. The fabric is also held in reset while the clock
 generator has not locked, which is unchanged.
 
-BTN0 and BTN1 are the same two buttons on every board in this repository. The
-Cora Z7-07S has two buttons and no more, so the reset can only be BTN1 there,
-and the boards with four follow it. The reset was BTN3 on this board for a
+BTN0 and BTN1 are the same two buttons on every board in this repository. A
+board with two buttons and no more can have the reset only on BTN1, and the
+boards with four follow it. The reset was BTN3 on this board for a
 while, on the argument that the one control which throws the machine's state
 away should be hard to press by accident. That argument lost to having the same
 control be the same button everywhere.
@@ -665,10 +665,9 @@ group drives no pin of it. One data line a direction makes a frame twenty-four
 beats, 162 ticks, against the 1,105 the debugger's own interface allows a
 cycle. `docs/debug-cable.md` has the reason and the budget.
 
-**The far board's connector is JA too.** The Cora Z7-07S uses JA as this
-board does. Every board indexes a header's eight signals in the same order, so
-a straight ribbon maps each pin to its counterpart whichever headers the two
-ends are. `docs/debug-cable.md` has the pins for both.
+**The far board's connector may be another header.** Every board indexes a
+header's eight signals in the same order, so a straight ribbon maps each pin to
+its counterpart whichever headers the two ends are. `docs/debug-cable.md` has the pins for both.
 
 **A board is a debuggee with nothing set.** It answers a debugger that plugs
 into JA exactly as MIT's board answers one on its DBGIN, and that is the
@@ -748,10 +747,6 @@ about 42 ms. That is two thousand times the longest stall a running machine has,
 so the lamp does not flicker, and short enough that a stopped machine reads as
 stopped at once. It is the disk lamp's own persistence, so LD2 and LD3 go out at
 the same pace.
-
-The Cora Z7-07S has one lamp that takes the setting, LD1's green, with the
-microcycle lamp's two forms. Red and blue do not change, and neither does the
-order among the three.
 
 The two lamps are `rtl/plumbing/cadr_lamp_clock.sv` and
 `rtl/plumbing/cadr_lamp_microcycle.sv`, held by `build/blink_lamps.pass`. The
@@ -942,7 +937,6 @@ always in step, and each lamp shows what it can show of red.
 
     Arty Z7-20    LD0 to LD3 green, and LD4 and LD5 red; the RGB lamps' green
                   and blue pins stay dark
-    Cora Z7-07S   LD0 and LD1 red, with green and blue dark
     Kria KR260    UF1 and UF2, which are single-color; the SOM's fan keeps
                   running
     DE25-Nano     LEDR0 to LEDR7, all eight, which are green
@@ -991,10 +985,9 @@ load` and to land here, but that has not yet been tried on a board. On the
 DE25-Nano the core image must also carry the same HPS I/O hash as the first
 phase in the flash, which the Booting User Guide requires of a pair.
 
-**Building it.** The three Zynq boards' come from `tools/fault_zynq.tcl`:
+**Building it.** The two Zynq boards' come from `tools/fault_zynq.tcl`:
 
     BOARD=arty  OUTDIR=build/fault-arty  vivado -mode batch -source tools/fault_zynq.tcl
-    BOARD=cora  OUTDIR=build/fault-cora  vivado -mode batch -source tools/fault_zynq.tcl
     BOARD=kr260 OUTDIR=build/fault-kr260 vivado -mode batch -source tools/fault_zynq.tcl
 
 The DE25-Nano's is `make de25-fault DE25_SPL_HEX=<the first-stage loader>`,
@@ -1392,7 +1385,9 @@ Each step above was taken one at a time at the board and behaved as written.
 
 ## CC over the Pmod cable
 
-A ribbon joins the Arty Z7-20's Pmod JA connector to the Cora Z7-07S's. MIT's
+A ribbon joined the Arty Z7-20's Pmod JA connector to that of a Cora Z7-07S, a
+board this repository supported up to `653e5759`, and this section records
+what was shown between the two. MIT's
 own CC, running in the Lisp world of the CADR in one board's fabric, has halted
 the CADR in the other board's fabric over that ribbon, read its registers and
 its scratchpads, and started it again. It has been done both ways round. So a

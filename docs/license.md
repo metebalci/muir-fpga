@@ -22,15 +22,15 @@ repository. Almost every file in it repeats that in its own header as the SPDX
 identifier `AGPL-3.0-or-later`, so a file taken out of the repository still
 says what it is.
 
-Eight files are under the **GNU General Public License, version 2 or later**
-instead, four for each of the two Zynq boards. They are the Zynq start-up
+Four files are under the **GNU General Public License, version 2 or later**
+instead, for the Arty Z7-20. They are the Zynq start-up
 routine `ps7_init_gpl.c`, U-Boot's default environment, the board's device tree
 and the `-u-boot.dtsi` beside it.
 
-Each of the eight is compiled into U-Boot, which is itself under that license.
+Each of the four is compiled into U-Boot, which is itself under that license.
 The start-up routine's register tables are Digilent's board configuration as
 Xilinx's tool writes it out, and that tool's own `ps7_init_gpl.c` carries the
-same terms. Every one of the eight says so in its own header.
+same terms. Every one of the four says so in its own header.
 
 ## Third-party material
 
@@ -43,10 +43,8 @@ Pins come from Digilent's published master constraint files and never from
 memory, because a wrong pin is a light that does not come on. Digilent
 publishes them under the **MIT License**.
 
-The Cora Z7-07S's master file is in its board directory byte for byte as
-published, beside a copy of that license as `Digilent-License.txt`. The Arty
-Z7-20's own constraint file copies out the handful of pins that design uses
-rather than carrying the master file. It cites the commit and digest it read
+The Arty Z7-20's own constraint file copies out the handful of pins that
+design uses rather than carrying the master file. It cites the commit and digest it read
 them from.
 
 ### AMD's DisplayPort transceiver values

@@ -12,8 +12,7 @@
 // change on both sides at once.
 //
 // THE RESERVATION HOLDS WHAT THE MACHINE CAN REACH, AND NO MORE; everything
-// else is Linux's.  On the Arty Z7-20, the Cora Z7-07S and the Kria KR260 the
-// layout is
+// else is Linux's.  On the Arty Z7-20 and the Kria KR260 the layout is
 //
 //   offset        size     words       what
 //   + 0           16 MB    4,194,304   main memory
@@ -67,7 +66,7 @@
 // the machine starts writing it.
 //
 //   board          RESERVED_BASE   main memory    display        records
-//   Arty, Cora     0x1B00_0000     0x1B00_0000    0x1C00_0000    0x1C10_0000
+//   Arty Z7-20     0x1B00_0000     0x1B00_0000    0x1C00_0000    0x1C10_0000
 //   DE25-Nano      0xB300_0000     0xB300_0000    0xB400_0000    0xB410_0000
 //   Kria KR260     0x6300_0000     0x6300_0000    0x6400_0000    0x6410_0000
 //
@@ -164,7 +163,7 @@ package cadr_ddr_map;
   // same addresses on every machine and only main memory moves.
   //
   //   board        main memory                 room               display
-  //   Arty, Cora   0x1200_0000-0x1BFF_FFFF     160 MB, 32M words  0x1C00_0000
+  //   Arty Z7-20   0x1200_0000-0x1BFF_FFFF     160 MB, 32M words  0x1C00_0000
   //   DE25-Nano    0xA000_0000-0xB3FF_FFFF     320 MB, 64M words  0xB400_0000
   //   Kria KR260   0x5A00_0000-0x63FF_FFFF     160 MB, 32M words  0x6400_0000
   //

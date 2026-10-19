@@ -119,9 +119,9 @@
 # **THE CADR'S ALONE, AND A LEADING WILDCARD FOR THE GENERATE BLOCK.**  QUUX
 # has no debug cable (contract Q5), so a QUUX flow does not read this file.
 # The Arty Z7-20, which builds both machines, puts the connector in its
-# `g_dbg_cable` block, where the Cora Z7-07S and the Kria KR260, which build
-# the CADR alone, have it at the top; the wildcard takes either name, and the
-# flow's `assert_instance_timing` is what says it reached these registers.
+# `g_dbg_cable` block, where the Kria KR260's CADR has it at the top; the
+# wildcard takes either name, and the flow's `assert_instance_timing` is what
+# says it reached these registers.
 set pmod [get_pins -quiet {*u_dbg_cable/u_tx/tx_frame_reg[*]/D
                            *u_dbg_cable/u_tx/tx_d_reg[*]/D}]
 # board ticks

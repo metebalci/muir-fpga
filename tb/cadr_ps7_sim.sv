@@ -5,8 +5,7 @@
 // fabric sees it, the two general-purpose ports driven by the processor and
 // the high-performance ports answered by memory, with the behavior of both in
 // `tb/cadr_board_reset_tb.cpp` through `tb/cadr_sim_axi.sv`.  The port list
-// is `boards/arty-z7-20/cadr_ps7.sv`'s, and `CADR_PS7_NO_HP3` takes out the
-// one port the Cora Z7-07S's wrapper does not bring out.  A port list that
+// is `boards/arty-z7-20/cadr_ps7.sv`'s.  A port list that
 // drifted from the wrapper's would not elaborate against the top level.
 //
 // It stands in for the wrapper and not for `PS7`, so that the stub of the
@@ -74,7 +73,6 @@ module cadr_ps7 (
     output var logic         hp2_rlast,
     output var logic         hp2_rvalid,
     input  var logic         hp2_rready,
-`ifndef CADR_PS7_NO_HP3
     input  var logic         hp3_aclk,
     output var logic         hp3_aresetn,
     input  var logic [31:0]  hp3_awaddr,
@@ -102,7 +100,6 @@ module cadr_ps7 (
     output var logic         hp3_rlast,
     output var logic         hp3_rvalid,
     input  var logic         hp3_rready,
-`endif
     input  var logic         gp0_aclk,
     output var logic         gp0_aresetn,
     output var logic [31:0]  gp0_awaddr,
@@ -221,7 +218,6 @@ module cadr_ps7 (
       .arvalid(hp2_arvalid), .arready(hp2_arready),
       .rdata(hp2_rdata), .rresp(hp2_rresp), .rid(hp2_rid_u), .rlast(hp2_rlast),
       .rvalid(hp2_rvalid), .rready(hp2_rready));
-`ifndef CADR_PS7_NO_HP3
   logic hp3_bid_u, hp3_rid_u;
   assign hp3_aresetn = aresetn_q;
   cadr_sim_mem_slave #(.PORT(3), .ID_W(1), .LEN_W(4)) u_hp3 (
@@ -235,7 +231,6 @@ module cadr_ps7 (
       .arvalid(hp3_arvalid), .arready(hp3_arready),
       .rdata(hp3_rdata), .rresp(hp3_rresp), .rid(hp3_rid_u), .rlast(hp3_rlast),
       .rvalid(hp3_rvalid), .rready(hp3_rready));
-`endif
   /* verilator lint_on UNUSEDSIGNAL */
 endmodule
 

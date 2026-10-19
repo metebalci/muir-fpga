@@ -58,9 +58,9 @@
 # fixed build passes, 105 ports asked.  A netlist mutation of the fixed tree
 # through this flow, the cache's lookup at every idle tick again, fails the
 # 10 cache ports and loses its bitstream.  The CADR reads its control store
-# on every tick, and the Cora's CADR build failed on that store's write
+# on every tick, and one board's CADR build failed on that store's write
 # enable, 0.05 ns over a tick, until `cadr_machine.xdc` gave its pins the
-# tick; with that clause the Arty's and the Cora's CADR builds pass.  The
+# tick; with that clause the Arty's CADR build passes.  The
 # runner of `mutations/list.txt` simulates, and in simulation the two forms
 # of each enable are the same machine, so the netlist mutation is not a
 # record; `docs/mutations.md` has it.

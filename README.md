@@ -169,6 +169,8 @@ Zynq boards. `c789d19` is the last commit that has it, and `boards/README.md`
 still lists what a part with no processing system would have to answer, so the
 question can be re-opened from there.
 
+The Digilent Cora Z7-07S was supported up to commit `653e5759` and is no longer.
+
 **It is one repository and not one per family, deliberately.** The value here
 is the CADR held to muir. Two repositories would mean two copies of the machine
 drifting apart, with the checks duplicated and rotting in whichever copy nobody
@@ -316,9 +318,8 @@ Pmod is not assigned. The cable's 11.05 us budget makes the beats free.
 
 Both Zynq boards carry the connector, in every configuration, because a board
 is always a debuggee. A board becomes the debugger by `--debug-cable-connect`
-in `fpgarc` or by `cadr-console debug-cable-connect`. A cable joins the Arty
-Z7-20 and the Cora Z7-07S, and each has debugged the other over it: CC in one
-board's Lisp world has halted the machine in the other and read its registers
+in `fpgarc` or by `cadr-console debug-cable-connect`. Two boards joined by the
+cable have each debugged the other over it: CC in one board's Lisp world has halted the machine in the other and read its registers
 and scratchpads, equal to that board's own console and readout.
 
 **The console is not this, and the difference is worth keeping.** It masters

@@ -866,8 +866,7 @@ set_the_memory() {
 
 # **WHETHER THE BOARD'S ACTIVITY LAMPS BLINK.**  `--no-blinking-leds` makes
 # them hold a level: on the Arty Z7-20 LD1 is then the clock generator's lock
-# and LD2 is lit while the machine retires microcycles, and on the Cora Z7-07S
-# LD1's green is the second of those.  What the lamps say does not change,
+# and LD2 is lit while the machine retires microcycles.  What the lamps say does not change,
 # only how, and the fabric comes up blinking.
 #
 # It is here because it reads `fpgarc`, which is on the partition this script

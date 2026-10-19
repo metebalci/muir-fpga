@@ -10,9 +10,9 @@
 #     MACHINE=quux REVISION=13 SYSTEM=2001 BIT=<QUUX revision 13's bitstream> \
 #     FAULT_BIT=<the board's fault bitstream> boards/arty-z7-20/linux/mksd-release.sh
 #
-#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
-#     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-#     BIT=<the Cora's released bitstream> FAULT_BIT=<the Cora's fault bitstream> \
+#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
+#     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+#     BIT=<the DE25-Nano's released core image> FAULT_BIT=<its fault core image> \
 #         boards/arty-z7-20/linux/mksd-release.sh
 #
 # **ONE ZIP A BOARD, AND A RELEASE IS ALL OF THEM.**  The board enters this

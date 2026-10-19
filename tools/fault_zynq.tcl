@@ -3,9 +3,9 @@
 #
 # THE FAULT BITSTREAM FOR A ZYNQ BOARD: no machine, every lamp blinking.
 #
-#     BOARD=arty|cora|kr260 OUTDIR=<dir> vivado -mode batch -source tools/fault_zynq.tcl
+#     BOARD=arty|kr260 OUTDIR=<dir> vivado -mode batch -source tools/fault_zynq.tcl
 #
-# `make fault-arty` and `make fault-cora` run it.  The top level is the
+# `make fault-arty` runs it.  The top level is the
 # board's `cadr_<board>_fault.sv`, whose header says what it is and when
 # U-Boot loads it; the pins and the board's clock are the board's own
 # constraints file, unchanged, because the fault top level has the CADR
@@ -15,8 +15,8 @@
 # `PS8` behind `cadr_ps8.sv`, and the cells are counted by the names that
 # family gives them, as `boards/kria-kr260/vivado/bitstream.tcl` counts them:
 # a lookup table by `REF_NAME`, because its `PRIMITIVE_GROUP` is `CLB` there,
-# a flip-flop's group `REGISTER`, and block RAM `BLOCKRAM.BRAM.*`.  The two
-# Zynq-7000 boards keep their own filters.
+# a flip-flop's group `REGISTER`, and block RAM `BLOCKRAM.BRAM.*`.  The Arty
+# Z7-20, a Zynq-7000, keeps its own filters.
 #
 # **WHAT THIS REFUSES.**  A design much larger than the fault top level is
 # something else: the machine cannot be in it, so a fit of more than a few
@@ -35,13 +35,6 @@ switch -- $board {
         set xdc   boards/arty-z7-20/cadr_arty.xdc
         set floor 3000000
     }
-    cora {
-        set part  xc7z007sclg400-1
-        set dir   boards/cora-z7-07s
-        set top   cadr_cora_fault
-        set xdc   boards/cora-z7-07s/cadr_cora.xdc
-        set floor 2000000
-    }
     kr260 {
         set part  xck26-sfvc784-2LV-c
         set dir   boards/kria-kr260
@@ -50,7 +43,7 @@ switch -- $board {
         set floor 7000000
     }
     default {
-        puts "FAULT: BOARD is '$board'; it is arty, cora or kr260"
+        puts "FAULT: BOARD is '$board'; it is arty or kr260"
         exit 1
     }
 }

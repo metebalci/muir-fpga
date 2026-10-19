@@ -24,7 +24,7 @@ Kconfig drops it silently and the package is then missing from the image.
 Symbols this tree does not declare (Buildroot's own, such as
 BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS for the Rust packages) cannot be
 evaluated without Buildroot; they are written `=y` and named in the output,
-which holds for the four boards here (two ARMv7 and two ARMv8 targets that
+which holds for the three boards here (one ARMv7 and two ARMv8 targets that
 Rust supports).
 
 Then it runs `post-build.sh` itself against that `.config` and a target tree
@@ -41,13 +41,13 @@ them by name.  The check passes when the script accepts each board's `.config`
 and refuses each of those controls.
 
 **AND THE KERNEL OPTIONS QUUX's ETHERNET DEVICE NEEDS**, asked of the kernel
-configuration each defconfig names (the Arty Z7-20's and the Cora Z7-07S's
-`linux.config`, the Kria KR260's and the DE25-Nano's `linux.fragment`):
+configuration each defconfig names (the Arty Z7-20's `linux.config`, the
+Kria KR260's and the DE25-Nano's `linux.fragment`):
 `CONFIG_TUN=y` for the tap, and `CONFIG_IP_ADVANCED_ROUTER=y` and
 `CONFIG_IP_MULTIPLE_TABLES=y` for S82's link-local rule, whose `ip rule add`
 fails without policy routing.  A built kernel's `.config` is held against a
 fragment by the boards' `buildroot_check.py configs`; this asks it before any
-build, of all four boards.  Its control: each option taken out of the file in
+build, of all three boards.  Its control: each option taken out of the file in
 turn must be refused by name.
 """
 import os

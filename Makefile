@@ -35,8 +35,7 @@ TICKPKG := rtl/machine/cadr_tick_pkg.sv
 # `cadr` the default.  It reaches `cadr_machine` as its `MACHINE` parameter
 # through each board's top level, and the board flows keep the two builds
 # apart by directory and by file name.  **QUUX IS A SEPARATE BITSTREAM, ON THE
-# ARTY Z7-20 AND THE DE25-NANO ONLY**; the Cora Z7-07S builds the CADR alone,
-# and both its top level and its flow refuse anything else.
+# ARTY Z7-20 AND THE DE25-NANO ONLY**.
 #
 # **`check` AND `mutants` TAKE THE MACHINE TOO.**  `make check` is the
 # CADR's: every check against muir's CADR traces, and the CADR's side of each
@@ -118,7 +117,7 @@ QKL1S := $(foreach k,$(QUUX_KS),$(call qtag,$(k),1))
 # directory is not exempted: an exemption is a thing to keep in step.
 .DELETE_ON_ERROR:
 
-.PHONY: check cables ps7 ps7-cora ps8 ps7-init ps7-init-cora current mutants \
+.PHONY: check cables ps7 ps8 ps7-init current mutants \
         mutants-selftest probe-selftest de25 de25-fault de25-program de25-probe \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
@@ -144,7 +143,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/kr260.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/arty.pass $(BUILD)/kr260.pass $(BUILD)/machine_param.pass \
        $(BUILD)/word_width.pass \
        $(BUILD)/work_dirs.pass \
        mutrev \
@@ -616,10 +615,8 @@ $(BUILD)/reserved.pass: tools/reserved_check.py tools/mem_map_check.py \
                         boards/de25-nano/linux/buildroot/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_quux13.dts \
                         boards/de25-nano/linux/buildroot/board/de25-nano/uboot/socfpga_agilex5_de25_nano_quux13-u-boot.dtsi \
                         boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig \
-                        boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig \
                         boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
                         boards/arty-z7-20/linux/buildroot/external.mk \
-                        boards/cora-z7-07s/linux/buildroot/external.mk \
                         boards/de25-nano/linux/buildroot/external.mk \
                         boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env \
                         boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env | $(BUILD)
@@ -2321,8 +2318,8 @@ $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boo
 
 # ------------------------------------------------------ LD5, the blue lamp
 
-# **`-PROMENABLE` AT PCTL 1C19, WHICH THE BLUE LAMP SHOWS.**  Both Zynq boards
-# drive that lamp from the net itself rather than from the mode register's
+# **`-PROMENABLE` AT PCTL 1C19, WHICH THE BLUE LAMP SHOWS.**  The Arty Z7-20
+# drives that lamp from the net itself rather than from the mode register's
 # `PROMDISABLE` bit, and the two agree almost everywhere --- which is the trap.
 # A board's top level is reached by `arty.pass`'s lint and by nothing else, so
 # what can be held is the net as `cadr_machine` presents it at its port: up on
@@ -2919,7 +2916,7 @@ $(BUILD)/f2sdram.pass: $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness \
 #
 # The stubs pass each board's oscillator through as the fabric's clock, and
 # the machine runs from its PROM as it does on the board.  A few minutes to
-# build the three, seconds to run.
+# build the two, seconds to run.
 BOARD_RESET_SIM := tb/cadr_sim_axi.sv tb/cadr_board_reset_harness.sv
 BOARD_RESET_ZYNQ := $(BOARD_RESET_SIM) $(MACHINE_SRC) $(BOARD_STUBS) tb/cadr_ps7_sim.sv \
                     rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
@@ -2940,14 +2937,6 @@ $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
 	    $(BOARD_RESET_ZYNQ) $(DISPLAY_SRC) boards/arty-z7-20/cadr_arty.sv \
 	    $(abspath tb/cadr_board_reset_tb.cpp)
 
-$(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
-        boards/cora-z7-07s/cadr_cora.sv tb/cadr_board_reset_tb.cpp | $(BUILD)
-	$(VERILATOR) $(BOARD_RESET_VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
-	    -DCADR_BOARD_CORA -DCADR_PS7_NO_HP3 -CFLAGS -DCADR_BOARD_CORA \
-	    -Mdir $(BUILD)/obj_board_reset_cora \
-	    $(BOARD_RESET_ZYNQ) boards/cora-z7-07s/cadr_cora.sv \
-	    $(abspath tb/cadr_board_reset_tb.cpp)
-
 BOARD_RESET_DE25 := $(BOARD_RESET_SIM) $(MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) \
                     tb/cadr_de25_stubs.sv tb/cadr_de25_hps_sim.sv
 
@@ -2959,11 +2948,9 @@ $(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness: $(BOARD_RESET_DE25) \
 	    $(BOARD_RESET_DE25) $(abspath tb/cadr_board_reset_tb.cpp)
 
 $(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness \
-                           $(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness \
                            $(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness \
                            $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness
-	$(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness
 	$(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness
 	@touch $@
 
@@ -2973,8 +2960,8 @@ $(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harne
 # every lamp blinking together, every window of both ports answered with
 # "FALT", the tally reading "FALT", and nothing mastering memory; on the
 # DE25-Nano the warm-reset handshake answered too, and on the Kria KR260 the
-# fan running.  `tb/cadr_fault_tb.cpp` has what is held.  Each Zynq-7000
-# board's fault top level is simulated with the processing system of
+# fan running.  `tb/cadr_fault_tb.cpp` has what is held.  The Arty Z7-20's
+# fault top level is simulated with the processing system of
 # `board_reset` above, the Kria KR260's with `tb/cadr_ps8_sim.sv`, and each is
 # linted against the real `cadr_ps7.sv` or `cadr_ps8.sv` wrapper or the
 # DE25-Nano's processor stub, which are what the fitters build it with.
@@ -2982,7 +2969,6 @@ $(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harne
 FAULT_SIM := tb/cadr_sim_axi.sv rtl/plumbing/cadr_fault_lamp.sv \
              rtl/plumbing/cadr_gp0_default.sv tb/cadr_fault_harness.sv
 FAULT_ARTY_SRC := boards/arty-z7-20/cadr_arty_fault.sv
-FAULT_CORA_SRC := boards/cora-z7-07s/cadr_cora_fault.sv
 FAULT_DE25_SRC := boards/de25-nano/cadr_de25_fault.sv rtl/plumbing/cadr_f2sdram_gate.sv
 FAULT_KR260_SRC := boards/kria-kr260/cadr_kr260_fault.sv
 FAULT_VFLAGS := $(VFLAGS) -O2 -CFLAGS -O2 -Wno-PINCONNECTEMPTY -Irtl/plumbing \
@@ -2993,12 +2979,6 @@ $(BUILD)/obj_fault_arty/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_ARTY_SRC) tb/c
 	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_ARTY -CFLAGS -DCADR_BOARD_ARTY \
 	    -Mdir $(BUILD)/obj_fault_arty $(FAULT_SIM) tb/cadr_arty_stubs.sv \
 	    tb/cadr_ps7_sim.sv $(FAULT_ARTY_SRC) $(abspath tb/cadr_fault_tb.cpp)
-
-$(BUILD)/obj_fault_cora/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_CORA_SRC) tb/cadr_arty_stubs.sv \
-        tb/cadr_ps7_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
-	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_CORA -DCADR_PS7_NO_HP3 -CFLAGS -DCADR_BOARD_CORA \
-	    -Mdir $(BUILD)/obj_fault_cora $(FAULT_SIM) tb/cadr_arty_stubs.sv \
-	    tb/cadr_ps7_sim.sv $(FAULT_CORA_SRC) $(abspath tb/cadr_fault_tb.cpp)
 
 $(BUILD)/obj_fault_kr260/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_KR260_SRC) tb/cadr_arty_stubs.sv \
         tb/cadr_kr260_stubs.sv tb/cadr_ps8_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
@@ -3014,17 +2994,13 @@ $(BUILD)/obj_fault_de25/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_DE25_SRC) tb/c
 	    tb/cadr_de25_hps_sim.sv $(FAULT_DE25_SRC) $(abspath tb/cadr_fault_tb.cpp)
 
 $(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
-                     $(BUILD)/obj_fault_cora/Vcadr_fault_harness \
                      $(BUILD)/obj_fault_de25/Vcadr_fault_harness \
                      $(BUILD)/obj_fault_kr260/Vcadr_fault_harness \
-                     boards/arty-z7-20/cadr_ps7.sv boards/cora-z7-07s/cadr_ps7.sv \
+                     boards/arty-z7-20/cadr_ps7.sv \
                      tb/cadr_ps7_stub.sv boards/kria-kr260/cadr_ps8.sv tb/cadr_ps8_stub.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_arty_fault \
 	    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_fault_lamp.sv $(FAULT_ARTY_SRC)
-	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_cora_fault \
-	    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv boards/cora-z7-07s/cadr_ps7.sv \
-	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_fault_lamp.sv $(FAULT_CORA_SRC)
 	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_de25_fault \
 	    tb/cadr_de25_stubs.sv rtl/plumbing/cadr_gp0_default.sv \
 	    rtl/plumbing/cadr_fault_lamp.sv $(FAULT_DE25_SRC)
@@ -3033,7 +3009,6 @@ $(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
 	    boards/kria-kr260/cadr_ps8.sv rtl/plumbing/cadr_gp0_default.sv \
 	    rtl/plumbing/cadr_fault_lamp.sv $(FAULT_KR260_SRC)
 	$(BUILD)/obj_fault_arty/Vcadr_fault_harness
-	$(BUILD)/obj_fault_cora/Vcadr_fault_harness
 	$(BUILD)/obj_fault_de25/Vcadr_fault_harness
 	$(BUILD)/obj_fault_kr260/Vcadr_fault_harness
 	@touch $@
@@ -3313,102 +3288,10 @@ $(BUILD)/arty.pass: $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/c
 	    --top-module cadr_debug_window $(TICKPKG) rtl/plumbing/cadr_debug_window.sv
 	@touch $@
 
-# ------------------------------------------------ the Cora Z7-07S's top level
-#
-# `boards/cora-z7-07s/cadr_cora.sv` is the second board, and it is the same
-# file one board along: the Arty Z7-20's top level with this board's pins on
-# it, `rtl/` unchanged.  Like that one it cannot be simulated --- an MMCM, a
-# BUFG and a PS7 are not things Verilator runs --- so lint and the fitter are
-# all there is, and this is the lint.
-#
-# FIVE BOARDS, NOT SIX.  The Arty's rule lints a sixth with `HDMI=1`, and the
-# **AND A SIXTH, `LMTV=0`.**  The second display board is the one thing on this
-# board whose slot may have to come out: the Cora fits and closes with it, at
-# 96.1% of its slices, and the switch is there for the day something else has
-# to go in beside it.  A configuration nothing lints is a configuration nobody
-# has checked, and `LMTV=0` is a generate arm with five assignments in it.
-#
-# Cora Z7-07S has no HDMI connector: `cadr_cora.sv` has no `HDMI` parameter to
-# set, `cadr_ps7.sv` here does not bring `S_AXI_HP3` out, and there is nothing
-# between a display and a PS7 on this board to be left unlinted.
-#
-# **AND IT USES THE ARTY's STUBS**, `$(BOARD_STUBS)` and
-# `tb/cadr_ps7_stub.sv`, because all of them name primitives and pins rather
-# than a board: `MMCME2_BASE`, `BUFG`, `OBUFDS`, `BSCANE2`, `USR_ACCESSE2` and
-# every one of the PS7's 620 pins are the same on both parts.  A second set of
-# stubs would be a second description of one hard block, and `tb/` is not a
-# board's directory.
-$(BUILD)/cora.pass: $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
-                    boards/cora-z7-07s/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
-                    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
-                    rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
-                    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
-                    $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
-                    $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-                    rtl/plumbing/cadr_lamp_microcycle.sv \
-                    $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv \
-	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE_SRC) \
-	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
-	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GDDR=1 \
-	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
-	    rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-	    rtl/plumbing/cadr_lamp_microcycle.sv
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GPROVE=1 \
-	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
-	    rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
-	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-	    rtl/plumbing/cadr_lamp_microcycle.sv
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GDDR=1 -GLMTV=0 \
-	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
-	    rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-	    rtl/plumbing/cadr_lamp_microcycle.sv
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GPROVE=2 \
-	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
-	    rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
-	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-	    rtl/plumbing/cadr_lamp_microcycle.sv
-	@touch $@
-
 # ------------------------------------------------ the Kria KR260's top level
 #
-# `boards/kria-kr260/cadr_kr260.sv`, the Cora's top level on a Zynq
-# UltraScale+: lint is what holds its wiring, as for the other two, with
+# `boards/kria-kr260/cadr_kr260.sv`, the top level on a Zynq UltraScale+:
+# lint is what holds its wiring, as for the Arty Z7-20, with
 # `tb/cadr_kr260_stubs.sv` for the `MMCME4_BASE` and `tb/cadr_ps8_stub.sv`,
 # generated with the wrapper, for the `PS8`.  Three configurations: the bare
 # machine, the board with the processing system (the one its flow builds),
@@ -3868,8 +3751,7 @@ $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT
 # build the CADR under QUUX's name and every other check would stay green.  `tools/machine_param_check.py` lints
 # each top level with each value and reads the parameter back at `u_machine`
 # out of Verilator's elaborated tree; requires a near miss to stop
-# elaboration in `u_machine` and QUUX to stop it in the Cora's top level; and
-# runs the refusals the Vivado flows and the DE25-Nano's two scripts make
+# elaboration in `u_machine`; and runs the refusals the Vivado flows and the DE25-Nano's two scripts make
 # before any vendor tool is looked for.  In the same tree it counts the debug
 # cable's connector, join and window, which the CADR has and QUUX does not
 # (contract Q5), and reads what drives the connector's pads.  Its header says
@@ -3890,7 +3772,6 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      tb/cadr_kr260_stubs.sv tb/cadr_ps8_stub.sv \
                      boards/arty-z7-20/vivado/bitstream.tcl \
                      boards/arty-z7-20/vivado/tick.tcl \
-                     boards/cora-z7-07s/vivado/bitstream.tcl \
                      boards/kria-kr260/vivado/bitstream.tcl \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
@@ -4269,13 +4150,6 @@ cables:
 ps7:
 	python3 boards/arty-z7-20/vivado/gen_ps7.py
 
-# And the Cora Z7-07S's, which is the same parse of the same PS7.v with
-# `S_AXI_HP3` left out --- that board has no HDMI connector and so no display
-# to master it.  `boards/cora-z7-07s/vivado/gen_ps7.py` is a front end that
-# calls the generator above rather than a second copy of it.
-ps7-cora:
-	python3 boards/cora-z7-07s/vivado/gen_ps7.py
-
 # And the Kria KR260's, off Xilinx's own PS8.v: the Zynq UltraScale+'s
 # processing system, 1,015 pins, with the tie table read from Vivado's own
 # PS IP.  `boards/kria-kr260/vivado/gen_ps8.py` says how.
@@ -4299,13 +4173,6 @@ ps8:
 ps7-init:
 	python3 boards/arty-z7-20/vivado/ps7_ops.py
 
-# And the Cora Z7-07S's routine, out of Digilent's own board preset for that
-# board.  Two files come of it: the ordered operations, and the C table
-# U-Boot's SPL runs, which is derived from them.
-ps7-init-cora:
-	python3 boards/cora-z7-07s/vivado/ps7_ops.py
-	python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py
-
 $(BUILD)/cables.pass: rtl/machine/cadr_cables.svh rtl/machine/cadr_cables_lint.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall --top-module cadr_cables_lint -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    rtl/machine/cadr_cables_lint.sv
@@ -4321,14 +4188,6 @@ current:
 	@echo "ok: generated files are current"
 	@python3 boards/arty-z7-20/vivado/gen_ps7.py --check
 	@python3 boards/arty-z7-20/vivado/ps7_ops.py --check
-# And the second board's three generated files, on the same argument: a
-# generated file that is not what the generator writes today is a claim about
-# a design nobody is building.  All three skip without Vivado, as the two
-# above do, except the C table --- that one is derived from the committed
-# `.ops` by pure Python and runs anywhere.
-	@python3 boards/cora-z7-07s/vivado/gen_ps7.py --check
-	@python3 boards/cora-z7-07s/vivado/ps7_ops.py --check
-	@python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py --check
 # And the Kria KR260's wrapper and stub, which skip without Vivado as the
 # Zynq-7000's do.
 	@python3 boards/kria-kr260/vivado/gen_ps8.py --check
@@ -6133,7 +5992,6 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       boards/arty-z7-20/linux/mksd-release.sh \
                       tools/quux_card_check.py \
                       boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uEnv.txt.in \
-                      boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uEnv.txt.in \
                       boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.txt.in \
                       boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/etc/cadr/card.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
@@ -6338,14 +6196,6 @@ BR_WORK     ?= $(HOME)/.cache/muir-fpga-buildroot
 BR_SRC      := $(BR_WORK)/buildroot-$(BR_VERSION)
 BR_OUT      := $(BR_WORK)/out
 BR_EXTERNAL := $(abspath boards/arty-z7-20/linux/buildroot)
-# The Cora Z7-07S's image is built from BOTH external trees, because the
-# packages live in the Arty Z7-20's and there is one copy of them; the second
-# tree holds only the board.  Its output goes in a directory of its own, so
-# the two images cannot overwrite each other and a rebuild of one does not
-# throw the other away.
-BR_EXTERNAL_CORA := $(BR_EXTERNAL):$(abspath boards/cora-z7-07s/linux/buildroot)
-BR_OUT_CORA := $(BR_WORK)/out-cora
-BR_GEN_PS7_CORA := boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py
 BR_GEN_PS7  := boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/gen_ps7_init_gpl.py
 # The packages `buildroot-rebuild` has to force are exactly those Buildroot's
 # `local` site method builds out of a src/ directory in this tree, so the list
@@ -6377,7 +6227,7 @@ BR_FORCE_PKGS = uboot linux cadr-common cadr-readout \
 # `<pkg>-reconfigure` builds and installs a package whatever the configuration
 # says --- Buildroot defines those targets for every package in the tree, not
 # for the selected ones --- and Buildroot never removes what it installed.
-# Measured on this build host: the Cora Z7-07S's output directory carried
+# Measured on this build host: a board's output directory carried
 # `usr/bin/cadr-usb-input` and `etc/init.d/S88cadr-usb-input`, installed by a
 # forcing run typed by hand, on a board whose defconfig has no USB input.  That
 # is the ghost `board/arty-z7-20/post-build.sh` stops the build for, made by
@@ -6386,8 +6236,8 @@ BR_FORCE_PKGS = uboot linux cadr-common cadr-readout \
 # commit behind its own target tree.
 #
 # So the list is filtered against the `.config` the defconfig line has just
-# written, in the shell, at the moment it is used.  It is ONE list for both
-# boards for the reason a second forcing target was refused before it existed:
+# written, in the shell, at the moment it is used.  It is ONE list for every
+# board for the reason a second forcing target was refused before it existed:
 # two lists rot apart.  The filter is what makes one list safe for a board that
 # leaves a package out.
 #
@@ -6430,7 +6280,6 @@ endef
 # against `tools/br_force_check.py`'s, with no Buildroot.  A defconfig names
 # what it selects, which is the question the macro asks.
 BR_DEFCONFIGS := boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig \
-                 boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig \
                  boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
                  boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig
 $(BUILD)/br_force.pass: tools/br_force_check.py $(BR_DEFCONFIGS) Makefile \
@@ -6501,8 +6350,7 @@ $(BUILD)/rootfs_packages.pass: boards/arty-z7-20/linux/rootfs_check.py \
 	python3 $(BR_ROOTFS_CHECK) packages $(BR_EXTERNAL)
 	@touch $@
 
-.PHONY: buildroot buildroot-check buildroot-packages-check buildroot-rebuild \
-        buildroot-cora buildroot-cora-check buildroot-cora-rebuild
+.PHONY: buildroot buildroot-check buildroot-packages-check buildroot-rebuild
 
 # The generated start-up routine has to be what boards/arty-z7-20/vivado/ps7_init.ops gives
 # today, or U-Boot would be built from a stale claim.  Pure Python, no
@@ -6561,65 +6409,14 @@ buildroot-rebuild: buildroot-check
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
 
-# ------------------------------------------------ the Cora Z7-07S's image
-#
-# The same Buildroot, the same packages and the same kernel configuration,
-# with this board's device tree, start-up routine and U-Boot environment.
-# `boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig` says what
-# it leaves out and why --- there is no USB input on this board.
-#
-# The board boots this image from its card and runs the machine on it.  What
-# holds the configuration beyond that is that it is the other board's with the
-# differences its own header names, and `buildroot-cora-check`, which says the
-# start-up routine the SPL would run is what this board's committed `.ops`
-# gives.
-#
-# **AND IT HAS A REBUILD TARGET OF ITS OWN, BECAUSE `buildroot-rebuild` DOES
-# NOT REACH IT.**  What stood here said there was no need for one --- that the
-# packages are the other tree's, so `buildroot-rebuild` forces them --- and
-# that is false: `buildroot-rebuild` acts on `O=$(BR_OUT)` and this board's
-# output directory keeps its own build stamps, so it forces nothing here.  The
-# image that went to the board carried a `cadr-console` and three init scripts
-# from an earlier commit because of it.  The second list the old comment was
-# afraid of does not exist: both rebuild targets call `BR_FORCE` above, which
-# is one list, derived, and filtered by the board's own `.config`.
-buildroot-cora-check: buildroot-packages-check
-	@python3 $(BR_GEN_PS7_CORA) --check
-
-buildroot-cora: buildroot-cora-check
-	@test -f $(BR_TARBALL) || { \
-	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
-	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
-	@echo "$(BR_SHA)  $(BR_TARBALL)" | sha256sum -c --quiet - \
-	    || { echo "$(BR_TARBALL) is not the Buildroot this image was built with"; exit 1; }
-	@mkdir -p $(BR_WORK)/bin vendor/buildroot-dl
-	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
-	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
-	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA) BR2_EXTERNAL=$(BR_EXTERNAL_CORA) cora_z7_07s_defconfig
-	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA)
-	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_CORA) $(BR_OUT_CORA) $(BR_OUT_CORA)/images/rootfs.cpio.uboot
-	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
-	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
-
-# The counterpart of `buildroot-rebuild`, in this board's output directory and
-# with both external trees: the same three steps --- apply the defconfig, force
-# every package that reads our files and is in this image, finish the image ---
-# and the same check of the image afterwards.
-buildroot-cora-rebuild: buildroot-cora-check
-	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA) BR2_EXTERNAL=$(BR_EXTERNAL_CORA) cora_z7_07s_defconfig
-	$(call BR_FORCE,$(BR_OUT_CORA))
-	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA)
-	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_CORA) $(BR_OUT_CORA) $(BR_OUT_CORA)/images/rootfs.cpio.uboot
-	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
-	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
-
 # ------------------------------------------------ the DE25-Nano's image
 #
 # The same Buildroot and the same packages, for aarch64, with Altera's TF-A,
 # U-Boot and kernel, each pinned to a commit.  `boards/de25-nano/linux/
-# buildroot/configs/de25_nano_defconfig` says what it is and why; like the
-# Cora Z7-07S's it is built from both external trees and into an output
-# directory of its own.
+# buildroot/configs/de25_nano_defconfig` says what it is and why.  It is built
+# from both external trees, because the packages live in the Arty Z7-20's and
+# there is one copy of them, and into an output directory of its own, so that
+# one board's image cannot overwrite another's.
 #
 # **TWO CHECKS OF ITS OWN, BEFORE AND AFTER.**  Before: the three pinned
 # sources each have a hash file naming the pinned commit, because Buildroot
@@ -6631,9 +6428,10 @@ buildroot-cora-rebuild: buildroot-cora-check
 # board's addresses.  Then the image against its target tree, as on every
 # board.
 #
-# **AND A REBUILD TARGET FROM THE START**, for the Cora Z7-07S's reason: the
-# other boards' rebuild targets act on their own output directories.  It forces
-# the same one list, filtered by this board's .config.
+# **AND A REBUILD TARGET FROM THE START**, because `buildroot-rebuild` acts on
+# `O=$(BR_OUT)` alone: each output directory keeps its own build stamps, so
+# another board's rebuild target forces nothing here.  It forces the same one
+# list, filtered by this board's .config.
 BR_EXTERNAL_DE25 := $(BR_EXTERNAL):$(abspath boards/de25-nano/linux/buildroot)
 BR_OUT_DE25 := $(BR_WORK)/out-de25
 BR_DE25_CHECK := boards/de25-nano/linux/buildroot_check.py
@@ -6795,8 +6593,8 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 
 # ------------------------------------------------------------ the release
 #
-# **A RELEASE IS SEVEN ZIPS, ONE A BOARD AND MACHINE, AND THIS IS THE ONE
-# COMMAND THAT MAKES THEM**: the CADR for the four boards, and QUUX revision
+# **A RELEASE IS SIX ZIPS, ONE A BOARD AND MACHINE, AND THIS IS THE ONE
+# COMMAND THAT MAKES THEM**: the CADR for the three boards, and QUUX revision
 # 13 for the Arty Z7-20, the DE25-Nano and the Kria KR260.  There is no card
 # image any more: a user formats a microSD card themselves, as one FAT32
 # partition in an MBR, and unpacks their board's zip onto it.  Each zip is
@@ -6804,11 +6602,9 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 # inside it, and is what is published for that board and machine.
 #
 #     make release RELEASE_COMMIT=<the commit all of them were built from> \
-#                  BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
-#                  BIT_KR260=<a .bit> \
+#                  BIT_ARTY=<a .bit> BIT_DE25=<a .rbf> BIT_KR260=<a .bit> \
 #                  BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> BIT_KR260_QUUX=<a .bit> \
-#                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
-#                  FAULT_KR260=<a .bit>
+#                  FAULT_ARTY=<a .bit> FAULT_DE25=<a .rbf> FAULT_KR260=<a .bit>
 #
 # **AND EACH README NAMES THE COMMIT**, RELEASE_COMMIT, which a Zynq
 # bitstream's build stamp beside it must agree with (mksd-release.sh), **AND
@@ -6828,11 +6624,11 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 # **AND EACH ZIP CARRIES ITS BOARD'S FAULT BITSTREAM**, the one the loader
 # takes when the CADR's will not load (`docs/board.md`), named the same way.
 #
-# **SEVEN ZIPS ARE SEVEN CHANCES FOR ONE TO BE STALE**, which is why this is
-# one target and not seven: a release in which six were rebuilt and the
-# seventh was not is exactly the sort of thing that ships.  So every
+# **SIX ZIPS ARE SIX CHANCES FOR ONE TO BE STALE**, which is why this is
+# one target and not six: a release in which five were rebuilt and the
+# sixth was not is exactly the sort of thing that ships.  So every
 # bitstream is required by name, the target refuses to build a partial
-# release, and it prints the seven zips together at the end with their
+# release, and it prints the six zips together at the end with their
 # digests, where a missing one is visible.  **THEN IT READS THEM BACK**:
 # `tools/release_check.py` over `RELEASE_DIR` (`make release-check`), which
 # reads every bitstream's build out of the file in the zip, the device tree,
@@ -6841,30 +6637,29 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 # The bitstreams are not in this repository --- they are built by Vivado and by
 # Quartus, which `make check` does not run --- so they are named on the command
 # line.  Each board's Buildroot output must exist: `make buildroot`,
-# `make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`
-# build them.  The Kria KR260's fault bitstream is `tools/fault_zynq.tcl`'s
-# with `BOARD=kr260`.  `RELEASE_DIR` is where the seven go, `build/sd/release`
+# `make buildroot-de25` and `make buildroot-kr260` build them.  The Kria KR260's fault bitstream is `tools/fault_zynq.tcl`'s
+# with `BOARD=kr260`.  `RELEASE_DIR` is where the six go, `build/sd/release`
 # unless given.
 .PHONY: release release-check
 RELEASE_DIR ?= build/sd/release
 CADR_SYSTEM ?= 1003
 QUUX_SYSTEM ?= 2001
-RELEASE_ZIPS := arty-z7-20/cadr-arty-z7-20.zip cora-z7-07s/cadr-cora-z7-07s.zip \
+RELEASE_ZIPS := arty-z7-20/cadr-arty-z7-20.zip \
                 de25-nano/cadr-de25-nano.zip kria-kr260/cadr-kria-kr260.zip \
                 quux-arty-z7-20/quux-arty-z7-20.zip quux-de25-nano/quux-de25-nano.zip \
                 quux-kria-kr260/quux-kria-kr260.zip
 release:
-	@for v in RELEASE_COMMIT BIT_ARTY BIT_CORA BIT_DE25 BIT_KR260 BIT_ARTY_QUUX BIT_DE25_QUUX \
-	          BIT_KR260_QUUX FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
+	@for v in RELEASE_COMMIT BIT_ARTY BIT_DE25 BIT_KR260 BIT_ARTY_QUUX BIT_DE25_QUUX \
+	          BIT_KR260_QUUX FAULT_ARTY FAULT_DE25 FAULT_KR260; do \
 	    eval "b=\$$$$v"; \
 	    [ -n "$$b" ] || { \
-	        echo "release: $$v is not set.  A release is seven zips and this target makes"; \
-	        echo "release: all seven, so that one board cannot be left at an older build:"; \
+	        echo "release: $$v is not set.  A release is six zips and this target makes"; \
+	        echo "release: all six, so that one board cannot be left at an older build:"; \
 	        echo "release:   make release RELEASE_COMMIT=<the commit they were built from>"; \
-	        echo "release:                BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
+	        echo "release:                BIT_ARTY=<a .bit> BIT_DE25=<a .rbf>"; \
 	        echo "release:                BIT_KR260=<a .bit> BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf>"; \
 	        echo "release:                BIT_KR260_QUUX=<a .bit>"; \
-	        echo "release:                FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>"; \
+	        echo "release:                FAULT_ARTY=<a .bit> FAULT_DE25=<a .rbf>"; \
 	        echo "release:                FAULT_KR260=<a .bit>"; \
 	        exit 1; }; \
 	    [ $$v = RELEASE_COMMIT ] || [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
@@ -6883,10 +6678,6 @@ release:
 	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT)/images \
 	    OUT=$(RELEASE_DIR)/arty-z7-20 \
 	    BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT_CORA)/images \
-	    OUT=$(RELEASE_DIR)/cora-z7-07s \
-	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-	    BIT=$(BIT_CORA) FAULT_BIT=$(FAULT_CORA) boards/arty-z7-20/linux/mksd-release.sh
 	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT_DE25)/images \
 	    OUT=$(RELEASE_DIR)/de25-nano \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
@@ -6907,7 +6698,7 @@ release:
 	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
 	    BIT=$(BIT_KR260_QUUX) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
 	@echo
-	@echo "release: seven zips, one a board and machine, built from $(RELEASE_COMMIT):"
+	@echo "release: six zips, one a board and machine, built from $(RELEASE_COMMIT):"
 	@for z in $(RELEASE_ZIPS:%=$(RELEASE_DIR)/%); do \
 	    [ -f "$$z" ] || { echo "release: $$z was not built"; exit 1; }; \
 	    printf '  %-50s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \
@@ -6916,7 +6707,7 @@ release:
 	@echo "release: each is unpacked onto a microSD card formatted as ONE FAT32"
 	@echo "release: partition in an MBR.  docs/boot.md says how."
 
-# **AND THE SEVEN READ BACK, ON THEIR OWN**, over any directory of zips: a
+# **AND THE SIX READ BACK, ON THEIR OWN**, over any directory of zips: a
 # release built here, or one downloaded.  The systems the READMEs must name
 # are the check's own, 1003 and 2001, and not `CADR_SYSTEM` and `QUUX_SYSTEM`
 # above, so that a wrong number there is caught rather than agreed with;

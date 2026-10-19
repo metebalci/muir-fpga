@@ -569,9 +569,9 @@ debugs it. On every board the register window already covers that
 case: muir on a board's own Arm cores reaches the DBGIN page whatever the
 connector is doing.
 
-**Which connector is the board's own decision, and the two Zynq boards say
-JA.** Each has two Pmod headers and nothing in its pin file tells one header
-from the other. JA is the connector because a board needs one. A part whose
+**Which connector is the board's own decision, and the Arty Z7-20 says JA.**
+It has two Pmod headers and nothing in its pin file tells one header from the
+other. JA is the connector because a board needs one. A part whose
 headers are not alike would want the question asked again --- this link rests
 on a strobe at the far end of a ribbon, so a high-speed header would be the one
 to take. **The DE25-Nano says JP1 pins 31 to 38**, and its two headers are
@@ -688,20 +688,20 @@ the group this board does not own is high-impedance and the far end has it.
 Every pad carries a pull-down: an unplugged connector must read zero and not
 float, and either group can be the one this board is listening to.
 
-**The pins, per board, from Digilent's own published files.** The index is the
-carrier's and the header pin is the one on the connector. **The header is JA on
-both boards**, for the reason the section above gives.
+**The Arty Z7-20's pins, from Digilent's own published file.** The index is
+the carrier's and the header pin is the one on the connector. **The header is
+JA**, for the reason the section above gives.
 
-| index | header pin | pair | role | Arty Z7-20 JA | Cora Z7-07S JA |
-|---|---|---|---|---|---|
-| 0 | 1 | first | debugger strobe | Y18 | Y18 |
-| 1 | 2 | first | guard, driven low | Y19 | Y19 |
-| 2 | 3 | second | debugger data | Y16 | Y16 |
-| 3 | 4 | second | guard, driven low | Y17 | Y17 |
-| 4 | 7 | third | debuggee strobe | U18 | U18 |
-| 5 | 8 | third | guard, driven low | U19 | U19 |
-| 6 | 9 | fourth | debuggee data | W18 | W18 |
-| 7 | 10 | fourth | guard, driven low | W19 | W19 |
+| index | header pin | pair | role | Arty Z7-20 JA |
+|---|---|---|---|---|
+| 0 | 1 | first | debugger strobe | Y18 |
+| 1 | 2 | first | guard, driven low | Y19 |
+| 2 | 3 | second | debugger data | Y16 |
+| 3 | 4 | second | guard, driven low | Y17 |
+| 4 | 7 | third | debuggee strobe | U18 |
+| 5 | 8 | third | guard, driven low | U19 |
+| 6 | 9 | fourth | debuggee data | W18 |
+| 7 | 10 | fourth | guard, driven low | W19 |
 
 The signal is on the odd header pin of each pair and the guard on the even one.
 A guard is driven low by whichever board drives that group, and a board
@@ -709,14 +709,13 @@ listening to a group drives no pin of it, guard included. So a group of four
 pads is enabled whole or not at all, and `build/dbg_cable.pass` asserts exactly
 that on every tick of every phase.
 
-Both files index a header's eight signals in the same order, which is header
-pins 1, 2, 3, 4, 7, 8, 9, 10 --- the two signal rows of a twelve-pin Pmod, the
-other four being ground and supply. So index `k` is the same header pin on both
-boards, and a straight ribbon between them maps every signal to its
-counterpart, whichever headers the two ends are. The two boards use the same
-package pins as each other. The files are `Arty-Z7-20-Master.xdc` and
-`Cora-Z7-07S-Master.xdc` from `github.com/Digilent/digilent-xdc` at commit
-`00a3404901f35aa9567b01ecb3f2c233b6efe9f4`. Each board's own `.xdc` keeps
+Every board indexes a header's eight signals in the same order, which on a
+Pmod is header pins 1, 2, 3, 4, 7, 8, 9, 10 --- the two signal rows of a
+twelve-pin Pmod, the other four being ground and supply. So index `k` is the
+same header pin on both ends, and a straight ribbon between two boards maps
+every signal to its counterpart, whichever headers the two ends are. The file
+is `Arty-Z7-20-Master.xdc` from `github.com/Digilent/digilent-xdc` at commit
+`00a3404901f35aa9567b01ecb3f2c233b6efe9f4`. The board's own `.xdc` keeps
 Digilent's schematic names in its comments, so the mapping can be checked
 against the board rather than against memory.
 
@@ -803,8 +802,7 @@ each signal to its counterpart, as it does between the two Zynq boards.
 | 11 | --- | --- | ground | 11, joined | 5, joined |
 | 12 | --- | --- | 3.3 V | open at both ends | open at both ends |
 
-The Cora Z7-07S's JA has the same pin numbers as the Arty's, so the table holds
-for a cable to it as well. A mirrored ribbon is the one the section below
+A mirrored ribbon is the one the section below
 describes, and the debugger finds it under `auto` either way.
 
 **The grounds are joined and the supplies are not.** Pins 5 and 11 are ground
@@ -1341,9 +1339,9 @@ count and not a constant transcribed into the check.
 ### The attachment, which is built
 
 **Every CADR board carries the connector, in every configuration.**
-`boards/arty-z7-20/cadr_arty.sv` and `boards/cora-z7-07s/cadr_cora.sv` bring JA
-out as eight bidirectional pads and `boards/de25-nano/cadr_de25.sv` brings out
-JP1 pins 31 to 38 as eight more, and each of the three instantiates
+`boards/arty-z7-20/cadr_arty.sv` brings JA out as eight bidirectional pads and
+`boards/de25-nano/cadr_de25.sv` brings out JP1 pins 31 to 38 as eight more,
+and each of the two instantiates
 `cadr_dbg_cable.sv` on them, outside the generate
 block that holds the processing system. That is not tidiness: **a board is
 always a debuggee**, so the connector has to exist on a board with no console
@@ -1404,8 +1402,9 @@ the section below.
 ## What two boards have shown
 
 The carrier and a debug cycle over it have both run on real boards. The boards
-are an Arty Z7-20 and a Cora Z7-07S, the cable is a ribbon between their two
-Pmod JA connectors, and each board was running Lisp throughout.
+were an Arty Z7-20 and a Cora Z7-07S, a board this repository supported up to
+`653e5759`; the cable was a ribbon between their two Pmod JA connectors, and
+each board was running Lisp throughout. This section records what was shown.
 
 ### The carrier
 

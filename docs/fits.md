@@ -10,13 +10,14 @@ slack, the logic and block memory it takes, the commit it was built from, and
 whether that tree was clean. The commit and the tree's state are the ones the
 build stamp records (`tools/build_stamp.tcl`).
 
-The parts are the Arty Z7-20's `xc7z020clg400-1`, the Cora Z7-07S's
-`xc7z007sclg400-1` and the Kria KR260's `xck26-sfvc784-2LV-c`, fitted with
-Vivado 2026.1, and the DE25-Nano's `A5EB013BB23BE4SCS`, fitted with Quartus
-Prime Pro 26.1.1. Every fit has main memory in DDR (`DDR=1`). The Arty and
-DE25-Nano fits carry the display output (`HDMI=1`), and the Kria KR260's
-from `c28b67f` on carry it too, to the processing system's DisplayPort
-controller; the Cora's do not.
+The parts are the Arty Z7-20's `xc7z020clg400-1` and the Kria KR260's
+`xck26-sfvc784-2LV-c`, fitted with Vivado 2026.1, and the DE25-Nano's
+`A5EB013BB23BE4SCS`, fitted with Quartus Prime Pro 26.1.1. The older rows
+also hold the Cora Z7-07S's `xc7z007sclg400-1`, a board no longer supported,
+whose fits carry no display output. Every fit has main memory in DDR
+(`DDR=1`). The Arty and DE25-Nano fits carry the display output (`HDMI=1`),
+and the Kria KR260's from `c28b67f` on carry it too, to the processing
+system's DisplayPort controller.
 
 A Vivado fit's slack is the timing summary's WNS and WHS. A Quartus fit's is
 the worst over its four corners. Slices are what Vivado reports, which on the

@@ -68,7 +68,7 @@ ZYNQ_TCL = ("boards/arty-z7-20/vivado/ddr_check.tcl",
             "boards/arty-z7-20/vivado/ddr_run.tcl")
 NAMES = {"zynq": "the Zynq boards", "de25": "the DE25-Nano"}
 # QUUX revision 13's own reservation, in its own tree, on the boards that run
-# it (the Cora Z7-07S cannot build QUUX, and has no revision 13 tree).
+# it.
 QUUX13_DTSI = {
     "zynq": "boards/arty-z7-20/linux/quux13-reserved.dtsi",
     "de25": "boards/de25-nano/linux/quux13-reserved.dtsi",

@@ -99,12 +99,12 @@
 #     failure and not a plausible number.
 #
 # **THE INSTANCE IS MATCHED BY A WILDCARD AND NOT BY ITS FULL PATH.**  On the
-# Cora Z7-07S and the Kria KR260 the window is `g_ddr.u_debug_window`, and on
-# the Arty Z7-20 `g_ddr.g_dbg_window.u_debug_window`, because that board also
-# builds QUUX, which has no debug cable (contract Q5) and whose flow does not
-# read this file.  Behind the processing system's port on all three, the
-# module, the cone and the reason are identical --- the machine's
-# diagnostic multiplexer reaching this latch, twenty-three logic levels of it.
+# Kria KR260 the window is `g_ddr.u_debug_window`, and on the Arty Z7-20
+# `g_ddr.g_dbg_window.u_debug_window`, because that board also builds QUUX,
+# which has no debug cable (contract Q5) and whose flow does not read this
+# file.  Behind the processing system's port on both, the module, the cone
+# and the reason are identical --- the machine's diagnostic multiplexer
+# reaching this latch, twenty-three logic levels of it.
 # Naming the generate hierarchy here would make this file a second thing to
 # keep in step with a top level, and a scoped path that stops matching applies
 # to nothing while saying nothing, which is the failure this repository records

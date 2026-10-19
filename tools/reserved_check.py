@@ -89,9 +89,6 @@ FAMILIES = {
         "builds": [
             ("boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig",
              "boards/arty-z7-20/linux/buildroot/external.mk", "CADR_LINUX_COPY_RESERVED_DTSI"),
-            ("boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig",
-             "boards/cora-z7-07s/linux/buildroot/external.mk",
-             "CADR_CORA_LINUX_COPY_RESERVED_DTSI"),
         ],
         # Revision 13 runs on the first build's board alone.
         "quux13": {

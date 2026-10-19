@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A whole board's top level, simulated, for `tb/cadr_board_reset_tb.cpp`.
-// One of `CADR_BOARD_ARTY`, `CADR_BOARD_CORA` or `CADR_BOARD_DE25` says
-// which.  The processing system is `tb/cadr_ps7_sim.sv` or
+// One of `CADR_BOARD_ARTY` or `CADR_BOARD_DE25` says which.  The processing system is `tb/cadr_ps7_sim.sv` or
 // `tb/cadr_de25_hps_sim.sv`, the clock generators are the lint stubs, which
 // pass the board's oscillator through, and everything else is the board's
 // own file unchanged.  So what this holds is the top level's wiring, which
@@ -39,15 +38,6 @@ module cadr_board_reset_harness #(
       .led(), .led4_r(), .led4_g(), .led4_b(), .led5_r(), .led5_g(), .led5_b(),
       .ja(),
       .hdmi_tx_clk_p(), .hdmi_tx_clk_n(), .hdmi_tx_d_p(), .hdmi_tx_d_n()
-  );
-  assign port_live = 1'b1;
-`elsif CADR_BOARD_CORA
-  cadr_cora #(
-      .PROM_HEX(PROM_HEX), .SYNC_PROM_HEX(SYNC_PROM_HEX), .DDR(1)
-  ) u_top (
-      .sysclk(clk), .btn(btn),
-      .led0_r(), .led0_g(), .led0_b(), .led1_r(), .led1_g(), .led1_b(),
-      .ja()
   );
   assign port_live = 1'b1;
 `elsif CADR_BOARD_DE25

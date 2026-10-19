@@ -118,19 +118,11 @@ const std::vector<uint32_t> PORT1 = {0xB000'0000, 0xB000'1004, 0xB000'2008,
                                      0xB765'432C, 0xBFFF'FFFC};
 const int MEM_PORTS[] = {0, 2};
 #else
-#if defined(CADR_BOARD_CORA)
-const char *BOARD = "Cora Z7-07S";
-const int LAMPS = 2;
-const char *LAMP_NAME[8] = {"LD0 red", "LD1 red", "", "", "", "", "", ""};
-const char *DARK_NAME[4] = {"LD0 green", "LD0 blue", "LD1 green", "LD1 blue"};
-const int MEM_PORTS[] = {0, 2};
-#else
 const char *BOARD = "Arty Z7-20";
 const int LAMPS = 6;
 const char *LAMP_NAME[8] = {"LD0", "LD1", "LD2", "LD3", "LD4 red", "LD5 red", "", ""};
 const char *DARK_NAME[4] = {"LD4 green", "LD4 blue", "LD5 green", "LD5 blue"};
 const int MEM_PORTS[] = {0, 2, 3};
-#endif
 const bool DE25 = false;
 const int DARK = 4;
 const int ID_MASK = 0xFFF;

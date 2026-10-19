@@ -732,7 +732,7 @@ set_multicycle_path -hold  0 -from $ro_address -to $ro_ram_pins
 # a constant one, `cadr_microcycle.sv`), so its port is enabled always, and
 # a write enable or an address that arrives late at any edge is the UG473
 # fault the readout clause above names.  The relaxed set gave the write
-# enable the microcycle: on the Cora's routed CADR it came from the bus
+# enable the microcycle: on one board's routed CADR it came from the bus
 # interface's state through MACHRUN in 9.4 ns, 0.05 ns over a tick with
 # the exceptions dropped.  `quux_machine.xdc` does NOT re-issue this clause,
 # on purpose: QUUX's control store is enabled at the edge alone, and that

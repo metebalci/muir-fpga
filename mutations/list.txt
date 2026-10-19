@@ -15255,7 +15255,7 @@ if {0 && $held ne $want} {
 # ---------------------------------------------------------------------------
 #
 # `rtl/plumbing/cadr_lamp_clock.sv` and `rtl/plumbing/cadr_lamp_microcycle.sv`,
-# the Arty Z7-20's LD1 and LD2 and the Cora Z7-07S's green, held by
+# the Arty Z7-20's LD1 and LD2, held by
 # `build/blink_lamps.pass` at their own defaults.  A module of their own for
 # LD4's reason.  What is NOT here: which nets the boards wire to them, which is
 # lint-only and said so at each instantiation.  The console's word that sets
@@ -15586,17 +15586,6 @@ if {0 && $held ne $want} {
 @note 60.  `con_mem_boards` is still read, ANDed with zero, so lint sees it
 @note used and the check does the catching.  Caught on
 @note "control: the machine is given 32 memory boards after a count of 33".
-@old
-      .boards(con_mem_boards),
-@new
-      .boards(11'd32 | (con_mem_boards & 11'd0)),
-@end
-
-@mutation cora-the-machine-keeps-thirty-two-boards
-@check board_reset_cora
-@file boards/cora-z7-07s/cadr_cora.sv
-@note The Arty's record on the Cora's own top level.  Caught on "control: the
-@note machine is given 32 memory boards after a count of 33".
 @old
       .boards(con_mem_boards),
 @new
@@ -19282,7 +19271,7 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 # BTN1, KEY1 and the clock generator losing lock reset the machine and the
 # faces' registers; the AXI state that answers the processor's ports is reset
 # only by the processing system's own reset of those ports.  The rule is in
-# `docs/board.md`.  `board_reset_arty`, `_cora` and `_de25` simulate each
+# `docs/board.md`.  `board_reset_arty` and `_de25` simulate each
 # board's own top level with the processor driving its ports and the button
 # pressed under traffic (`tb/cadr_board_reset_tb.cpp`); `f2sdram_reset` holds
 # the DE25-Nano's memory port to the same rule on the FPGA-to-SDRAM bridge;
@@ -19317,42 +19306,6 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @mutation arty-the-pack-face-takes-the-button
 @check board_reset_arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note The same at the pack side alone, whose reset is made apart from the
-@note splitter's: its face swallows a read of its page while BTN1 is down.
-@old
-        pack_rst      <= !pack_rst_sync[2];
-@new
-        pack_rst      <= rst || !pack_rst_sync[2];
-@end
-
-@mutation cora-the-gp0-port-takes-the-button
-@check board_reset_cora
-@file boards/cora-z7-07s/cadr_cora.sv
-@note BTN1 back in the general-purpose port's reset, as it was: the splitter
-@note and every face on `M_AXI_GP0` held in their address states with
-@note ARREADY and AWREADY high while the button is down, so a read taken then,
-@note or in flight when it went down, is never answered and both Arm cores
-@note hang.  Caught at "press before pack: never answered (address taken)".
-@old
-      gp0_rst_s    <= !gp0_rst_sync[2];
-@new
-      gp0_rst_s    <= rst || !gp0_rst_sync[2];
-@end
-
-@mutation cora-the-gp1-port-takes-the-button
-@check board_reset_cora
-@file boards/cora-z7-07s/cadr_cora.sv
-@note The same on `M_AXI_GP1`: the splitter, the console and the debug
-@note window.  Caught at "press before window: never answered".
-@old
-      gp1_rst      <= !gp1_rst_sync[2];
-@new
-      gp1_rst      <= rst || !gp1_rst_sync[2];
-@end
-
-@mutation cora-the-pack-face-takes-the-button
-@check board_reset_cora
-@file boards/cora-z7-07s/cadr_cora.sv
 @note The same at the pack side alone, whose reset is made apart from the
 @note splitter's: its face swallows a read of its page while BTN1 is down.
 @old
@@ -20245,19 +20198,6 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
     assign axi_rst = rst || !port_rst_sync[2];
 @end
 
-@mutation cora-the-memory-adapter-takes-the-button
-@check board_reset_cora
-@file boards/cora-z7-07s/cadr_cora.sv
-@note BTN1 back in `S_AXI_HP0`'s adapter's reset, as it was: a read the port
-@note has taken is left without a master to take its answer, and a write's
-@note data is withdrawn.  Caught at "the machine's memory port: a read taken
-@note before the button was answered after it and its beats were never taken".
-@old
-    assign axi_rst = !port_rst_sync[2];
-@new
-    assign axi_rst = rst || !port_rst_sync[2];
-@end
-
 @mutation arty-the-display-port-takes-the-button
 @check board_reset_arty
 @file boards/arty-z7-20/cadr_arty.sv
@@ -20325,7 +20265,7 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 # ------------------------------------------------------ the fault bitstream
 #
 # `boards/*/cadr_*_fault.sv`, the top level U-Boot loads when the CADR's will
-# not load, simulated by `fault_arty`, `fault_cora` and `fault_de25`
+# not load, simulated by `fault_arty`, `fault_de25` and `fault_kr260`
 # (`tb/cadr_fault_tb.cpp`); its stamp's mark in `tools/build_stamp.tcl`, held
 # by `program_tcl`; and the DE25-Nano's loader falling back to it, held by
 # `de25_boot`.  What each record breaks is what a person or a program reads
@@ -20427,53 +20367,11 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
     if (count == W'(HALF_T - 2)) begin
 @end
 
-@mutation fault-cora-a-lamp-out-of-phase
-@check fault_cora
-@file boards/cora-z7-07s/cadr_cora_fault.sv
-@note LD1 against LD0.  Caught at "LD1 red reads dark while LD0 red reads lit".
-@old
-  assign led1_r = lit;
-@new
-  assign led1_r = !lit;
-@end
-
-@mutation fault-cora-ld0-shows-green
-@check fault_cora
-@file boards/cora-z7-07s/cadr_cora_fault.sv
-@note LD0's green pin lit with the red.  Caught at "LD0 green is lit".
-@old
-  assign led0_g = 1'b0;
-@new
-  assign led0_g = lit;
-@end
-
-@mutation fault-cora-gp0-swallows-a-read
-@check fault_cora
-@file boards/cora-z7-07s/cadr_cora_fault.sv
-@note `M_AXI_GP0`'s default slave never sees a read.  Caught at "port 0 read
-@note 40000000 len 0: never answered".
-@old
-      .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
-@new
-      .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid && 1'b0),
-@end
-
-@mutation fault-cora-the-tally-reads-as-a-cadr
-@check fault_cora
-@file boards/cora-z7-07s/cadr_cora_fault.sv
-@note The tally's first word a CADR's.  Caught at "the tally's word reads
-@note 00018000".
-@old
-  assign gpio_i = {FAULT_WORD, FAULT_WORD};
-@new
-  assign gpio_i = {FAULT_WORD, 32'h0001_8000};
-@end
-
-@mutation fault-cora-lamp-one-tick-long
-@check fault_cora
+@mutation fault-lamp-one-tick-long
+@check fault_arty
 @file rtl/plumbing/cadr_fault_lamp.sv
-@note The half period one tick long.  Caught at "changed 65 ticks after its
-@note last change, want 64".
+@note The half period one tick long.  Caught at "the lamps first lit at tick
+@note 2, want about 64".
 @old
     if (count == W'(HALF_T - 1)) begin
 @new
@@ -20766,8 +20664,7 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 # nothing inside the machine reads it yet but the guard that refuses any
 # other name, so the CADR's checks cannot see it at all.
 # `tools/machine_param_check.py` reads it back at each top level's
-# `u_machine`, and runs the refusals of the Cora's top level and of the
-# board flows.
+# `u_machine`, and runs the refusals of the board flows.
 
 @mutation machine-param-the-arty-hands-down-the-cadr
 @check machine_param
@@ -20790,17 +20687,6 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
       .MACHINE(MACHINE),
 @new
       .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE),
-@end
-
-@mutation machine-param-the-cora-builds-quux
-@check machine_param
-@file boards/cora-z7-07s/cadr_cora.sv
-@note The Cora's top level takes QUUX as well as the CADR, so a build asked
-@note for the machine this board does not carry goes ahead.
-@old
-  if (MACHINE != "cadr") begin : g_cadr_only
-@new
-  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_cadr_only
 @end
 
 @mutation machine-param-the-machine-takes-any-name
@@ -20845,17 +20731,6 @@ if {$machine ne "cadr" && $machine ne "quux" && 0} {
 if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
 @new
 if {$machine eq "quux" && [string first quux [file tail $outdir]] < -1} {
-@end
-
-@mutation machine-param-the-cora-flow-builds-quux
-@check machine_param
-@file boards/cora-z7-07s/vivado/bitstream.tcl
-@note The Cora's Vivado flow takes QUUX and goes on to synthesis, where only
-@note the top level's own refusal would stop it.
-@old
-if {[info exists ::env(MACHINE)] && $::env(MACHINE) ne "cadr"} {
-@new
-if {[info exists ::env(MACHINE)] && $::env(MACHINE) ne "cadr" && 0} {
 @end
 
 @mutation machine-param-the-de25-build-takes-any-name

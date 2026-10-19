@@ -12,14 +12,12 @@
 # `hw_server` itself; `docs/board.md` has the remote arrangement and the udev
 # rules whose absence looks like a network fault.
 #
-# TWO BOARDS READ THIS FILE, AND THE SECOND ONE SETS SIX FACTS AND SOURCES IT.
-# `boards/cora-z7-07s/vivado/ddr_check.tcl` sets that board's name, its
-# directory, its part, the device identity its `PSS_IDCODE` must carry, where
-# its routine is written and where its DDR ends, and then sources this file.
-# That is the shape this project already uses for the same board's `gen_ps7.py`
-# and `ps7_ops.py`: one copy of what the check does, and one copy of every
-# reason written beside it.  A board that sets nothing gets the Arty Z7-20's
-# values, which are the ones written here.
+# ANOTHER ZYNQ-7000 BOARD WOULD SET SIX FACTS AND SOURCE THIS FILE: its name,
+# its directory, its part, the device identity its `PSS_IDCODE` must carry,
+# where its routine is written and where its DDR ends.  That keeps one copy of
+# what the check does and one copy of every reason written beside it.  A board
+# that sets nothing gets the Arty Z7-20's values, which are the ones written
+# here.
 #
 # AND THE BOARD IS PICKED BY ITS CABLE SERIAL, BECAUSE `name =~ "APU*"` NAMES
 # EVERY ZYNQ ON THE HUB.  That filter was the whole of the selection while one

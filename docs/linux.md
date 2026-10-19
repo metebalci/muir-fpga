@@ -494,8 +494,7 @@ Linux has everything else: 494.875 MB on the Zynq boards in two ranges,
 `0x0000_0000` to `0x1AFF_FFFF` and `0x1C12_0000` to `0x1FFF_FFFF`; on the
 DE25-Nano the 1 GB but the service layer's 32 MB and the region; on the Kria
 KR260 its 4 GB but the firmware's reservations and the region. Measured,
-`MemTotal` went from 381,468 kB to 493,976 kB on the Arty Z7-20 and the Cora
-Z7-07S, from 824,964 kB to 938,276 kB on the DE25-Nano, and from 3,877,244 kB
+`MemTotal` went from 381,468 kB to 493,976 kB on the Arty Z7-20, from 824,964 kB to 938,276 kB on the DE25-Nano, and from 3,877,244 kB
 to 3,990,556 kB on the Kria KR260. **The display
 stayed where it was and main memory moved to just below it**, so that QUUX
 revision 13's main memory, which fills the room below the display, did not

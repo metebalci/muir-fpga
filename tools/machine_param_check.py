@@ -26,11 +26,6 @@ near miss, "cdr", handed to the Arty's and the DE25-Nano's top levels must
 fail with `cadr_machine`'s own message, in the instance `<top>.u_machine`.
 That is the parameter's path shown a second way, by the machine refusing it.
 
-**THE CORA Z7-07S BUILDS THE CADR ONLY.**  Its default reaches `u_machine`
-as "cadr", and "quux" must stop elaboration with its top level's own
-message.  Its Vivado flow must refuse `MACHINE=quux` before it writes
-anything.
-
 **AND THE FLOWS' OWN REFUSALS**, which run before any vendor tool is looked
 for, so they can be run here: the Arty's Vivado flow refuses a name that is
 not a machine and a QUUX build into a directory that does not say quux, and
@@ -150,21 +145,6 @@ BOARDS = {
         "boards13_max": 1024,
         "video": (1280, 1024),
         "name": "DE25-Nano",
-    },
-    "cora": {
-        "top": "cadr_cora",
-        "file": "boards/cora-z7-07s/cadr_cora.sv",
-        "dirs": ["rtl/machine", "rtl/plumbing", "rtl/plumbing/xilinx7",
-                 "boards/cora-z7-07s"],
-        "defines": [],
-        "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv"],
-        "configs": {
-            "plain": ([], []),
-            "DDR=1": (["-GDDR=1"], ["tb/cadr_ps7_stub.sv"]),
-        },
-        "machines": ["cadr"],
-        "pads": ["ja"],
-        "name": "Cora Z7-07S",
     },
     # The Kria KR260: the CADR, and QUUX at revision 13 alone (contract G2,
     # the KR260 port's K6), on its own memory map, with the `PS8`'s stub for
@@ -861,9 +841,6 @@ def main():
             refused_at(board, "plain", NOT_A_MACHINE,
                        'cadr_machine: MACHINE is "%s"' % NOT_A_MACHINE,
                        "%s.u_machine" % top)
-        for config in BOARDS["cora"]["configs"]:
-            refused_at("cora", config, "quux",
-                       "the Cora Z7-07S builds the CADR only", "cadr_cora")
         # QUUX at revision 12's word, the default 32, is refused: on the
         # Kria KR260 by its top level, and on the Arty and the DE25-Nano by
         # the processor, revision 12 being retired.
@@ -942,7 +919,6 @@ def main():
         # The flows.  Every OUTDIR is under the scratch directory, so a flow
         # that failed to refuse writes nothing anywhere else.
         arty = [TCLSH, "boards/arty-z7-20/vivado/bitstream.tcl"]
-        cora = [TCLSH, "boards/cora-z7-07s/vivado/bitstream.tcl"]
         kr260 = [TCLSH, "boards/kria-kr260/vivado/bitstream.tcl"]
         out = lambda name: os.path.join(scratch, name)
         flow("the Arty's Vivado flow refuses MACHINE=%s" % NOT_A_MACHINE, arty,
@@ -1012,12 +988,6 @@ def main():
                  ["BIT: the machine is quux, revision 14 (WORD_BITS=40)\n",
                   "BIT: the boot PROM is build/boot_prom.quux14.hex\n"],
                  ["FAILED --- REVISION", "FAILED --- MACHINE"])
-        flow("the Cora's Vivado flow refuses MACHINE=quux", cora,
-             {"MACHINE": "quux", "OUTDIR": out("c")}, 1,
-             ["BIT: FAILED --- MACHINE=quux, and the Cora Z7-07S builds the"], [])
-        flow("the Cora's Vivado flow takes MACHINE=cadr", cora,
-             {"MACHINE": "cadr", "OUTDIR": out("d")}, None,
-             [], ["FAILED --- MACHINE"])
         flow("the Kria KR260's Vivado flow refuses MACHINE=quux at revision 12's word", kr260,
              {"MACHINE": "quux", "OUTDIR": out("k-quux13")}, 1,
              ["BIT: FAILED --- MACHINE=quux at WORD_BITS=32, and the Kria KR260 builds"],
@@ -1157,7 +1127,7 @@ def main():
         print("machine: FAILED, %d of the cases above" % len(failures))
         return 1
     print("machine: every board's top level hands MACHINE, WORD_BITS, REVISION and its K to u_machine, "
-          "and the Cora and the flows refuse what they must")
+          "and the flows refuse what they must")
     return 0
 
 

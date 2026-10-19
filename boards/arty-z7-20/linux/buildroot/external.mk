@@ -49,8 +49,8 @@ LINUX_MAKE_ENV += KBUILD_BUILD_USER=buildroot KBUILD_BUILD_HOST=buildroot
 # the machine's reservation, so a revision 13 card carries a loader of its
 # own, the build's U-Boot with revision 13's tree (`../quux13-loader.sh`, which
 # says how, and refuses a recipe that does not reproduce the build's own
-# u-boot.img).  The Arty Z7-20's alone: the Cora Z7-07S cannot build QUUX,
-# and this file's hooks run on every board's build.
+# u-boot.img).  The Arty Z7-20's alone, because this file's hooks run on
+# every board's build.
 ifeq ($(call qstrip,$(BR2_TARGET_UBOOT_CUSTOM_MAKEOPTS)),DEVICE_TREE=zynq-arty-z7-20)
 define CADR_UBOOT_QUUX13_LOADER
 	$(TARGET_MAKE_ENV) $(BR2_EXTERNAL_CADR_PATH)/../quux13-loader.sh $(@D) arty-z7-20

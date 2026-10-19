@@ -29,8 +29,8 @@
 //   - A reset puts out both the hold and the count.
 //
 // **WHAT IS NOT HELD HERE**: which signals the boards wire to the inputs and
-// which pins the outputs drive.  That is `boards/arty-z7-20/cadr_arty.sv`'s and
-// `boards/cora-z7-07s/cadr_cora.sv`'s, and their lint.  Whether the console's
+// which pins the outputs drive.  That is `boards/arty-z7-20/cadr_arty.sv`'s,
+// and its lint.  Whether the console's
 // word moves the setting is `build/console.pass`'s.
 //
 // Build and run:

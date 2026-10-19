@@ -36,7 +36,7 @@ choice
 	  Which board the programs map the fabric of.
 
 config BR2_CADR_BOARD_ZYNQ7000
-	bool "Zynq-7000: the Arty Z7-20 and the Cora Z7-07S"
+	bool "Zynq-7000: the Arty Z7-20"
 
 config BR2_CADR_BOARD_DE25_NANO
 	bool "Agilex 5: the DE25-Nano"

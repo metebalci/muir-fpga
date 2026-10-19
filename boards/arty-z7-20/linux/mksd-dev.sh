@@ -34,12 +34,12 @@ cd "$(dirname "$0")/../../.."
 OUT=${OUT:-build/sd/buildroot}
 # WHICH BOARD, passed straight through to mksd-buildroot.sh, which explains
 # the two variables at its own defaults.  Both default to the Arty Z7-20's,
-# so a run that sets neither is the run this script has always been; the Cora
-# Z7-07S sets all three, its images being in their own output directory.
+# so a run that sets neither is the run this script has always been; another
+# board sets all three, its images being in their own output directory.
 #
-#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
-#     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-#     BIT=<the Cora's .bit> boards/arty-z7-20/linux/mksd-dev.sh
+#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
+#     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+#     BIT=<the DE25-Nano's .core.rbf> boards/arty-z7-20/linux/mksd-dev.sh
 BOARD_DIR=${BOARD_DIR:-boards/arty-z7-20}
 BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
 BOARD_NAME=$(basename "$BOARD_DIR")

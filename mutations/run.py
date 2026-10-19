@@ -432,8 +432,7 @@ CHECKS = {
         "golden": None,
     },
 
-    # LD1 and LD2 on the Arty Z7-20 and LD1's green on the Cora Z7-07S,
-    # blinking or steady.  Two modules for LD4's reason --- the top level is
+    # LD1 and LD2 on the Arty Z7-20, blinking or steady.  Two modules for LD4's reason --- the top level is
     # reached by lint alone, and lint cannot tell a lamp that follows the MMCM's
     # lock from one that samples it, or a hold re-armed by every microcycle
     # from one that is not --- and one harness that puts them side by side.
@@ -1481,7 +1480,7 @@ CHECKS = {
     # level, because `check_coverage` asks that every source a check builds has
     # a mutation aimed at it and only cadr_arty.sv does.
     # THE FABRIC'S RESET UNDER THE PROCESSOR'S TRANSACTIONS, on each board's
-    # own top level: `build/board_reset.pass`, three builds, one a board.  The
+    # own top level: `build/board_reset.pass`, two builds, one a board.  The
     # only checks that simulate a top level, so a record aimed at which reset
     # a top level gives which module belongs here, and so does one aimed at a
     # face's split between the port's reset and the fabric's: no module check
@@ -1521,40 +1520,6 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY",
                   "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-DCADR_BOARD_ARTY", "-CFLAGS", "-DCADR_BOARD_ARTY"],
-        "golden": None,
-        "gprom": True,
-    },
-    "board_reset_cora": {
-        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/cora-z7-07s/cadr_cora.sv",
-                    "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp1_split.sv",
-                    "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_disk_pack.sv",
-                    "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
-                    "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_console.sv",
-                    "rtl/plumbing/cadr_debug_window.sv"],
-        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_ps7_sim.sv",
-                  "tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
-                  "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
-                  "rtl/machine/cadr_xbus_decode.sv",
-                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
-                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
-                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
-                  "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
-                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
-                  "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
-                  "rtl/machine/cadr_machine.sv",
-                  "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
-                  "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv",
-                  "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_clock.sv",
-                  "rtl/plumbing/cadr_lamp_microcycle.sv",
-                  "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
-                  "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_gp_regs.sv",
-                  "tb/cadr_board_reset_harness.sv"],
-        "top": "cadr_board_reset_harness",
-        "tb": "tb/cadr_board_reset_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY",
-                  "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-                  "-DCADR_BOARD_CORA", "-DCADR_PS7_NO_HP3",
-                  "-CFLAGS", "-DCADR_BOARD_CORA"],
         "golden": None,
         "gprom": True,
     },
@@ -1612,17 +1577,6 @@ CHECKS = {
                   "-DCADR_BOARD_ARTY", "-CFLAGS", "-DCADR_BOARD_ARTY"],
         "golden": None,
     },
-    "fault_cora": {
-        "sources": ["boards/cora-z7-07s/cadr_cora_fault.sv",
-                    "rtl/plumbing/cadr_fault_lamp.sv"],
-        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_arty_stubs.sv", "tb/cadr_ps7_sim.sv",
-                  "rtl/plumbing/cadr_gp0_default.sv", "tb/cadr_fault_harness.sv"],
-        "top": "cadr_fault_harness",
-        "tb": "tb/cadr_fault_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY", "-Irtl/plumbing",
-                  "-DCADR_BOARD_CORA", "-DCADR_PS7_NO_HP3", "-CFLAGS", "-DCADR_BOARD_CORA"],
-        "golden": None,
-    },
     "fault_de25": {
         "sources": ["boards/de25-nano/cadr_de25_fault.sv",
                     "rtl/plumbing/cadr_fault_lamp.sv",
@@ -1664,7 +1618,7 @@ CHECKS = {
     },
     # The Kria KR260's top level, linted in the three configurations
     # `build/kr260.pass` lints, by `kr260_check`.  It is not the Arty's with
-    # other pins, as the Cora's is: the processing system is a `PS8` whose
+    # other pins: the processing system is a `PS8` whose
     # ports are 128 bits wide, met by modules of its own, so a record aimed at
     # its wiring holds something `arty`'s records do not.
     "kr260": {
@@ -1818,21 +1772,19 @@ CHECKS = {
     # every other check green.
     # `tools/machine_param_check.py` reads the value back at `u_machine` out
     # of Verilator's elaborated tree for each board and each value, requires
-    # the refusals of a name that is not a machine and of QUUX on the Cora,
-    # and runs the flows' own refusals.  Its header is the argument.
+    # the refusal of a name that is not a machine, and runs the flows' own
+    # refusals.  Its header is the argument.
     # Refusing is being caught.
     "machine_param": {
         "kind": "script",
         "sources": ["boards/arty-z7-20/cadr_arty.sv",
                     "boards/de25-nano/cadr_de25.sv",
-                    "boards/cora-z7-07s/cadr_cora.sv",
                     "rtl/machine/cadr_machine.sv",
                     "rtl/plumbing/cadr_ddr_map.sv",
                     "boards/kria-kr260/cadr_kr260.sv",
                     "boards/kria-kr260/vivado/bitstream.tcl",
                     "boards/arty-z7-20/vivado/bitstream.tcl",
                     "boards/arty-z7-20/vivado/tick.tcl",
-                    "boards/cora-z7-07s/vivado/bitstream.tcl",
                     "boards/de25-nano/quartus/build.sh",
                     "boards/de25-nano/quartus/program.sh"],
         "cmd": ["tools/machine_param_check.py", "."],
@@ -1908,10 +1860,8 @@ CHECKS = {
                     "boards/de25-nano/linux/buildroot/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_quux13.dts",
                     "boards/de25-nano/linux/buildroot/board/de25-nano/uboot/socfpga_agilex5_de25_nano_quux13-u-boot.dtsi",
                     "boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig",
-                    "boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig",
                     "boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig",
                     "boards/arty-z7-20/linux/buildroot/external.mk",
-                    "boards/cora-z7-07s/linux/buildroot/external.mk",
                     "boards/de25-nano/linux/buildroot/external.mk",
                     "boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env",
                     "boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env"],
@@ -4240,18 +4190,6 @@ def check_makefile():
     # C, so a record naming a shell script would be BROKEN by construction and
     # a record aimed at a check this runner has no entry for kills the run at
     # parse for every record.  Naming it here is the way that stands alone.
-    # `cora` is the Cora Z7-07S's lint, the same five board configurations
-    # `arty` lints one board along, and it is named here rather than given
-    # records of its own.  What `arty`'s records hold is that a top level
-    # which leaves one of `cadr_machine`'s outputs unconnected, or brings a
-    # PS7 pin out and wires it to nothing, is caught --- and that property is
-    # about the SHAPE of a board's top level, not about which board it is.
-    # `boards/cora-z7-07s/cadr_cora.sv` is `boards/arty-z7-20/cadr_arty.sv`
-    # with this board's pins on it, so a record aimed here would be the same
-    # mutation of the same text in a second file: it would tell us nothing
-    # `arty` does not already tell us, and it would have to be kept in step
-    # with the Arty's by hand for ever.  Naming it here is the second of the
-    # two ways to close this warning and the one that stands alone.
     # `de25_pins` is Python reading a Tcl pin file and, when one is named,
     # Terasic's Quartus settings.  Nothing in it is verilated, and the second
     # of the two files it compares cannot be carried into a mutation work
@@ -4260,9 +4198,9 @@ def check_makefile():
     # the board programs compiled with that board's address map.  C, like
     # `chaosnet`'s, and what bites on the code it compiles is the packages'
     # own mutation lists; named here for the same reason.
-    # `board_reset` is one `.pass` and three builds, one a board, and each
-    # build is its own entry above, `board_reset_arty` and the other two.
-    # `fault` is the same shape: `fault_arty`, `fault_cora` and `fault_de25`.
+    # `board_reset` is one `.pass` and two builds, one a board, and each
+    # build is its own entry above, `board_reset_arty` and `board_reset_de25`.
+    # `fault` is the same shape: `fault_arty`, `fault_de25` and `fault_kr260`.
     # `displayport` is the Kria KR260's DisplayPort link, `cadr-displayport`:
     # C under `boards/`, closed the way `serial` is, with a mutation list of
     # its own in its package run by its own `mutate.py` from its own check.
@@ -4270,15 +4208,15 @@ def check_makefile():
     # just inside and just outside the rule, each refusal beside its negative
     # control, so a guard that refused all or nothing fails it; a mutation
     # of the guard is that same pair.
-    # `br_force` is Python and the Makefile's own rebuild macro over the four
+    # `br_force` is Python and the Makefile's own rebuild macro over the three
     # boards' defconfigs, with nothing verilated; it was shown to catch the
     # fault it exists for by restoring that fault (U-Boot forced on the Kria
     # KR260, which selects none).
-    # `br_kconfig` is Python and the image check `post-build.sh` over the four
+    # `br_kconfig` is Python and the image check `post-build.sh` over the three
     # boards' defconfigs, with nothing verilated; it was shown to catch the
     # fault it exists for by running it on the check 3a that read a symbol
     # Kconfig does not write (an unmet `depends on`) as a missing source line:
-    # the Arty Z7-20, the Cora Z7-07S and the DE25-Nano refused.
+    # the Arty Z7-20 and the DE25-Nano refused.
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
@@ -4296,7 +4234,7 @@ def check_makefile():
     # own mutants are `CHK_MUTATE`'s 49 and 50, judged by `checkpoint`.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora",
+                           "usb_input", "fpgarc",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
                            "br_force", "br_kconfig", "machine_guard",
                            "quux15_replay_quux", "quux15_generator_quux", "quux15_halt_probe_quux"}

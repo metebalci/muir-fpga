@@ -883,9 +883,9 @@ this command run at its root prints
 `golden_top.v` carries Terasic's permission to use and modify the code for
 synthesis on Terasic's boards, and prohibits the duplication of any portion of
 it. The `.qsf` and `.sdc` files carry no terms at all. The user manual's
-copyright statement on page 51 reads "All Rights Reserved". The Cora Z7-07S
-directory vendors Digilent's pin file because Digilent publishes it under the
-MIT license, and nothing comparable is published for this board.
+copyright statement on page 51 reads "All Rights Reserved". Nothing
+comparable to a pin file published under a license that grants redistribution
+exists for this board.
 
 **The pins are also in the user manual, which needs no account.** Terasic
 serves the rev B manual directly from the board's resources page, and that

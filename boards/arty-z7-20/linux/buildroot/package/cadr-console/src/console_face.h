@@ -341,7 +341,7 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // **AND WHETHER THE BOARD'S ACTIVITY LAMPS BLINK, page 2's word 35.**
 //
 // Two lamps on the Arty Z7-20 --- LD1, the fabric's clock, and LD2, the
-// microcycles --- and one on the Cora Z7-07S, LD1's green, blink by default.
+// microcycles --- blink by default.
 // `--no-blinking-leds` makes them hold a level instead: the clock lamp is the
 // clock generator's lock, and the microcycle lamp is lit for a moment after
 // every microcycle, so it is solid while the machine runs and goes dark when

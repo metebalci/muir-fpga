@@ -163,8 +163,7 @@ Measured on `xc7z020clg400-1`, speed grade `-1`:
 | `BUFR/I` | 1.666 ns | 600.2 MHz |
 | `BUFG/I` | 2.155 ns | 464.0 MHz |
 
-The same sweep gives 680 MHz at `-2` and `-3`, and 600 MHz for the
-XC7Z007S-1, which is the Cora's part.
+The same sweep gives 680 MHz at `-2` and `-3`.
 
 A serial clock of 600 MHz is a pixel clock of 120 MHz and a lane rate of
 1.2 Gb/s. 108 MHz is 1.08 Gb/s a lane, which is inside it. The MMCM is not the
@@ -862,7 +861,7 @@ The setting lives in `cadr_display_out.sv` and not in the console. The console's
 page 2 word 36 carries a new setting and a wake to it as one-tick pulses, and
 reads back what it holds: the setting, and whether the lanes are muted. A board
 with no display output reads `UNMAPPED` there, because it has no timer to
-report. The Cora Z7-07S is such a board.
+report.
 
 ### What wakes it
 

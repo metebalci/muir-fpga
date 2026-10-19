@@ -3,13 +3,13 @@
 //
 // The machine on an AMD Kria KR260: a top level with real pins.
 //
-// **THIS IS THE CORA Z7-07S's TOP LEVEL ON A ZYNQ ULTRASCALE+, AND NOTHING IN
+// **THIS IS THE ARTY Z7-20's TOP LEVEL ON A ZYNQ ULTRASCALE+, AND NOTHING IN
 // `rtl/machine/` CHANGES BETWEEN THEM.**  A board is a top level, a pin file,
 // a processing-system configuration and a device tree; the machine does not
-// know what part it is on.  So this file is `boards/cora-z7-07s/cadr_cora.sv`
+// know what part it is on.  So this file is `boards/arty-z7-20/cadr_arty.sv`
 // with the differences below, each a fact of the board or of the part.  Where
-// a choice carries over unchanged its argument is in that file and in
-// `boards/arty-z7-20/cadr_arty.sv`, and is not repeated here.
+// a choice carries over unchanged its argument is in that file, and is not
+// repeated here.
 //
 //   - **THE CLOCK IS THE CARRIER'S 25 MHz, ON C3, THROUGH AN `MMCME4_BASE`.**
 //     25 x 40 = 1000 MHz at the VCO, divided by 10: the tick is 10 ns and the
@@ -54,7 +54,7 @@
 //     runs out of its boot PROM.  See the lamps at the bottom.  With no
 //     button `-BOOT2` is the console's alone and the fabric's reset is the
 //     MMCM's lock alone; with no switch `no_auto_boot` is tied low and the
-//     hold is `fpgarc`'s `--no-auto-boot`, as on the Cora.
+//     hold is `fpgarc`'s `--no-auto-boot`.
 //   - **THE FAN IS DRIVEN ON, EXPLICITLY.**  `fan_en_b` on A12: low runs the
 //     SOM's fan and high stops it (measured on the board).  Every KR260
 //     bitstream holds it low; one that left it to a pull would be one that
@@ -317,7 +317,7 @@ module cadr_kr260 #(
   // ------------------------------------------------------ the machine's reset
   //
   // The board's reset, the console's restart and the debug cable's modifier
-  // bit 1, ORed through a register: `cadr_cora.sv` has the rule for which of
+  // bit 1, ORed through a register: `cadr_arty.sv` has the rule for which of
   // `rst` and `mach_rst` each thing takes, and every line of it holds here.
   logic con_mach_rst;
   logic mach_rst;
@@ -413,7 +413,7 @@ module cadr_kr260 #(
       .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
       .dbgout_dbd_in(dbgout_dbd_in), .dbgout_live(dbgout_live),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
-      // The DBGIN page's own reset is the board's: see `cadr_cora.sv`.
+      // The DBGIN page's own reset is the board's: see `cadr_arty.sv`.
       .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
@@ -528,14 +528,14 @@ module cadr_kr260 #(
   // ----------------------------------------------------------- the memory
   //
   // `DDR` puts the processing system behind the machine's memory port and
-  // its faces: as on the Cora, with the `PS8` and its 128-bit ports.
+  // its faces: as on the Arty, with the `PS8` and its 128-bit ports.
   if (DDR != 0) begin : g_ddr
 
     // ------------------------------------------------- the ports' reset
     //
     // `pl_resetn0`, EMIO GPIO 95, synchronized: low while a load is under
     // way and until the processing system releases the fabric, high after.
-    // Every port's logic below takes it where the Cora's takes that port's
+    // Every port's logic below takes it where the Arty's takes that port's
     // own `ARESETN`, for the same reasons; one level here, because the
     // `PS8` has one.
     logic [95:0] gpio_o;
@@ -545,7 +545,7 @@ module cadr_kr260 #(
     always_ff @(posedge clk) port_rst_sync <= {port_rst_sync[1:0], pl_resetn0};
 
     // The memory master's reset: the port's alone, never the machine's, for
-    // the reason `cadr_cora.sv` gives at its `axi_rst`.
+    // the reason `cadr_arty.sv` gives at its `axi_rst`.
     logic axi_rst;
     assign axi_rst = !port_rst_sync[2];
 
@@ -733,7 +733,7 @@ module cadr_kr260 #(
     // at 0xFF0A_006C carries EMIO 31:0 and `DATA_4_RO` at 0xFF0A_0070 EMIO
     // 63:32 (UG1087), which `cadr_board.h`'s KR260 map names.  Both report
     // the pin whatever the direction registers say.  Cleared by `rst` and
-    // not by the port's reset, as on the Cora.
+    // not by the port's reset, as on the Arty.
     logic [95:0] gpio_i;
     logic [63:0] tally;
 
@@ -779,7 +779,7 @@ module cadr_kr260 #(
     // `rtl/plumbing/cadr_disk_pack.sv`'s registers on `M_AXI_HPM0_FPD` at
     // 0xA000_0000 and its master on `S_AXI_HP2_FPD`, through
     // `cadr_axi_burst128.sv`.  Reset by the port's reset, synchronized, and
-    // the fabric's at `fabric_rst`, as on the Cora.
+    // the fabric's at `fabric_rst`, as on the Arty.
     logic [31:0]  hp2_awaddr, hp2_araddr;
     logic [3:0]   hp2_awlen, hp2_arlen;
     logic [1:0]   hp2_awsize, hp2_arsize, hp2_awburst, hp2_arburst;
@@ -812,7 +812,7 @@ module cadr_kr260 #(
     logic [31:0]  gp0_wdata, gp0_rdata;
     logic [3:0]   gp0_wstrb;
 
-    // The splitter's five ports, as on the Cora with sixteen bits of ID and
+    // The splitter's five ports, as on the Arty with sixteen bits of ID and
     // eight of length: AXI4 at the `PS8`'s master ports.
     logic [31:0] gp0p_awaddr, gp0p_araddr, gp0p_wdata, gp0p_rdata;
     logic [7:0]  gp0p_awlen, gp0p_arlen;
@@ -930,7 +930,7 @@ module cadr_kr260 #(
     );
 
     // The splitter and the faces take the port's reset alone, the faces the
-    // fabric's at `fabric_rst`: `cadr_cora.sv`'s `gp0_rst_s` has why.
+    // fabric's at `fabric_rst`: `cadr_arty.sv`'s `gp0_rst_s` has why.
     logic gp0_rst_s;
     always_ff @(posedge clk) gp0_rst_s <= !port_rst_sync[2];
 
@@ -1074,7 +1074,7 @@ module cadr_kr260 #(
         .irq(ser_irq)
     );
 
-    // `mach_rst` for the queue's flush, as on the Cora.
+    // `mach_rst` for the queue's flush, as on the Arty.
     cadr_input_cables #(.ID_W(16), .LEN_W(8)) u_input (
         .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst), .mach_rst(mach_rst),
         .s_awaddr(gp0i_awaddr), .s_awlen(gp0i_awlen), .s_awid(gp0i_awid),
@@ -1152,7 +1152,7 @@ module cadr_kr260 #(
     //
     // On `M_AXI_HPM1_FPD` at 0xB000_0000, with the debug window at
     // 0xB000_1000 and the default slave answering the rest of the window,
-    // behind `rtl/plumbing/cadr_gp1_split.sv` as on the Cora.
+    // behind `rtl/plumbing/cadr_gp1_split.sv` as on the Arty.
     logic [39:0]  hpm1_awaddr, hpm1_araddr;
     logic [7:0]   hpm1_awlen, hpm1_arlen;
     logic [15:0]  hpm1_awid, hpm1_arid, hpm1_bid, hpm1_rid;
@@ -1251,7 +1251,7 @@ module cadr_kr260 #(
 
     // The debug cable's carrier, at 0xB000_1000: muir on this board's own
     // cores is given `--debug-cable-connect 0xb0001000`.  The port's reset,
-    // not the machine's, as on the Cora.  **THE CADR'S ALONE** (contract
+    // not the machine's, as on the Arty.  **THE CADR'S ALONE** (contract
     // Q5): on QUUX the split's debug page goes to a default slave of its own
     // and the window's side of the machine's cable stands idle.
     if (MACHINE == "cadr") begin : g_dbg_window
@@ -1609,7 +1609,7 @@ module cadr_kr260 #(
 
   end else begin : g_nomem
 
-    // No processing system: the machine alone, as the Cora's `g_nomem`.
+    // No processing system: the machine alone, as the Arty's `g_nomem`.
     // And no display output, so nothing asks the color board's map.
     assign disp_map_a = 4'd0;
     assign mem_done  = 1'b0;
@@ -1691,7 +1691,7 @@ module cadr_kr260 #(
   //
   // `witness` keeps the machine alive through synthesis: every output of
   // `cadr_machine` folds into it, registered, and `DONT_TOUCH` keeps the
-  // register, which no pin reads.  `cadr_cora.sv` has the argument.
+  // register, which no pin reads.  `cadr_arty.sv` has the argument.
   // MACHRUN and the disk have no lamp on this board and are here too.
   /* verilator lint_off UNUSEDSIGNAL */
   (* DONT_TOUCH = "true" *)
@@ -1734,18 +1734,18 @@ module cadr_kr260 #(
   // ================================== THE TWO LAMPS ==========================
   //
   // **UF1 IS THE MICROCYCLES AND UF2 THE ERROR HALT, ELSE A SLOW BLINK WHILE
-  // THE MACHINE RUNS OUT OF ITS BOOT PROM.**  The Cora's two lamps' meanings
-  // on two single-color LEDs:
+  // THE MACHINE RUNS OUT OF ITS BOOT PROM.**  Three meanings on two
+  // single-color LEDs:
   //
-  //   UF1  `rtl/plumbing/cadr_lamp_microcycle.sv`, the Cora's green: bit 19
+  //   UF1  `rtl/plumbing/cadr_lamp_microcycle.sv`, the Arty's LD2: bit 19
   //        of a count of retired microcycles, so it flickers while the
   //        machine retires them and FREEZES when it stops; a level with
   //        `--no-blinking-leds`.
   //   UF2  lit for `ERRHALT`, latched by `rtl/plumbing/cadr_lamp_errhalt.sv`
-  //        and cleared by any `-BOOT`, as the Cora's red; otherwise blinking
+  //        and cleared by any `-BOOT`, as the Arty's LD4; otherwise blinking
   //        slowly, 0.75 times a second off the heartbeat's top bit, while
-  //        `-PROMENABLE` says the machine is fetching from its boot PROM, as
-  //        the Cora's blue; otherwise dark.
+  //        `-PROMENABLE` says the machine is fetching from its boot PROM;
+  //        otherwise dark.
   //
   // So a slow UF2 under a flickering UF1 is a boot, UF2 dark with UF1
   // flickering is a running machine, UF1 frozen with UF2 dark is a machine

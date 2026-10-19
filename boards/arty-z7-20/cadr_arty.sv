@@ -310,10 +310,10 @@ module cadr_arty #(
   // while, on the argument that the one control which throws the machine's
   // whole state away should be at the far end of the row where it is hard to
   // press by accident.  That argument is a real one and it loses to the
-  // uniformity: the Cora Z7-07S has two buttons and no more, so there is no
-  // far end to put it at there, and a control that is the same button on
-  // every board is worth more than a control that is BTN3 on the boards with
-  // four buttons and BTN1 on the board with two.  BTN2 and BTN3 are pins this
+  // uniformity: a board with two buttons has no far end to put it at, and a
+  // control that is the same button on every board is worth more than a
+  // control that is BTN3 on a board with four buttons and BTN1 on a board
+  // with two.  BTN2 and BTN3 are pins this
   // board has and this design does not use.  The other reset term, the MMCM's
   // lock, is unchanged: the fabric is held in reset until its clock is real.
   //

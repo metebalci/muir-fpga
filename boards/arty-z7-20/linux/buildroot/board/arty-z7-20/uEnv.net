@@ -9,8 +9,8 @@
 #
 # EVERY PATH HERE IS UNDER arty-z7-20/, AND THAT IS THE RULE FOR EVERY BOARD.
 # One TFTP server serves more than one board here, and every board's five
-# files carry the same five names, so a flat server root would hand the Cora
-# this board's bitstream --- a bitstream for the wrong part, which configures
+# files carry the same five names, so a flat server root would hand another
+# board this board's bitstream --- a bitstream for the wrong part, which configures
 # nothing and says nothing about why.  A board's served set therefore sits in
 # a directory named as its directory under `boards/` is.  The names below are
 # relative to the server's root and not to this file, so a copy of this file

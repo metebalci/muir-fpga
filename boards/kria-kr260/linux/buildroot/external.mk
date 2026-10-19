@@ -3,11 +3,11 @@
 #
 # The Kria KR260's BR2_EXTERNAL tree: no packages and no hooks.
 #
-# NO `include $(wildcard .../package/*/*.mk)` HERE, for the Cora Z7-07S's
-# reason: the packages are the Arty Z7-20's tree's, that tree includes them,
-# and this build is given both trees.
+# NO `include $(wildcard .../package/*/*.mk)` HERE, because the packages are
+# the Arty Z7-20's tree's, that tree includes them, and this build is given
+# both trees.
 #
-# AND NO HOOK, which is where this board differs from the other three.  They
+# AND NO HOOK, which is where this board differs from the other two.  They
 # build a U-Boot of their own, whose tree must carry the machine's reservation,
 # and their hooks put that reservation into the kernel's and U-Boot's source
 # trees.  This board boots from the factory U-Boot in its QSPI flash, which is

@@ -60,7 +60,7 @@
 // THE MEMORY'S PROTOCOL IS WATCHED THROUGHOUT: an address or a write beat
 // withdrawn before its handshake is counted, and the count must be zero.
 //
-// `CADR_BOARD_ARTY`, `CADR_BOARD_CORA` or `CADR_BOARD_DE25` picks the board.
+// `CADR_BOARD_ARTY` or `CADR_BOARD_DE25` picks the board.
 
 #include "Vcadr_board_reset_harness.h"
 #include "Vcadr_board_reset_harness__Dpi.h"
@@ -102,11 +102,7 @@ const uint32_t PACK = 0x0000'0000, CHAOS = 0x0000'1000, SER = 0x0000'2000,
 const uint32_t CONS = 0x0000'0000, WIN = 0x0000'1000, DFLT1 = 0x0076'5430;
 const int ID_MASK = 0xF;
 #else
-#if defined(CADR_BOARD_CORA)
-const char *BOARD = "Cora Z7-07S";
-#else
 const char *BOARD = "Arty Z7-20";
-#endif
 const bool DE25 = false;
 const uint32_t PACK = 0x4000'0000, CHAOS = 0x4000'1000, SER = 0x4000'2000,
                INPUT = 0x4000'3000, DFLT0 = 0x4123'4560;
@@ -538,11 +534,9 @@ std::vector<Reg> regs() {
       // leaves this, so only the fabric's reset clears it.
       {"input KEY", 0, INPUT + 0x08, 0x0012'3456, 0x0112'3456, 0},
       {"console LAMPS", 1, CONS + 0x8C, 0x5354'4459, 0x4C44'0001, 0x4C44'0000},
-#if !defined(CADR_BOARD_CORA)
       // The display's sleep setting, which the display holds and the console
       // reads back: seven seconds, and 300 at reset.
       {"display SLEEP", 1, CONS + 0x90, 0x4853'0007, 0x5A5A'0007, 0x5A5A'012C},
-#endif
       // The memory boards' count, page 2's word 37: 33, one past muir's
       // default, and 32 at reset.  What the machine is given is held below.
       {"console BOARDS", 1, CONS + 0x94, 0x4D42'0021, 0x4244'0021, 0x4244'0020},

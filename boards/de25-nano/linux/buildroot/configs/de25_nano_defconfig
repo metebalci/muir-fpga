@@ -13,7 +13,7 @@
 # socfpga_agilex5_de25_nano_cadr.dtb and rootfs.cpio.uboot.
 #
 # **IT NEEDS BOTH EXTERNAL TREES**, because the packages live in the Arty
-# Z7-20's and this one holds only the board, as the Cora Z7-07S's does:
+# Z7-20's and this one holds only the board:
 #
 #     BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/de25-nano/linux/buildroot
 #
@@ -129,9 +129,11 @@ BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # 0xB300_0000; package/cadr-common/src/cadr/cadr_board.h has the table and
 # its sources.
 BR2_CADR_BOARD_DE25_NANO=y
-# The other board's post-build script, unchanged, for the reason the Cora
-# Z7-07S's defconfig gives: it asserts that the image holds only the programs
-# the packages install, and the packages are that tree's.  Then this board's
+# The other board's post-build script, unchanged: it asserts that the image
+# holds only the programs the packages install, and the packages are that
+# tree's.  Buildroot builds output/target/ up and never removes what a package
+# stopped installing, so a renamed package leaves its old program and its old
+# init script in the image beside the new ones.  Then this board's
 # own, which takes the kernel's loadable modules back out of the image; its
 # header says why they are built at all.
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/post-build.sh $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/post-build.sh"

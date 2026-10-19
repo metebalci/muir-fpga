@@ -302,10 +302,10 @@ The card has it as `BOOT.BIN`, the name the boot ROM looks for.
 
 **A board's served files live in a directory on the server named as the
 board's own directory under `boards/` is.** The Arty Z7-20's are in
-`/srv/tftp/arty-z7-20` and the Cora Z7-07S's in `/srv/tftp/cora-z7-07s`. The
-reason is that every board's five files carry the same five names. A flat
-server root would hand the Cora the Arty's `cadr.bit`, which is a bitstream
-for a different part. The part refuses it, the fabric stays empty, and
+`/srv/tftp/arty-z7-20` and the DE25-Nano's in `/srv/tftp/de25-nano`. The
+reason is that every board's files carry the same names. A flat server root
+would hand another board the Arty's `cadr.bit`, which is a bitstream for a
+different part. The part refuses it, the fabric stays empty, and
 nothing on the console says which file was wrong.
 
 The rule is carried in two places and both are checked when a card is staged.
@@ -321,9 +321,9 @@ card belongs to one board, so the folder is not what keeps two boards' files
 apart on it. What it buys is that the card and the server hold the same thing
 in the same place, and that a file copied from one to the other keeps its
 path. It is also what makes a card built for the wrong board say so: the
-loader asks for its **own** folder, so a Cora handed the Arty's card prints
-`** Unable to read file cora-z7-07s/zImage **` within a second of power-on and
-goes on saying it every ten seconds.
+loader asks for its **own** folder, so another board handed the Arty's card
+prints `** Unable to read file <its folder>/<its kernel> **` within a second of
+power-on and goes on saying it every ten seconds.
 
 **Some files stay at the root of the card, because their names are not ours to
 move.** `BOOT.BIN` is what the boot ROM reads from the root of the first FAT
@@ -443,12 +443,11 @@ this project can say is what goes on it.
 | what | bytes |
 |---|---|
 | the Arty Z7-20's zip, unpacked | 12,500,992 |
-| the Cora Z7-07S's zip, unpacked | 10,498,048 |
 | the DE25-Nano's zip, unpacked | 49,434,624 |
 | a T-300 disk pack | 269,562,880 |
 | a T-80 disk pack | 70,937,600 |
 
-The DE25-Nano's is four times the Zynq boards' because its kernel `Image` is
+The DE25-Nano's is four times the Arty Z7-20's because its kernel `Image` is
 not compressed: 41.9 MB of the 49.4. Beside any of them one pack is the
 larger number, which is the whole point of the table. **So a 1 GB card is
 ample for a board with one drive**, and the size to buy is decided by how many
@@ -541,19 +540,18 @@ empty. `README.TXT` at the root says which board the zip is for and what each
 part is, because a card in a Windows reader otherwise shows a folder named
 after a board and a 270 MB `.img` and explains nothing.
 
-**A release is seven zips: the CADR for each of the four boards, and QUUX
-revision 13 for the Arty Z7-20, the DE25-Nano and the Kria KR260.** The
+**A release is six zips: the CADR and QUUX revision 13 for each of the Arty
+Z7-20, the DE25-Nano and the Kria KR260.** The
 CADR's are these.
 
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
-    cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
     cadr-de25-nano.zip     about 21.9 MB     49,434,624 B on the card
     cadr-kria-kr260.zip    about 21.2 MB     62,492,672 B on the card
 
 Each zip also carries its board's fault bitstream beside the fabric, and
-`make release` requires `FAULT_ARTY`, `FAULT_CORA`, `FAULT_DE25` and
-`FAULT_KR260` beside the four bitstreams. The sizes of the first three were
-measured before that file was added; the Kria KR260's include it.
+`make release` requires `FAULT_ARTY`, `FAULT_DE25` and `FAULT_KR260` beside
+the three bitstreams. The sizes of the first two were measured before that
+file was added; the Kria KR260's include it.
 
 A QUUX zip, `quux-arty-z7-20.zip`, `quux-de25-nano.zip` or
 `quux-kria-kr260.zip`, holds the same files as its board's CADR zip, the
@@ -602,11 +600,10 @@ are the figures that decide how big a card has to be. The DE25-Nano's is the
 large one because its kernel is an uncompressed arm64 `Image` of 41.9 MB.
 
 **A card made from the wrong board's zip does not boot, and says which file it
-wanted.** Two files are shared and no others: the Arty's and the Cora's
-`fpgarc` and `cadrrc` are byte-identical to each other, and the DE25-Nano's
-are not, because they name different window addresses. Everything else ---
-the loader, the kernel, the device tree, the fabric image, `uEnv.txt` and
-`README.TXT` --- differs between all three. So the zips are near enough alike
+wanted.** The DE25-Nano's `fpgarc` and `cadrrc` differ from the Arty's,
+because they name different window addresses, and everything else --- the
+loader, the kernel, the device tree, the fabric image, `uEnv.txt` and
+`README.TXT` --- differs between those two as well. So the zips are near enough alike
 that a card made from the wrong one looks perfectly ordinary in a reader. The
 loader asks for its **own** board folder by name, so within a second of
 power-on a board handed the wrong card prints
@@ -680,15 +677,15 @@ zeros.
 variables.** `BOARD_DIR` is where the board's `linux/` directory is and
 `BOARD_DTB` is what its compiled device tree is called. Both default to the
 Arty Z7-20's, so a run that sets neither is the run it has always been. The
-Cora Z7-07S is
+DE25-Nano is
 
-    make buildroot-cora                                        # its own output directory
-    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
-    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-    BIT=<the Cora's memory-on .bit> PACKS=<a pack> \
+    make buildroot-de25                                        # its own output directory
+    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
+    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+    BIT=<the DE25-Nano's .core.rbf> PACKS=<a pack> \
         boards/arty-z7-20/linux/mksd-buildroot.sh
-    mkdir -p /srv/tftp/cora-z7-07s
-    cp build/sd/buildroot/server/cora-z7-07s/* /srv/tftp/cora-z7-07s/
+    mkdir -p /srv/tftp/de25-nano
+    cp build/sd/buildroot/server/de25-nano/* /srv/tftp/de25-nano/
 
 Everything else about the card is the machine's rather than the part's: the
 layout, the bay, the `fpgarc` and the `cadrrc`, the U-Boot environment and
@@ -729,20 +726,18 @@ and the section above says what it costs.
 
 ## The release, and the card this project builds for itself
 
-**A release is seven zips, one for each board and machine, and one command
-makes all seven.**
+**A release is six zips, one for each board and machine, and one command
+makes all six.**
 
     make release RELEASE_COMMIT=<the commit they were built from> \
-                 BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
-                 BIT_KR260=<a .bit> \
+                 BIT_ARTY=<a .bit> BIT_DE25=<a .rbf> BIT_KR260=<a .bit> \
                  BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> BIT_KR260_QUUX=<a .bit> \
-                 FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
-                 FAULT_KR260=<a .bit>
+                 FAULT_ARTY=<a .bit> FAULT_DE25=<a .rbf> FAULT_KR260=<a .bit>
 
-**It is one target rather than seven because seven zips are seven chances for
-one to be stale.** A release in which six were rebuilt and the seventh was not
-is exactly the sort of thing that ships, so every bitstream is required by
-name, a missing one stops the run before anything is built, and the seven zips
+**It is one target rather than six because six zips are six chances for one
+to be stale.** A release in which five were rebuilt and the sixth was not is
+exactly the sort of thing that ships, so every bitstream is required by name,
+a missing one stops the run before anything is built, and the six zips
 are printed together at the end with their sizes and digests, where a missing
 one is visible. `RELEASE_COMMIT` is written into every README, and so is the
 system each card is for, `CADR_SYSTEM` (1003 unless given) and `QUUX_SYSTEM`
@@ -754,9 +749,9 @@ bitstream file says which machine it is, so the target holds what the flows
 hold: a QUUX bitstream is `quux_<board>` in a directory whose name says
 `quux13`, and a CADR bitstream is `cadr_<board>` in one that names no QUUX.
 
-**Then the seven are read back**, by `tools/release_check.py`, which
+**Then the six are read back**, by `tools/release_check.py`, which
 `make release-check RELEASE_COMMIT=<the commit>` also runs over any
-directory of zips. It reads only the zips: exactly the seven; each
+directory of zips. It reads only the zips: exactly the six; each
 bitstream's build out of the file itself (a Zynq `.bit`'s header, the
 DE25-Nano core image's USERCODE), the machine's at the commit with a clean
 tree and the fault bitstream's at the same commit; the kernel's device tree
@@ -766,15 +761,15 @@ commit and system. The machine a bitstream is, its MACHINE-ID, is read only
 by a running board, with `cadr-console machine`.
 
 Each board's Buildroot output must exist first, which is `make buildroot`,
-`make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`. One board on its own is
+`make buildroot-de25` and `make buildroot-kr260`. One board on its own is
 
     RELEASE_COMMIT=<the commit> SYSTEM=1003 FAULT_BIT=<the fault bitstream> \
     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-    RELEASE_COMMIT=<the commit> SYSTEM=1003 IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
-    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-    FAULT_BIT=<the Cora's fault bitstream> \
-    BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+    RELEASE_COMMIT=<the commit> SYSTEM=1003 IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
+    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+    FAULT_BIT=<the DE25-Nano's fault core image> \
+    BIT=<the DE25-Nano's released core image> boards/arty-z7-20/linux/mksd-release.sh
 
 and `MACHINE=quux REVISION=13 SYSTEM=2001` with a revision 13 bitstream makes
 that board's QUUX zip. The zip

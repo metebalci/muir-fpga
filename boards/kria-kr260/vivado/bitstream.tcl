@@ -6,11 +6,11 @@
 #     make build/boot_prom.hex build/sync_prom.hex
 #     vivado -mode batch -source boards/kria-kr260/vivado/bitstream.tcl
 #
-# Run from the repository root.  This is `boards/cora-z7-07s/vivado/
-# bitstream.tcl` with this board's part, pins, top level and memory map, and
-# with the probe and the two proving boards left out: neither has been
-# carried to this part yet.  Every check below is that file's and the reason
-# for each is that file's (and `boards/arty-z7-20/vivado/bitstream.tcl`'s):
+# Run from the repository root.  This is the Zynq-7000's CADR flow,
+# `boards/arty-z7-20/vivado/bitstream.tcl`, with this board's part, pins, top
+# level and memory map, and with the probe and the two proving boards left
+# out: neither has been carried to this part yet.  Every check below is one
+# that file makes, and the reason for each is that file's:
 # that the constraints applied, that the machine is still there, that the
 # block RAM writes where the RTL says and is enabled only while addressed,
 # and that the bitstream is a bitstream.
@@ -223,7 +223,7 @@ if {$clocks < 2} {
 }
 
 if {$machine eq "cadr"} {
-    # The same assertions as the Cora's, in the same order: see that flow.
+    # Assertions the Arty's flow makes too, each with its reason there.
     # grid: 75 ns (shared with 80 ns)
     assert_multicycle_applied $tick 8
     # grid: 75 ns

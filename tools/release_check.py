@@ -12,9 +12,8 @@
 directory of zips.  It reads only the zips and this tree's sources, with no
 board, no Vivado and no Quartus, and holds:
 
-  1. THE LIST.  Exactly seven zips: the CADR for the Arty Z7-20, the Cora
-     Z7-07S, the DE25-Nano and the Kria KR260, and QUUX revision 13 for the
-     Arty Z7-20, the DE25-Nano and the Kria KR260.  A missing one, a second
+  1. THE LIST.  Exactly six zips: the CADR and QUUX revision 13 for each of
+     the Arty Z7-20, the DE25-Nano and the Kria KR260.  A missing one, a second
      copy of one, or any other zip under <dir> fails.
 
   2. EACH BITSTREAM'S IDENTITY, READ OUT OF THE FILE IN THE ZIP.  A Zynq
@@ -80,25 +79,20 @@ import zipfile
 import quux_card_check
 
 # The release, one zip a machine and board.
-ZIPS = [("cadr", "arty-z7-20"), ("cadr", "cora-z7-07s"), ("cadr", "de25-nano"),
+ZIPS = [("cadr", "arty-z7-20"), ("cadr", "de25-nano"),
         ("cadr", "kria-kr260"), ("quux", "arty-z7-20"), ("quux", "de25-nano"),
         ("quux", "kria-kr260")]
 
 # What each board's card is.  `top` and `part` are the Zynq header's design
 # name and part; `dtsi` the folder of the board family's reservations;
 # `mode` the display mode, fixed per board (docs/display-output.md), and
-# `output` the connector it drives (the Cora Z7-07S has none, and its card's
-# menu still offers the section); `mw` the most main memory revision 13 has
+# `output` the connector it drives; `mw` the most main memory revision 13 has
 # on the board (cadr_board.h, CADR_BOARD_QUUX13_MAIN_WORDS_MAX).
 BOARDS = {
     "arty-z7-20": dict(fabric="cadr.bit", fault="fault.bit", dtb="zynq-arty-z7-20.dtb",
                        loader="u-boot.img", top="cadr_arty", part="7z020clg400",
                        dtsi="boards/arty-z7-20/linux", mode=(1280, 1024), mw=32,
                        output="HDMI"),
-    "cora-z7-07s": dict(fabric="cadr.bit", fault="fault.bit", dtb="zynq-cora-z7-07s.dtb",
-                        loader="u-boot.img", top="cadr_cora", part="7z007sclg400",
-                        dtsi="boards/arty-z7-20/linux", mode=(1280, 1024), mw=32,
-                        output=None),
     "de25-nano": dict(fabric="cadr.core.rbf", fault="fault.core.rbf",
                       dtb="socfpga_agilex5_de25_nano_cadr.dtb", loader="u-boot.itb",
                       top=None, part=None, dtsi="boards/de25-nano/linux",
@@ -362,7 +356,7 @@ def main():
     want = ["%s-%s.zip" % mb for mb in ZIPS]
     for f in sorted(found):
         if f not in want:
-            problems.append("%s: not one of the release's seven zips" % found[f][0])
+            problems.append("%s: not one of the release's six zips" % found[f][0])
         elif len(found[f]) > 1:
             problems.append("%s: %d copies under %s" % (f, len(found[f]), args.dir))
     for f in want:
@@ -447,7 +441,7 @@ def main():
         for p in problems:
             print("release_check: FAIL " + p)
         sys.exit("release_check: %d problem(s) in the release under %s" % (len(problems), args.dir))
-    print("release_check: the seven zips are the release of %s: every bitstream's build, tree, "
+    print("release_check: the six zips are the release of %s: every bitstream's build, tree, "
           "loader, fpgarc and README as they should be" % commit)
 
 

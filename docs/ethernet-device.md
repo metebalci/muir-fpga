@@ -133,7 +133,6 @@ more than one, a LAN tap is refused.
 | Board | LAN interface |
 |---|---|
 | Arty Z7-20 | `eth0` |
-| Cora Z7-07S | `eth0` |
 | DE25-Nano | `eth0` |
 | Kria KR260 | `eth1`, the J10C jack (GEM1) |
 

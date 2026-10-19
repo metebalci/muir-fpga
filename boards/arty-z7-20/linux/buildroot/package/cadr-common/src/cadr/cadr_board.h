@@ -11,8 +11,8 @@
 // every board, and each program's own header names its face's address as the
 // board's (`PS_REG_BASE` is `CADR_BOARD_PACK_BASE`, and so on).
 //
-//                           Zynq-7000 boards         DE25-Nano
-//                           (Arty Z7-20, Cora)       (Agilex 5)
+//                           Zynq-7000                DE25-Nano
+//                           (Arty Z7-20)             (Agilex 5)
 //
 //   the faces' port         M_AXI_GP0                H2F, the HPS-to-FPGA
 //                                                    bridge
@@ -159,7 +159,7 @@
 #define CADR_BOARD_TALLY_OFF0    0xE8u
 #define CADR_BOARD_TALLY_OFF1    0xE8u
 
-#else  // the Zynq-7000 boards: the Arty Z7-20 and the Cora Z7-07S
+#else  // the Zynq-7000 board: the Arty Z7-20
 
 #define CADR_BOARD_NAME          "zynq-7000"
 #define CADR_BOARD_FACES_PORT    "M_AXI_GP0"
