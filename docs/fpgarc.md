@@ -278,7 +278,7 @@ qemu grows it. Nothing reads a CADR label on QUUX's disk.
 only when this file says `--machine quux`. `docs/file-device.md` has the
 program and what it serves when this file says nothing.
 
-    --file-root           a folder served as HOST, muir's flag; once for each mount
+    --file-root           a folder served as the root /, muir's flag; once for each mount
 
 **QUUX's Ethernet device**, read by `S82quux-ethernet-device`, which makes the
 tap `quux0` and starts the program only when this file says `--machine quux`.

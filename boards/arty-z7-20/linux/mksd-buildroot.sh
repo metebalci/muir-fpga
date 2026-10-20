@@ -923,7 +923,7 @@ readme_system() {
     printf '  %-22s the disk.  See below.\r\n' 'packs/'
     printf "  %-22s the system's Lisp sources and its site\r\n" 'sys/  site/'
     printf '  %-22s configuration, which the machine reads and\r\n' ''
-    printf '  %-22s writes as HOST through its file device.\r\n' ''
+    printf '  %-22s writes through its file device.\r\n' ''
     printf "  %-22s home/, made at the first boot, holds the\r\n" ''
     printf "  %-22s users' home directories, and home/lispm/,\r\n" ''
     printf "  %-22s the user LISPM's, is made at every boot.\r\n" ''
@@ -1009,7 +1009,7 @@ readme_system() {
     if [ "$MACHINE" = quux ]; then
       printf 'Logging in to the machine\r\n'
       printf 'The first time the machine reads a file it asks you to log in.\r\n'
-      printf "The user LISPM's home directory, HOST: /home/lispm/, is\r\n"
+      printf "The user LISPM's home directory is\r\n"
       printf 'home/lispm/ here.  Another name logs in too, but has a home\r\n'
       printf 'directory only once home/<name>/ is made here, in lower case.\r\n\r\n'
     fi

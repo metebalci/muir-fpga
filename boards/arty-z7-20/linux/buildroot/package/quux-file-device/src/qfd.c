@@ -266,7 +266,7 @@ int qfd_mount_add(struct qfd_mounts *m, const char *spec_in, char *why, size_t w
 		m->n++;
 	} else {
 		if (m->has_default) {
-			snprintf(why, whylen, "a second default folder: there is one default, HOST's /");
+			snprintf(why, whylen, "a second default folder: there is one default, the root /");
 			goto refuse;
 		}
 		m->def = mt;

@@ -10,8 +10,9 @@ at word 100 `<7>` since revision 11. QUUX reads and writes files on its host
 through the file device. muir's `docs/quux.md` ("The file device" and "The real-time clock")
 defines the machine's side of both: what each register reads, what each write
 does, the two rings of commands and responses in the machine's main memory,
-the ten commands, and the folders of the host served as one pathname host,
-`HOST`.
+the ten commands, and the folders of the host served as one root `/`. The
+band's pathname host for it is `FILES` from System 2002 and `HOST` in Systems
+2000 and 2001; the file device's paths carry no host, so it serves either.
 
 On a board the registers are in the fabric, and the device's other half is a
 Linux program, `quux-file-device`. It reads each command and its buffers out
@@ -23,7 +24,7 @@ Both devices are QUUX's alone. A CADR bitstream has no register page, and the
 page described below is answered there by the default slave like every other
 address nothing claims.
 
-## What HOST serves on a board
+## What the file device serves on a board
 
 The card's `sys/`, `site/` and `home/` are served as three named mounts, in
 muir's grammar:
@@ -33,7 +34,7 @@ muir's grammar:
     --file-root home=/mnt/card/home
 
 `sys/` and `site/` hold the band's Lisp files, and `home/<user>/` the users'
-own. With named mounts and no default folder, `HOST:/` holds these three and is
+own. With named mounts and no default folder, the root `/` holds these three and is
 read-only. The card's root is not served whole, because it also holds the boot
 files and `packs/`, which is the disk the machine is running on.
 
@@ -43,7 +44,7 @@ there, and says on the console which one is missing when not.
 
 A card that names `--file-root` in `fpgarc` gets its own lines and none of the
 script's. The flag is muir's, with muir's grammar, and it is taken once for
-each mount. `<folder>[,ro]` is `HOST:/`, and `<name>=<folder>[,ro]` is the
+each mount. `<folder>[,ro]` is the root `/`, and `<name>=<folder>[,ro]` is the
 top-level directory `<name>`. `,ro` makes a mount read-only.
 
 The init script, `S81quux-file-device`, starts the program only when `fpgarc`
@@ -51,7 +52,7 @@ says `--machine quux`. On any other card it says so and starts nothing.
 
 ## The program's flags
 
-    --file-root <folder>[,ro]           HOST's /
+    --file-root <folder>[,ro]           the root /
     --file-root <name>=<folder>[,ro]    the top-level directory <name>
     --no-guard                          skip the fabric guard
     --log <file>                        where to write; repeatable

@@ -5,7 +5,7 @@ config BR2_PACKAGE_QUUX_FILE_DEVICE
 	select BR2_PACKAGE_CADR_COMMON
 	help
 	  QUUX's file device, the Linux side: the program that serves
-	  the card's folders to QUUX as the pathname host HOST.  QUUX
+	  the card's folders to QUUX as one root /.  QUUX
 	  writes commands into a ring in its main memory and this reads
 	  them out of DDR, does each on a Linux folder, and writes the
 	  answer back, through the file device's page in the fabric.

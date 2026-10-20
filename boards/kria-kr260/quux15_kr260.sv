@@ -57,7 +57,7 @@
 //     IDENT "QF13" as revisions 13 and 14 have it: main memory packed
 //     storage at the same base, the rings' bases 28 bits), the map onto the
 //     core's host side (`quux15_devices.sv`), so `quux-file-device` serves
-//     HOST: and sets the clock as it does on revisions 13 and 14.
+//     the file device and sets the clock as it does on revisions 13 and 14.
 //   - **THE DISPLAY OUTPUT ON `S_AXI_HP3_FPD` AND THE DISPLAYPORT'S LIVE
 //     VIDEO**, as `cadr_kr260.sv` has it: `rtl/plumbing/cadr_display_out.sv`
 //     reading the video controller's frame buffer out of DDR at the display

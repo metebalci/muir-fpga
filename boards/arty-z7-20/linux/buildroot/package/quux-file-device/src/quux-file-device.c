@@ -8,13 +8,13 @@
 //
 // QUUX (revision 9 and on) reads and writes files on its host through a file
 // device: commands and responses in two rings in its main memory, served
-// here from Linux folders as the pathname host HOST.  The machine's
+// here from Linux folders as one root `/`.  The machine's
 // registers are in the fabric; this program is the device's other half, and
 // reaches them through the file device's page (`qfd_face_fabric.c`).  The
 // protocol is muir's, and `qfd.h` says how it is held to muir's own device.
 //
 // **`--file-root` IS muir's FLAG, WITH muir's GRAMMAR.**  `<folder>[,ro]` is
-// HOST's `/`; `<name>=<folder>[,ro]`, once for each name, is the top-level
+// the root `/`; `<name>=<folder>[,ro]`, once for each name, is the top-level
 // directory `<name>`, over the default folder's entry of that name.  A value
 // is a named mount when the text before its first `=` is a valid component.
 // With no default folder `/` holds the mounts alone and is read-only; with no
@@ -69,7 +69,7 @@ static void usage(void)
 "usage: quux-file-device [--file-root <folder>[,ro]] [--file-root <name>=<folder>[,ro]]...\n"
 "                        [--no-guard] [--log <file>]...\n"
 "\n"
-"  --file-root <folder>[,ro]         HOST's /, muir's flag; ,ro makes it read-only\n"
+"  --file-root <folder>[,ro]         the root /, muir's flag; ,ro makes it read-only\n"
 "  --file-root <name>=<folder>[,ro]  the top-level directory <name>; once for each name\n"
 "  --no-guard                        skip " CADR_BOARD_TALLY " guard.  Only for a board\n"
 "                                    somebody knows to have the fabric loaded.\n"

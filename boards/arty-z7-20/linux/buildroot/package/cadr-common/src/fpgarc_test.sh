@@ -7740,7 +7740,7 @@ fi
 
 # **A RELEASE CARD AFTER ITS FIRST BOOT HAS `home/` AND NOTHING IN IT**, which
 # is the card on which a login said "No home directory for lispm" and a write
-# to HOST:/home/lispm/ said "Directory not found": the script made `home/`
+# to /home/lispm/ said "Directory not found": the script made `home/`
 # only when it was missing, and never the user's directory under it.  And a
 # home directory that is there keeps what is in it.
 case_head "a card that has home/ but no home/lispm/ gets home/lispm/, and a home directory's files stay"
@@ -8007,7 +8007,7 @@ if lift_readme "$WORK/rd"; then
 					esac
 					# A QUUX card says where LISPM's home directory is.
 					case "$m:$flat" in
-					quux:*"HOST: /home/lispm/, is home/lispm/ here"*|cadr:*) ;;
+					quux:*"home directory is home/lispm/ here"*|cadr:*) ;;
 					*) fail "the release README for $b ($m) does not say where LISPM's home directory is"
 					   readme_bad=$((readme_bad + 1)) ;;
 					esac

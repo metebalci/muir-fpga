@@ -5,7 +5,7 @@
 //
 // QUUX reads and writes files on its host through a file device (muir's
 // contract Q9, revision 9, `docs/quux.md` "The file device"): folders of the
-// host served under one pathname host, HOST, with commands and responses in
+// host served as one root `/`, with commands and responses in
 // two rings in the machine's main memory and the bytes moved by DMA.  On a
 // board the fabric holds the registers and Linux is the device: this program
 // reads each command entry and its buffers out of DDR, does the host's
@@ -99,7 +99,7 @@ static inline uint32_t qfd_mem_line(const struct qfd_mem *m)
 
 // A host folder served to the machine.
 struct qfd_mount {
-	char *name;   // NULL for the default folder, HOST's `/`
+	char *name;   // NULL for the default folder, the root `/`
 	char *given;  // the folder as given
 	char *path;   // the folder with its symlinks resolved
 	int ro;

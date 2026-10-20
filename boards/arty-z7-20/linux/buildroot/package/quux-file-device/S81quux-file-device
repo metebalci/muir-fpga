@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # QUUX's file device at boot: quux-file-device serving the card's folders to
-# the machine as the pathname host HOST, and keeping QUUX's real-time clock.
+# the machine as one root /, and keeping QUUX's real-time clock.
 #
 # **QUUX ONLY.**  The file device is QUUX's (revision 9), and a CADR's
 # bitstream has no page for it.  A card carrying a QUUX bitstream says
@@ -13,19 +13,20 @@
 #
 # S81, after S80cadr-disk-packs, which mounts the card this serves.
 #
-# **WHAT HOST SERVES, BY DEFAULT: THE CARD'S `sys`, `site` AND `home`**, as
-# three named mounts, muir's `--file-root <name>=<folder>`.  They are the
-# three top-level directories HOST must have: `sys/` and `site/` the band's
-# Lisp files, `home/<user>/` the users' own.  The card's root is not served
+# **WHAT THE FILE DEVICE SERVES, BY DEFAULT: THE CARD'S `sys`, `site` AND
+# `home`**, as three named mounts, muir's `--file-root <name>=<folder>`.
+# They are the three top-level directories the root / must have: `sys/` and
+# `site/` the band's Lisp files, `home/<user>/` the users' own.  The card's
+# root is not served
 # whole, because it also holds the boot files and `packs/`, the disk the
 # machine is running on, and nothing the machine does through its files
 # should be able to reach either.  With named mounts and no default folder,
-# HOST's `/` holds the three alone and is read-only.  `home` is made when the
+# the root `/` holds the three alone and is read-only.  `home` is made when the
 # card has none, as a place the machine may write has to exist; `sys` and
 # `site` are served when they are there and said to be missing when not.
 #
 # **AND `home/lispm/`, THE USER LISPM's HOME DIRECTORY, IS MADE AT EVERY
-# BOOT.**  The band takes HOST:/home/<user>/ as a user's home, the user id in
+# BOOT.**  The band takes /home/<user>/ as a user's home, the user id in
 # lower case (muir-sys's `sys/io/file/hostfs.lisp`), and its login loads the
 # init file from there; with no such directory the login says "No home
 # directory for lispm; init file not loaded" and every write there fails with
@@ -81,7 +82,7 @@ start() {
 			if [ -d "$CARD/$m" ]; then
 				set -- "$@" --file-root "$m=$CARD/$m"
 			else
-				echo "quux-file-device: the card has no $m/, so HOST has no /$m/."
+				echo "quux-file-device: the card has no $m/, so the file device has no /$m/."
 			fi
 		done
 	fi
