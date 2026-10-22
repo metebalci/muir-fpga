@@ -35593,8 +35593,8 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revisi
 # **HALT-CONS UNDER ERRSTOP** (`golden/src/quux15_console.rs`'s `haltcons`):
 # the machine halts after the HALT word, the word behind it squashed and
 # fetched again first, RUN and SRUN kept and ERR up, held while ERRSTOP
-# stands.  Each part of the fix has its mutant.  `rd_moves_x`'s gate, the
-# redirect's counterpart, is not reached by any trace yet and has none.
+# stands.  Each part of the fix has its mutant, `rd_moves_x`'s gate, the
+# redirect's counterpart, among them (`halt-cons-redirect`).
 
 @mutation haltcons-the-word-behind-runs
 @check quux15_haltcons_quux_r16
@@ -35618,6 +35618,17 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revisi
     rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0;
 @end
 
+@mutation haltcons-the-slot-moves-on-the-redirect
+@check quux15_haltcons_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles RD moves on the redirect's plan at the HALT word's
+@note commit, so the delay slot it holds enters EX and runs.
+@old
+    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0 && !halt_set;
+@new
+    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+@end
+
 @mutation haltcons-srun-falls-at-the-drain
 @check quux15_haltcons_quux
 @file rtl/machine/quux15_core.sv
@@ -35639,4 +35650,40 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revisi
 @new
       halt_req <= halt_set;
       if (drain_end) cc_run <= 1'b0;
+@end
+
+# **THE READOUT'S PC AT A HALT** (A15b.13): halted, drained, the next
+# fetch's address, as muir's `pc_15` gives it; running, the next word's.
+
+@mutation readout-pc-is-the-next-words
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Halted, PC reads the next word's own address, not the next fetch's.
+@old
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v_q ? npc_after_q : npc_q + 14'd1)
+                                  : (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
+@new
+      4'd5:  spy_rdata = {2'b00, (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
+@end
+
+@mutation readout-pc-ignores-the-chosen-fetch
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Halted, PC reads the address after the next word's, never the fetch a
+@note committed jump chose.
+@old
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v_q ? npc_after_q : npc_q + 14'd1)
+@new
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_q + 14'd1)
+@end
+
+@mutation readout-pc-reads-the-next-clock
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Halted, PC reads NPC's next value, which a boot's pulse sets to the
+@note PROM's first word, where muir's readout still gives the fetch before it.
+@old
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v_q ? npc_after_q : npc_q + 14'd1)
+@new
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v ? npc_after : npc + 14'd1)
 @end

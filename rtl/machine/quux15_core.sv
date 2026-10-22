@@ -3409,8 +3409,8 @@ module quux15_core #(
     // CS waits behind RD by `rd_free`), so the word behind it, which would
     // otherwise enter EX and take ERR down with its own `IR<11:10>`, stays
     // in RD and the drain squashes it with CS's; it is fetched again first.
-    // `haltcons` holds `rd_moves_n`, and with two bubbles `rd_moves_nr`;
-    // no trace yet reaches `rd_moves_x`, their counterpart on a redirect.
+    // `haltcons` holds `rd_moves_n`, and with two bubbles `rd_moves_nr`
+    // and, on a redirect with the delay slot in RD, `rd_moves_x`.
     halt_set  = commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
   end
 
@@ -3490,7 +3490,7 @@ module quux15_core #(
 
   // **THE SPY'S READ** (`spy_15`, of committed state): IR the next word to
   // run, read from the store while halted (a console reads IR halted), PC
-  // its address; OPC the oldest
+  // halted the next fetch's address and running the next word's; OPC the oldest
   // of the eight; FLAG-1's PROMDISABLE, ERR (the HALT bit), SSDONE and
   // SRUN, its other flags clear in their senses; FLAG-2's VMAOK; the
   // statistics counter 0; the rest open.
@@ -3501,10 +3501,12 @@ module quux15_core #(
       4'd2:  spy_rdata = store_q[47:32];
       4'd3:  spy_rdata = store_q[63:48];
       4'd4:  spy_rdata = {2'b00, opc[7]};
-      // PC: the oldest word not committed, or the next fetch (muir's
-      // `next_to_run`, which its readout gives; A15b.13 says the next
-      // fetch's address).
-      4'd5:  spy_rdata = {2'b00, (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
+      // PC (A15b.13, muir's `pc_15`): halted, drained, the next fetch's
+      // address, the fetch after the next word to run as committed words
+      // chose it, `micro`'s PC; running or stopped at an error, the oldest
+      // word not committed, or the next fetch (`next_to_run`).
+      4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v_q ? npc_after_q : npc_q + 14'd1)
+                                  : (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
                                   : (cs_v_q && !cs_nop_q) ? cs_pc_q : npc_q};
       4'd8:  spy_rdata = 16'he800 | {3'd0, mode[5], 1'b0, x_halted, ssdone, srun, 8'd0};
       4'd9:  spy_rdata = 16'hc0c0 | {12'd0, !vmaok, 3'd0};

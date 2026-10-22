@@ -310,10 +310,14 @@ pub fn console(period: u64) -> Vec<Case> {
 ///   alu      an ALU word, a word behind it that counts in M 21
 ///   jump     an unconditional JUMP with N, the words it skips behind it
 ///   slot     an unconditional JUMP without N, its delay slot behind it
+///   redirect a conditional JUMP without N that is taken, which RD took
+///            as not taken (no hint), so that EX redirects at its commit
+///            with the delay slot in RD; with two bubbles RD would move on
+///            the redirect's plan (`rd_moves_x`)
 ///   free     the same ALU word without `ERRSTOP`: `ERR` up for the
 ///            microcycle and the run going on, never halted
 pub fn haltcons(_period: u64) -> Vec<Case> {
-    use muir::isa::asm::{ALWAYS, JUMP, N, target};
+    use muir::isa::asm::{AEQM, ALWAYS, JUMP, N, target};
     const HALT_CONS: u64 = 1 << 10;
     let count = |m: u64| ALU | ADD | a_src(super::ONE) | m_src(m) | m_dest(m);
     let mut v = Vec::new();
@@ -353,6 +357,16 @@ pub fn haltcons(_period: u64) -> Vec<Case> {
     p.fill(20);
     p.stop();
     add("halt-cons-slot", &p, held());
+    let mut p = Preset::new();
+    p.fill(20);
+    let at = p.at();
+    p.op(JUMP | AEQM | a_src(super::ZERO) | m_src(super::M_ZERO) | target(at + 3) | HALT_CONS);
+    p.op(count(0o21));
+    p.op(count(0o22));
+    p.op(count(0o23));
+    p.fill(20);
+    p.stop();
+    add("halt-cons-redirect", &p, held());
     let mut p = Preset::new();
     p.fill(20);
     p.op(count(0o20) | HALT_CONS);
