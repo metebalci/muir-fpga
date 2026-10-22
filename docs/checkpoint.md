@@ -590,6 +590,7 @@ What the file holds otherwise than muir's own:
   Chaosnet interface on words 140 to 147, is the core's own and its
   readout does not carry it: its registers and buffers are written as at
   power-up, with the switches at the address `--chaos-address` names.
+  Revision 16 has no interface, and its file carries none.
   Nothing else of the board is QUUX's; a resumed machine's board catches up
   with the clock at its first look;
 - a data push's word waiting for the micro stack at the stack's 19 bits,
@@ -599,11 +600,13 @@ What the file holds otherwise than muir's own:
 
 ## A revision 16 checkpoint
 
-QUUX revision 16's checkpoint is muir's version 57: revision 15's body, the
+QUUX revision 16's checkpoint is muir's version 58: revision 15's body, the
 level-1 byte carrying revision 16, with the Ethernet device after word 225
-(`EthernetDevice::save`). The device's registers, its indexes, its four
-counters and 253 to 257 are read off the devices' words 24 to 30
-(`rtl/machine/quux16_ethernet.sv`'s readout). A transmit waiting between 245
+(`EthernetDevice::save`), and an I/O board with no Chaosnet interface, which
+revision 16 has not got (QUUX's Ethernet contract, section 8 R4). muir
+refuses version 57, revision 16's file with the interface. The device's
+registers, its indexes, its four counters and 253 to 257 are read off the
+devices' words 24 to 30 (`rtl/machine/quux16_ethernet.sv`'s readout). A transmit waiting between 245
 and 244 is the board's program's to send, and the board has no instant of
 muir's to give for it, so the file names the checkpoint's own instant as its
 due time, and a resumed machine sends it at once.

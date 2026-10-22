@@ -97,6 +97,18 @@ far end as muir's interface saw it. `quux15_chaos_module` runs the module
 alone against muir's interface over a script. The Kria's revision 15 design
 builds the interface with its cable tied off, as a cable with nothing on it.
 
+## Revision 16 of QUUX
+
+Revision 16 has no Chaosnet interface (QUUX's Ethernet contract, section 8
+R4). Its network is the Ethernet device (`docs/ethernet-device.md`). The
+register page's words 140 to 157 are reserved and are never reused: each reads
+0 and takes no write, as the page's other reserved words do. Word 100's bit 6
+is never set. The core builds no `quux15_chaos.sv` at revision 16, and the
+cable's seam is quiet, every output 0. `quux15_network` at revision 16 holds
+it clock for clock against muir: every word of 140 to 157 is read, then
+written as revision 15's interface acts on them with interrupts enabled, and
+condition 5 never calls its handler.
+
 ## An empty START takes Transmit Done down
 
 A read of START with no word written since the last frame or a Reset still

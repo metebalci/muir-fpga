@@ -213,7 +213,8 @@ void bind_memory_words(int quux, unsigned units, char *out, size_t n);
 // (contract G2 appendix A1.13; revision 14 has revision 13's main memory, its
 // checkpoint version 55 with the revision in the geometry, contract G3
 // revision 14 A14.14; revision 15's is version 56, and revision 16's, its body
-// with the Ethernet device, 57).  Revision 12 is retired.
+// with the Ethernet device and no Chaosnet interface, 58).  Revision 12 is
+// retired.
 // `bind_revision_known` and `bind_revision_packed` are 1 for those four.
 int bind_revision_known(unsigned revision);
 // 253-257 in muir's spellings: `02:00:00:00:00:01`, `169.254.100.2`.

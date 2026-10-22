@@ -45,8 +45,10 @@
 // the pipeline's state after the machine.  A body says so in `version`.
 #define CHK_VERSION_15 56u
 // Revision 16's, muir's `VERSION_16`: revision 15's body with the Ethernet
-// device after word 225 (QUUX's Ethernet contract, section 2.9).
-#define CHK_VERSION_16 57u
+// device after word 225 (QUUX's Ethernet contract, section 2.9) and no
+// Chaosnet interface on the I/O board (section 8 R4).  57 was revision 16's
+// with the interface, and muir refuses it.
+#define CHK_VERSION_16 58u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
 // muir's nanoseconds**, and so what the machine's elapsed time is multiplied

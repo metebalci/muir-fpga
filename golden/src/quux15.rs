@@ -1176,6 +1176,15 @@ fn machine(case: &Case) -> Machine {
     let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
     let mut m = Which::Quux.machine(&prom);
     m.geometry = geometry();
+    // **REVISION 16 HAS NO CHAOSNET INTERFACE** (QUUX's Ethernet contract,
+    // section 8 R4): a machine built as another and given 16's geometry
+    // still has the one it was built with, which a checkpoint would carry,
+    // so it is taken out as muir's own `quux` takes it out
+    // (`Machine::plug_chaos`, which on 16 leaves the I/O board with none).
+    if !m.geometry.chaos() {
+        m.plug_chaos(0);
+        assert!(m.ioboard.chaos.is_none(), "revision 16's I/O board with a Chaosnet interface");
+    }
     m.main = vec![0; case.main_words.unwrap_or(MAIN)];
     if let Some((w, h)) = case.video {
         muir::tv::check_video_size(w, h, false).expect("a video controller muir takes");
@@ -1757,6 +1766,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "dispsel" => quux15_preset::dispatch_selects().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),
+        "haltcons" => quux15_console::haltcons(period),
         "halts" => quux15_console::halts(period),
         "checkpoints" => quux15_console::checkpoints(period),
         _ => vec![Case::of_prog(name, &program(name, period))],

@@ -32,6 +32,17 @@
 //!   reset     the CSR's Reset and RESET-DEVICES with a frame waiting and the
 //!             enables set
 //!
+//! **ON REVISION 16 THERE IS NO NETWORK** (QUUX's Ethernet contract, section
+//! 8 R4): no interface and no cable, 140-157 reserved and never reused, word
+//! 100 `<6>` never set.  The group's runs there are two, with nothing on a
+//! cable:
+//!
+//!   reserved-reads   every word of 140-157 read, word 100, RESET-DEVICES
+//!   reserved-writes  the words revision 15's interface acts on written as
+//!                    it acts on them, interrupts enabled, condition 5
+//!                    checked after each step, every word of 140-157
+//!                    written all ones and read back
+//!
 //! **A FRAME IS PUT ON THE CABLE AT A CLOCK'S INSTANT** (`Ether::send_now`,
 //! in whole ns, which is the instant halved on revision 15): muir's
 //! `Interface` and `Ether` keep whole ns, so a frame cannot start at an odd
@@ -928,8 +939,69 @@ fn reset(devices: bool, w: u64) -> Preset {
     with(p, vec![frame(Anchor::Start(At { pc: first as u16, nth: 1, plus: 2 }), 0o6543, 0o3210)])
 }
 
-/// **The runs.**
+/// **Revision 16's 140-157 read**, each, and word 100: every one reserved,
+/// a constant 0 (QUUX's Ethernet contract, section 8 R4), and RESET-DEVICES
+/// changes none of them.
+fn reserved_reads() -> Preset {
+    let mut p = run();
+    for (j, k) in (0o140..=0o157).enumerate() {
+        p.net_read(k, 0o20 + j as u64 % 12);
+    }
+    p.net_read(0o100, 0o32);
+    p.net_write(1, 0o104);
+    p.net_read(0o140, 0o33).net_read(0o100, 0o32);
+    p.stop();
+    p
+}
+
+/// **Revision 16's 140-157 written as revision 15's interface acts on
+/// them**, interrupts enabled: the CSR's two enables and Loop Back, a
+/// frame's words and START's read, then every word of 140-157 written all
+/// ones and read back, word 100 read, and condition 5 checked after each
+/// step, calling a handler that counts in M 21.  Revision 15's interface
+/// raises `<6>` at the first write, Transmit Done being up from power-on;
+/// revision 16 has no interface, so nothing is taken, every word reads 0,
+/// `<6>` is never set and the handler is never called.
+fn reserved_writes() -> Preset {
+    let mut p = run();
+    enable_interrupts(&mut p);
+    let check = |p: &mut Preset| {
+        p.op(jcond(5) | P | target(HANDLER) | N);
+        p.fill(1);
+    };
+    p.net_write(TIE | RIE | LOOP_BACK, 0o140);
+    check(&mut p);
+    for w in [0o1111, 0o2222, u64::from(ME)] {
+        p.net_write(w, 0o141);
+    }
+    p.net_read(0o145, 0o20);
+    check(&mut p);
+    p.net_read(0o100, 0o22);
+    for k in 0o140..=0o157 {
+        p.net_write(0o177777, k);
+    }
+    check(&mut p);
+    for (j, k) in (0o140..=0o157).enumerate() {
+        p.net_read(k, 0o23 + j as u64 % 8);
+    }
+    p.net_read(0o100, 0o33);
+    check(&mut p);
+    p.stop();
+    p.fill_to(HANDLER);
+    p.op(mark(0o21));
+    p.op(filler().raw() | POPJ);
+    p.fill(1);
+    p
+}
+
+/// **The runs.**  On revision 16 (QUUX's Ethernet contract, section 8
+/// R4) there is no interface and no cable: its 140-157 are reserved and
+/// never reused, word 100 `<6>` is never set, and the runs are the two
+/// that hold that.
 pub fn network(period: u64) -> Vec<Case> {
+    if super::revision() == 16 {
+        return vec![reserved_reads().case("reserved-reads"), reserved_writes().case("reserved-writes")];
+    }
     let w = wait(period);
     let mut v = Vec::new();
     for d in 1..=16 {

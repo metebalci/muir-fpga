@@ -7,13 +7,15 @@
 // (functional source 15), the real-time clock (word 103), the three interval
 // timers (words 110-115), the keyboard and the mouse (words 120-123,
 // `quux15_input.sv`), the Chaosnet interface (words 140-147,
-// `quux15_chaos.sv`), the file device's registers (words 160-171,
+// `quux15_chaos.sv`; revision 15 only), the file device's registers (words 160-171,
 // contract Q9: the host runs the commands) and the host's side of it and of
 // the real-time clock, block-disk's registers (words 200-203), the
 // interrupt status (word 100), RESET-DEVICES (word 104), the video
 // controller's mode (word 210), and the interrupt
 // the conditions 5 and 6 test; and on revision 16 the Ethernet device
-// (words 240-257, `quux16_ethernet.sv`, `ETHERNET`).  muir's
+// (words 240-257, `quux16_ethernet.sv`, `ETHERNET`) in place of the
+// Chaosnet interface, which revision 16 has not got (QUUX's Ethernet
+// contract, section 8 R4: 140-157 reserved, word 100 `<6>` never set).  muir's
 // `Machine::bus_read`, `bus_write`, `Timers`, `QuuxInput`, the Chaosnet's
 // `Interface`, `BlockDisk`, `EthernetDevice` and `interrupt_at` are the
 // reference, clock for clock through the core (`quux15_core.sv`) and its
@@ -422,7 +424,7 @@ module quux15_devices #(
     end
     wr_built = !wr_v || wr_k == 8'o104 || wr_timer || wr_bd || wr_k == 8'o100 || wr_k == 8'o103
             || wr_k == 8'o210 || (wr_k >= 8'o160 && wr_k <= 8'o171) || (wr_k >= 8'o120 && wr_k <= 8'o123)
-            || (wr_k >= 8'o140 && wr_k <= 8'o147) || (ETHERNET && wr_k >= 8'o240 && wr_k <= 8'o257);
+            || (!ETHERNET && wr_k >= 8'o140 && wr_k <= 8'o147) || (ETHERNET && wr_k >= 8'o240 && wr_k <= 8'o257);
   end
 
   // Block-disk's state as this clock's walk's end and write leave it.
@@ -637,24 +639,46 @@ module quux15_devices #(
 
   // ================================================== the Chaosnet interface
 
-  // Words 140-147 (`quux15_chaos.sv`): a read at the clock after its grant
-  // (`rq_v`, `rq_k`), its word and its effect there; a write taken this
-  // clock; RESET-DEVICES resets it.
+  // Words 140-147 (`quux15_chaos.sv`), to revision 15: a read at the clock
+  // after its grant (`rq_v`, `rq_k`), its word and its effect there; a
+  // write taken this clock; RESET-DEVICES resets it.  **REVISION 16 HAS
+  // NONE** (QUUX's Ethernet contract, section 8 R4): its 140-157 are
+  // reserved and never reused, the core answers them as the page's other
+  // reserved words (`quux15_core.sv`'s `dev_word`), word 100 `<6>` is never
+  // set, and the cable's seam is quiet, every output 0.
   logic [15:0] ch_word;
   logic        ch_irq, ch_irq_state;
-  quux15_chaos chaos_regs (
-      .clk(clk), .rst(rst), .dev_reset(wr_reset),
-      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
-      .wr(wr_v && wr_k[7:3] == 5'o14), .wr_k(wr_k[2:0]), .wdata(wr_data[15:0]),
-      .rd_word(ch_word), .irq(ch_irq), .irq_state(ch_irq_state),
-      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
-      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
-      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
-      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
-      .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
-      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
-      .chaos_cbl_busy(chaos_cbl_busy), .chaos_rx_start(chaos_rx_start),
-      .chaos_rx_stored(chaos_rx_stored), .chaos_rx_store(chaos_rx_store), .chaos_bits(chaos_bits));
+  if (!ETHERNET) begin : g_chaos
+    quux15_chaos chaos_regs (
+        .clk(clk), .rst(rst), .dev_reset(wr_reset),
+        .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
+        .wr(wr_v && wr_k[7:3] == 5'o14), .wr_k(wr_k[2:0]), .wdata(wr_data[15:0]),
+        .rd_word(ch_word), .irq(ch_irq), .irq_state(ch_irq_state),
+        .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+        .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+        .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+        .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
+        .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
+        .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+        .chaos_cbl_busy(chaos_cbl_busy), .chaos_rx_start(chaos_rx_start),
+        .chaos_rx_stored(chaos_rx_stored), .chaos_rx_store(chaos_rx_store), .chaos_bits(chaos_bits));
+  end else begin : g_no_chaos
+    assign ch_word = 16'd0;
+    assign ch_irq = 1'b0;
+    assign ch_irq_state = 1'b0;
+    assign chaos_tx_go = 1'b0;
+    assign chaos_tx_len = 9'd0;
+    assign chaos_tx_valid = 1'b0;
+    assign chaos_tx_word = 16'd0;
+    assign chaos_tx_clear = 1'b0;
+    assign chaos_reset = 1'b0;
+    assign chaos_csr = 16'd0;
+    assign chaos_bits = 12'd0;
+    logic chaos_unused;
+    assign chaos_unused = ^{chaos_address, chaos_rx_valid, chaos_rx_word, chaos_rx_done, chaos_rx_bits,
+                            chaos_rx_crc, chaos_rx_lost, chaos_tx_done, chaos_tx_abort, chaos_cbl_busy,
+                            chaos_rx_start, chaos_rx_stored, chaos_rx_store};
+  end
 
   // =================================================== the Ethernet device
 
@@ -707,8 +731,8 @@ module quux15_devices #(
   endfunction
   /* verilator lint_on UNUSEDSIGNAL */
   // And the keyboard's and the mouse's, `<4>` and `<5>` (`quux15_input.sv`),
-  // the network's, `<6>` (`quux15_chaos.sv`), and on revision 16 the
-  // Ethernet device's, `<8>` (`quux16_ethernet.sv`).
+  // the network's, `<6>` (`quux15_chaos.sv`), to revision 15, and on
+  // revision 16 the Ethernet device's, `<8>` (`quux16_ethernet.sv`).
   assign int_now = sources(tm_w[0], tm_w[1], tm_w[2], bd_cmd_w, bd_idle_w,
                            fd_ie_w && fd_ccons_w != fd_rcons_w) != 32'd0 || in_irq != 2'd0 || ch_irq
                 || ed_irq;
@@ -721,7 +745,10 @@ module quux15_devices #(
     unique case (rq_k)
       8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ie && fd_ccons != fd_rcons);
       8'o120, 8'o121, 8'o122, 8'o123: rd_word = in_word;
-      8'o140, 8'o141, 8'o142, 8'o143, 8'o144, 8'o145, 8'o146, 8'o147: rd_word = {16'd0, ch_word};
+      8'o140, 8'o141, 8'o142, 8'o143, 8'o144, 8'o145, 8'o146, 8'o147: begin
+        rd_word  = {16'd0, ch_word};
+        rd_built = !ETHERNET;
+      end
       8'o160: rd_word = {23'd0, fd_ie, 7'd0, fd_on};
       8'o161: rd_word = {8'd0, fd_hopen, 7'd0, fd_ccons != fd_rcons, 4'd0, fd_fault, fd_refused,
                          !fd_on && !fd_busy, fd_on};
@@ -757,7 +784,7 @@ module quux15_devices #(
     // found them.
     if (rq_k == 8'o100) rd_word[5:4] = in_irq_g;
     // And `<6>`, the network's, at the clock after the grant, where muir
-    // reads its interface.
+    // reads its interface; 0 on revision 16, which has none.
     if (rq_k == 8'o100) rd_word[6] = ch_irq_state;
     // And `<8>`, the Ethernet device's, as the clock began.
     if (rq_k == 8'o100) rd_word[8] = ed_irq_state;

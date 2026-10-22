@@ -458,7 +458,11 @@ static void emit_chaos(struct chk *w, const struct chk_declared *d)
 // time of day starts again from zero.  Nothing the machine computes depends
 // on it being continuous; what it will see is one very long or very short
 // interval at the seam.
-static void emit_ioboard(struct chk *w, const struct chk_declared *d)
+// `chaos` is whether the machine has a Chaosnet interface: the CADR and QUUX
+// to revision 15 do, and revision 16 has none (QUUX's Ethernet contract,
+// section 8 R4; muir's `Geometry::chaos`), so its board saves `false` and
+// nothing after it.
+static void emit_ioboard(struct chk *w, const struct chk_declared *d, int chaos)
 {
 	chk_u16(w, 0);		/* NONE csr */
 	chk_u32(w, 0);		/* NONE scancode */
@@ -495,8 +499,9 @@ static void emit_ioboard(struct chk *w, const struct chk_declared *d)
 	chk_opt_u64(w, 0, 0);	/* NONE audio_click_ns, a real opt */
 	chk_bool(w, 0);		/* NONE beep_started */
 	emit_serial(w);		/* written BEFORE chaos, against declaration order */
-	chk_bool(w, 1);		/* chaos is there: see emit_chaos */
-	emit_chaos(w, d);
+	chk_bool(w, chaos);	/* DECLARED whether chaos is there: see emit_chaos */
+	if (chaos)
+		emit_chaos(w, d);
 }
 
 // `busint.rs`'s `Busint::save`, at `Busint::new(boards)`: the idle image, and
@@ -1149,8 +1154,9 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	emit_video_15(w, img);
 	chk_bool(w, 0);						/* DECLARED no color TV */
 	// The I/O board: on revision 15 the network on it is not built, and
-	// nothing else of it is QUUX's.  As muir's machine comes up.
-	emit_ioboard(w, d);
+	// nothing else of it is QUUX's.  As muir's machine comes up.  Revision
+	// 16 has no Chaosnet interface (QUUX's Ethernet contract, section 8 R4).
+	emit_ioboard(w, d, !img->rev16);
 	emit_quux_input(w, img);
 	chk_u64(w, x->committed);				/* READ cycles */
 	chk_u64(w, x->ns);					/* READ ns, the snapshot's */
@@ -1428,7 +1434,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 #else
 	chk_bool(w, 0);					/* DECLARED no color TV */
 #endif
-	emit_ioboard(w, d);
+	emit_ioboard(w, d, 1);
 	if (quux) {
 		emit_quux_input(w, img);
 	} else {
@@ -1747,6 +1753,7 @@ static const char *const kMissingQuux15[] = {
 	"    switches at the address --chaos-address names.  Nothing else of the",
 	"    I/O board is QUUX's: written as muir's machine comes up.  A resumed",
 	"    machine's board catches up with the clock at its first look.",
+	"    Revision 16 has no Chaosnet interface, and its file none.",
 	"a data push's word waiting for the micro stack: its 19 bits, which are",
 	"    all SPC<18:0> keeps; muir keeps the push's 32.",
 	"on revision 16, the Ethernet device's transmit due time, which is the",

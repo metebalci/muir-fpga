@@ -297,6 +297,72 @@ pub fn console(period: u64) -> Vec<Case> {
     v
 }
 
+/// **`HALT-CONS` under `ERRSTOP`** (`IR<11:10>` 1, the mode register's
+/// bit 2; muir's `tests/halt.rs`): the machine halts after the word, as
+/// `micro` and the CADR do. The word that has just entered EX behind it is
+/// squashed with RD's and CS's and fetched again later, so that it cannot
+/// take `ERR` down with its own `IR<11:10>`; RUN stays set and `ERR` up, so
+/// `FLAG-1` says the machine stopped itself; and it stays halted while
+/// `ERRSTOP` stands, and runs on from the squashed word once the console
+/// clears it, with no write of RUN. Each run is read as the halt ends,
+/// two clocks on and long after, and resumed by the mode register alone:
+///
+///   alu      an ALU word, a word behind it that counts in M 21
+///   jump     an unconditional JUMP with N, the words it skips behind it
+///   slot     an unconditional JUMP without N, its delay slot behind it
+///   free     the same ALU word without `ERRSTOP`: `ERR` up for the
+///            microcycle and the run going on, never halted
+pub fn haltcons(_period: u64) -> Vec<Case> {
+    use muir::isa::asm::{ALWAYS, JUMP, N, target};
+    const HALT_CONS: u64 = 1 << 10;
+    let count = |m: u64| ALU | ADD | a_src(super::ONE) | m_src(m) | m_dest(m);
+    let mut v = Vec::new();
+    let held = || {
+        vec![Wait(1), Spy(spy::MODE, 4), UntilHalted, Reads, Wait(2), Reads, Wait(40), Reads, Spy(spy::MODE, 0)]
+    };
+    let mut add = |name: &str, p: &Preset, script: Vec<Act>| {
+        let mut c = p.case(name);
+        c.script = script;
+        c.micro_check = true;
+        v.push(c);
+    };
+    let mut p = Preset::new();
+    p.fill(20);
+    p.op(count(0o20) | HALT_CONS);
+    p.op(count(0o21));
+    p.fill(20);
+    p.stop();
+    add("halt-cons-alu", &p, held());
+    let mut p = Preset::new();
+    p.fill(20);
+    let at = p.at();
+    p.op(JUMP | target(at + 3) | ALWAYS | N | HALT_CONS);
+    p.op(count(0o21));
+    p.op(count(0o22));
+    p.op(count(0o23));
+    p.fill(20);
+    p.stop();
+    add("halt-cons-jump", &p, held());
+    let mut p = Preset::new();
+    p.fill(20);
+    let at = p.at();
+    p.op(JUMP | target(at + 3) | ALWAYS | HALT_CONS);
+    p.op(count(0o21));
+    p.op(count(0o22));
+    p.op(count(0o23));
+    p.fill(20);
+    p.stop();
+    add("halt-cons-slot", &p, held());
+    let mut p = Preset::new();
+    p.fill(20);
+    p.op(count(0o20) | HALT_CONS);
+    p.op(count(0o21));
+    p.fill(20);
+    p.stop();
+    add("halt-cons-free", &p, vec![Wait(30), Reads]);
+    v
+}
+
 /// The clock `case` parks at, run on its own.
 fn park_clock(case: &Case, period: u64) -> u64 {
     let mut e = Pipeline::new(super::machine(case));

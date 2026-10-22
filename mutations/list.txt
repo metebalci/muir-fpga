@@ -29738,9 +29738,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note D's delay slot waits a clock in RD, as after a redirect.
 @old
-    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set;
 @new
-    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set
               && !(dw_begin && rd_seq == slot_seq);
 @end
 
@@ -30897,12 +30897,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     // RD moves on its own plan, or a squashed slot's, which never holds.
     // After a redirect RD holds the delay slot, which waits, or nothing;
     // with two bubbles the slot moves on the redirect's plan.
-    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
-    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set;
+    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0 && !halt_set;
 @new
     plan = redirect ? plan_x : rd_killed ? plan_k : plan_r;
-    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
-    rd_moves_x = rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set;
+    rd_moves_x = rd_keep && ex_free && !hold_x && errhalt_now == 1'b0 && !halt_set;
 @end
 
 @mutation quux15-main-loop-return-without-its-skip
@@ -32098,11 +32098,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note RESET-DEVICES does not reach the Chaosnet interface, where muir's
 @note `reset_devices` resets the I/O board's.
 @old
-      .clk(clk), .rst(rst), .dev_reset(wr_reset),
-      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
+        .clk(clk), .rst(rst), .dev_reset(wr_reset),
+        .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
 @new
-      .clk(clk), .rst(rst), .dev_reset(1'b0 & wr_reset),
-      .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
+        .clk(clk), .rst(rst), .dev_reset(1'b0 & wr_reset),
+        .rd(rq_v && rq_k[7:3] == 5'o14), .rd_k(rq_k[2:0]),
 @end
 
 @mutation quux15-net-reset-keeps-the-enables
@@ -35538,4 +35538,105 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revisi
       .MACHINE_ID({16'h5155, 12'(REVISION), 4'd4}),
 @new
       .MACHINE_ID({16'h5155, 12'(15 + 0 * REVISION), 4'd4}),
+@end
+
+# **REVISION 16 HAS NO CHAOSNET INTERFACE** (QUUX's Ethernet contract,
+# section 8 R4): the core routes 140-147 to the devices on revision 15 only,
+# and revision 16's checkpoint carries no interface.  Each gate has its
+# mutant on each side: the interface's words back on 16, caught by the
+# network group at revision 16 (140-157 reserved, word 100 `<6>` never set),
+# and taken off 15, caught by the network group at revision 15.  The
+# devices' own gates behind the core's (`g_chaos`, `rd_built`, `wr_built`)
+# are not reached while the core does not route the words, and have no
+# record: a mutant of one alone is equivalent.
+
+@mutation r4-core-routes-the-network-on-16
+@check quux15_network_quux_r16
+@file rtl/machine/quux15_core.sv
+@note Revision 16's core routes 140-147 to the devices as revision 15's does.
+@old
+(!ETHERNET && k >= 8'o140 && k <= 8'o147)
+@new
+(k >= 8'o140 && k <= 8'o147)
+@end
+
+@mutation r4-core-drops-the-network-on-15
+@check quux15_network_quux
+@file rtl/machine/quux15_core.sv
+@note Revision 15's core answers 140-147 as reserved words.
+@old
+(!ETHERNET && k >= 8'o140 && k <= 8'o147)
+@new
+(1'b0 && k >= 8'o140 && k <= 8'o147)
+@end
+
+@mutation r4-ckpt-chaos-on-16
+@check quux15_checkpoints_quux_r16
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Revision 16's file carries a Chaosnet interface, as version 57 did.
+@old
+	emit_ioboard(w, d, !img->rev16);
+@new
+	emit_ioboard(w, d, 1);
+@end
+
+@mutation r4-ckpt-no-chaos-on-15
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Revision 15's file carries no Chaosnet interface.
+@old
+	emit_ioboard(w, d, !img->rev16);
+@new
+	emit_ioboard(w, d, 0);
+@end
+
+# **HALT-CONS UNDER ERRSTOP** (`golden/src/quux15_console.rs`'s `haltcons`):
+# the machine halts after the HALT word, the word behind it squashed and
+# fetched again first, RUN and SRUN kept and ERR up, held while ERRSTOP
+# stands.  Each part of the fix has its mutant.  `rd_moves_x`'s gate, the
+# redirect's counterpart, is not reached by any trace yet and has none.
+
+@mutation haltcons-the-word-behind-runs
+@check quux15_haltcons_quux_r16
+@file rtl/machine/quux15_core.sv
+@note RD moves on at the HALT word's commit, so the word behind it enters EX
+@note and runs, taking ERR down with its own IR<11:10>.
+@old
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set;
+@new
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
+@end
+
+@mutation haltcons-the-store-reads-past-the-hold
+@check quux15_haltcons_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles the store's read takes RD as moving at the HALT word's
+@note commit, and CS loads a word it did not read.
+@old
+    rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0 && !halt_set;
+@new
+    rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0;
+@end
+
+@mutation haltcons-srun-falls-at-the-drain
+@check quux15_haltcons_quux
+@file rtl/machine/quux15_core.sv
+@note SRUN cleared at the drain's end, so FLAG-1 reads a console's halt for a
+@note clock.
+@old
+      srun     <= cc_run;
+@new
+      srun     <= drain_end ? 1'b0 : cc_run;
+@end
+
+@mutation haltcons-run-cleared-at-the-drain
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note RUN cleared at the drain's end, so a HALT word's halt looks like a
+@note console's and clearing ERRSTOP does not resume the machine.
+@old
+      halt_req <= halt_set;
+@new
+      halt_req <= halt_set;
+      if (drain_end) cc_run <= 1'b0;
 @end

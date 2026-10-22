@@ -2735,6 +2735,7 @@ QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlf
                "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "storeret", "checkpoints", "bdisk",
                "bdmix")
 QUUX15_CORE += ("input", "network", "regread")
+QUUX15_CORE += ("haltcons",)
 QUUX15_CORE += ("resetback",)
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
@@ -2787,7 +2788,7 @@ for _p in QUUX15_CORE:
 # `quux15_<group>.quux.r16.pass`): the core built with revision 16's
 # MACHINE-ID, and so with the Ethernet device, its testbench refusing a
 # trace of another revision.
-QUUX16_GROUPS = ("ethernet", "lineclear", "filedev", "network", "checkpoints")
+QUUX16_GROUPS = ("ethernet", "lineclear", "filedev", "network", "checkpoints", "haltcons")
 QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
 QUUX15_PERIODS_OF["lineclear"] = (20, 17, 36)
 for _p in QUUX16_GROUPS:

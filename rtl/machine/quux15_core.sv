@@ -93,7 +93,10 @@
 // **THE NETWORK** (contracts Q4 and Q13): the Chaosnet interface's words
 // 140-147 in `quux15_chaos.sv`, through `quux15_devices.sv`, the cable's
 // seam out (`chaos_*`), which `cadr_chaos_cable.sv` takes on a board; its
-// interrupt is word 100's `<6>`.
+// interrupt is word 100's `<6>`.  Revision 15 only: revision 16 has no
+// Chaosnet interface (QUUX's Ethernet contract, section 8 R4), its 140-157
+// are reserved and never reused, `<6>` is never set, and the seam's outputs
+// are 0.
 //
 // **REVISION 16** (QUUX's Ethernet contract, §10): MACHINE-ID's revision
 // field 16, which `ETHERNET` below is taken from, and feature word 15 reading
@@ -104,7 +107,8 @@
 // (§2.5), one held write at a time, a second of the same word replacing
 // the first and one of another word waiting behind it (muir's
 // `register_write_now`); and the cache swept when RX_CONS lands, as at a
-// file device completion.  Everything else is revision 15's.
+// file device completion; and no Chaosnet interface (THE NETWORK, above).
+// Everything else is revision 15's.
 //
 // **WHAT IS NOT BUILT** --- a word that writes the PDL buffer and fetches
 // inside it in one clock, which would want the RAM's second port twice ---
@@ -767,6 +771,10 @@ module quux15_core #(
   logic [18:0] spc_w_word;
   logic [1:0]  errhalt;
   logic        errhalt_now;
+  // A HALT word under ERROR-STOP-ENABLE committing this clock (THE HALT
+  // ENDS, below): the front holds, so that the word behind it stays in RD
+  // and the drain squashes it with CS's.
+  logic        halt_set;
 
   // --- The memory side's state (`stages.rs`'s `Back`, `exec.rs`'s `Exec`).
   // VMAOK, the last translation's entry and whether it was a write's.
@@ -1655,11 +1663,13 @@ module quux15_core #(
     return k == 8'o164 || (ETHERNET && (k == 8'o244 || k == 8'o250));
   endfunction
   logic [31:0] posted_now;
-  // The words `quux15_devices.sv` answers, a clock after the grant.
+  // The words `quux15_devices.sv` answers, a clock after the grant.  On
+  // revision 16 140-147 are not among them: reserved, a constant 0 that
+  // takes no write, as 150-157 are (QUUX's Ethernet contract, section 8 R4).
   function automatic logic dev_word(input logic [7:0] k);
     return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
         || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171)
-        || (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147)
+        || (k >= 8'o120 && k <= 8'o123) || (!ETHERNET && k >= 8'o140 && k <= 8'o147)
         || (ETHERNET && k >= 8'o240 && k <= 8'o257);
   endfunction
   // The words of the devices not built: none now.
@@ -2871,8 +2881,8 @@ module quux15_core #(
     // RD moves on its own plan, or a squashed slot's, which never holds.
     // After a redirect RD holds the delay slot, which waits, or nothing;
     // with two bubbles the slot moves on the redirect's plan.
-    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
-    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0 && !halt_set;
+    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0 && !halt_set;
     rd_moves = redirect ? rd_moves_x : rd_moves_n;
     // CS follows RD only without a redirect, which keeps no word behind the
     // delay slot: the plan after a redirect reaches NPC's registers alone.
@@ -2964,7 +2974,7 @@ module quux15_core #(
   /* verilator lint_on UNUSEDSIGNAL */
   always_comb begin
     rd_killed_nr = kill_rd && rd_v && rd_seq == slot_seq;
-    rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0;
+    rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0 && !halt_set;
     npc_nr = npc;
     if (rd_v && cs_v && cs_seq == rd_seq + 8'd1 && rd_moves_nr && !rd_killed_nr && plan_r.next2_v)
       npc_nr = plan_r.next2;
@@ -3383,7 +3393,7 @@ module quux15_core #(
   // **THE HALT ENDS** (`clock_once`'s end) as the clock ends with nothing in
   // the four stages, the port idle, no word on its way to MD, no register
   // write or CMD_PROD left: halted, between two microcycles.
-  logic ex_v_n, wb_v_n, rd_v_n, cs_v_n, cprod_v_n, drain_end, halt_set;
+  logic ex_v_n, wb_v_n, rd_v_n, cs_v_n, cprod_v_n, drain_end;
   always_comb begin
     ex_v_n    = rd_moves || (ex_v && !commit);
     wb_v_n    = commit || (wb_v && !wb_leaves);
@@ -3393,7 +3403,14 @@ module quux15_core #(
     drain_end = (draining_now || stepping || step_go) && errhalt == 2'd0 && !errhalt_now
              && !ex_v_n && !wb_v_n && !rd_v_n && !cs_v_n && port_idle_n
              && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n && !eth_busy;
-    // A HALT word under ERROR-STOP-ENABLE: the machine drains (`ex.halt`).
+    // A HALT word under ERROR-STOP-ENABLE: the machine drains (`ex.halt`)
+    // from EX, as muir's `begin_drain_from(true)`: RD does not move in its
+    // clock (`rd_moves_n`, and two bubbles' `rd_moves_x` and `rd_moves_nr`;
+    // CS waits behind RD by `rd_free`), so the word behind it, which would
+    // otherwise enter EX and take ERR down with its own `IR<11:10>`, stays
+    // in RD and the drain squashes it with CS's; it is fetched again first.
+    // `haltcons` holds `rd_moves_n`, and with two bubbles `rd_moves_nr`;
+    // no trace yet reaches `rd_moves_x`, their counterpart on a redirect.
     halt_set  = commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
   end
 
@@ -3409,12 +3426,16 @@ module quux15_core #(
     end else begin
       ssdone   <= sstep;
       sstep    <= cc_step;
-      srun     <= drain_end ? 1'b0 : cc_run;
+      // RUN and SRUN are left as they stand at the drain's end (muir's
+      // `clock_stages`): a console's halt has cleared RUN already, and a
+      // HALT word's keeps it, so that FLAG-1 says the machine stopped
+      // itself and `resume_go` holds it while ERR stays up under
+      // ERROR-STOP-ENABLE.
+      srun     <= cc_run;
       halted   <= drain_end || halted_now;
       draining <= draining_now && !drain_end;
       stepping <= (stepping || step_go) && !drain_end;
       halt_req <= halt_set;
-      if (drain_end) cc_run <= 1'b0;
       if (rw_take && rgw_bus[7:0] == 8'o102) mode[2] <= rgw_word[0];
       if (spy_we) begin
         unique case (spy_eadr[2:0])
@@ -3480,7 +3501,9 @@ module quux15_core #(
       4'd2:  spy_rdata = store_q[47:32];
       4'd3:  spy_rdata = store_q[63:48];
       4'd4:  spy_rdata = {2'b00, opc[7]};
-      // PC: the oldest word not committed, or the next fetch (`pc_15`).
+      // PC: the oldest word not committed, or the next fetch (muir's
+      // `next_to_run`, which its readout gives; A15b.13 says the next
+      // fetch's address).
       4'd5:  spy_rdata = {2'b00, (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
                                   : (cs_v_q && !cs_nop_q) ? cs_pc_q : npc_q};
       4'd8:  spy_rdata = 16'he800 | {3'd0, mode[5], 1'b0, x_halted, ssdone, srun, 8'd0};
