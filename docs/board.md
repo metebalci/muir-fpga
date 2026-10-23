@@ -3396,7 +3396,7 @@ included:
 
 | | Kria KR260 | DE25-Nano | Arty Z7-20 |
 |---|---|---|---|
-| The period | 20 ns | 25 ns | 50 ns, 55 ns at revision 16 |
+| The period | 20 ns | 25 ns | 50 ns, 60 ns at revision 16 |
 | The cache | 64K words | 16K words | 4K words |
 | The display | 1920x1080 at 60 Hz, DisplayPort | 1280x1024 at 60 Hz, HDMI | 1280x1024 at 60 Hz, HDMI |
 | Main memory's port | `S_AXI_HP0_FPD`, 128 bits | the processor system's FPGA-to-SDRAM bridge, shared with the packs and the display | `S_AXI_HP0`, 64 bits |

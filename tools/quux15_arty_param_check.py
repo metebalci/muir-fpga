@@ -36,7 +36,7 @@ clock), the microcycle lamp's `HOLD_T` and the disk lamp's `DISK_LIT_T`
 top's arithmetic.  A top that left any of them at its tick count passes at
 10 ns and is caught at every other period.
 
-**THE BOARD'S PERIOD BY REVISION**: 50 ns at revision 15 and 55 ns at
+**THE BOARD'S PERIOD BY REVISION**: 50 ns at revision 15 and 60 ns at
 revision 16, the top's own `PERIOD_NS` and the bitstream flow's default when
 no period is asked, each held to the figure written here.
 
@@ -61,12 +61,12 @@ import ethernet_page_check  # noqa: E402
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_arty"
 # The periods the board's fits are asked for (MP8 step 0: 44, 47, 48; the
-# board's own, 50 at revision 15 and 55 at revision 16), and 10 ns, the tick,
+# board's own, 50 at revision 15 and 60 at revision 16), and 10 ns, the tick,
 # where a figure left at its tick count agrees by accident.
-PERIODS = (10, 44, 47, 48, 50, 55)
+PERIODS = (10, 44, 47, 48, 50, 60)
 # The board's period by revision, written here apart from the top and from
 # the bitstream's flow: what a build that names no period gets.
-OWN = {15: 50, 16: 55}
+OWN = {15: 50, 16: 60}
 BITSTREAM_TCL = "boards/arty-z7-20/vivado/quux15_bitstream.tcl"
 TCLSH = os.environ.get("TCLSH", "tclsh")
 # Written here apart from the top: contract HD's video controller and board

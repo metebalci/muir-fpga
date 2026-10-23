@@ -35471,33 +35471,55 @@ CURRENT_BIT = 47                     # the GPT attribute bit the PROM looks for
 @check quux15_arty_param
 @file boards/arty-z7-20/quux15_arty.sv
 @note Revision 16's top built at revision 15's 50 ns when no period is
-@note given, which its fit misses, not the board's 55 ns.
+@note given, which its fit misses, not the board's 60 ns.
 @old
-    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 55 : 50
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 60 : 50
 @new
     parameter int unsigned PERIOD_NS = REVISION >= 16 ? 50 : 50
+@end
+
+@mutation quux15-arty-q16-own-period-at-55
+@check quux15_arty_param
+@file boards/arty-z7-20/quux15_arty.sv
+@note Revision 16's top built at 55 ns when no period is given, which its
+@note fit misses by 0.6 ns, not the board's 60 ns.
+@old
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 60 : 50
+@new
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 55 : 50
 @end
 
 @mutation quux15-arty-q16-bitstream-period-at-50
 @check quux15_arty_param
 @file boards/arty-z7-20/vivado/quux15_bitstream.tcl
 @note The bitstream's flow builds revision 16 at 50 ns when no period is
-@note asked, not the board's 55 ns.
+@note asked, not the board's 60 ns.
 @old
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 60 : 50)}]
 @new
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 50 : 50)}]
 @end
 
-@mutation quux15-arty-q15-bitstream-period-at-55
+@mutation quux15-arty-q16-bitstream-period-at-55
 @check quux15_arty_param
 @file boards/arty-z7-20/vivado/quux15_bitstream.tcl
-@note The bitstream's flow builds revision 15 at revision 16's 55 ns when
+@note The bitstream's flow builds revision 16 at 55 ns when no period is
+@note asked, which its fit misses by 0.6 ns, not the board's 60 ns.
+@old
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 60 : 50)}]
+@new
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
+@end
+
+@mutation quux15-arty-q15-bitstream-period-at-60
+@check quux15_arty_param
+@file boards/arty-z7-20/vivado/quux15_bitstream.tcl
+@note The bitstream's flow builds revision 15 at revision 16's 60 ns when
 @note no period is asked, not the board's 50 ns.
 @old
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 50)}]
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 60 : 50)}]
 @new
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 55 : 55)}]
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 60 : 60)}]
 @end
 
 @mutation eth-kr260-page-a-page-off

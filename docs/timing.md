@@ -589,7 +589,7 @@ the Arty Z7-20 at K = 5, 50 ns a microcycle.
 This section is revisions 13 and 14. Revisions 15 and 16 are pipelined and
 have no K. Each board runs its clock at its own period: 20 ns on the Kria
 KR260 and 25 ns on the DE25-Nano at both revisions, and on the Arty Z7-20 50
-ns at revision 15 and 55 ns at revision 16. A board tick is
+ns at revision 15 and 60 ns at revision 16. A board tick is
 then one clock of that period, so every time the board's top level hands a
 module is turned into clocks there (What is not MIT's timing at all, below).
 A board may be slower than another, and the design is the same on all three.
@@ -882,12 +882,12 @@ the one place the period is decided on that board:
 from `PERIOD_NS`, in nanoseconds, and `boards/de25-nano/quux15_de25.sv` from
 `PERIOD`, in units of 0.5 ns:
 
-| Constant | The time | Kria KR260, 20 ns | DE25-Nano, 25 ns | Arty Z7-20 at revision 15, 50 ns | Arty Z7-20 at revision 16, 55 ns |
+| Constant | The time | Kria KR260, 20 ns | DE25-Nano, 25 ns | Arty Z7-20 at revision 15, 50 ns | Arty Z7-20 at revision 16, 60 ns |
 |---|---|---|---|---|---|
-| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 50,000,000 | 40,000,000 | 20,000,000 | 18,181,818 |
-| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,097,152 | 1,677,722 | 838,861 | 762,601 |
-| `DISK_LIT_T`, the disk lamp's stretch | the same 41,943,040 ns, rounded up | --- | 1,677,722 | 838,861 | 762,601 |
-| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 800 | 640 | 320 | 291 |
+| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 50,000,000 | 40,000,000 | 20,000,000 | 16,666,667 |
+| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,097,152 | 1,677,722 | 838,861 | 699,051 |
+| `DISK_LIT_T`, the disk lamp's stretch | the same 41,943,040 ns, rounded up | --- | 1,677,722 | 838,861 | 699,051 |
+| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 800 | 640 | 320 | 267 |
 
 The Kria KR260 has no disk lamp.
 
@@ -898,9 +898,9 @@ the lamp's `BLINK_BIT` counts microcycles, the console face's `RESET_T` and
 pixel clock's. `build/quux15_kr260_param.pass` reads the three back at the
 top's instances at 10, 13, 18, 19 and 20 ns and holds each to the figure
 computed from the period apart from the top. `build/quux15_arty_param.pass`
-does the same for the Arty Z7-20's four at 10, 44, 47, 48, 50 and 55 ns,
+does the same for the Arty Z7-20's four at 10, 44, 47, 48, 50 and 60 ns,
 and holds the top's own period and the bitstream flow's to 50 ns at revision
-15 and 55 ns at revision 16; `build/quux15_de25_param.pass` for the DE25-Nano's four at 10, 22.5, 24, 25
+15 and 60 ns at revision 16; `build/quux15_de25_param.pass` for the DE25-Nano's four at 10, 22.5, 24, 25
 and 26 ns and at the top's own period.
 
 ## If you are about to change an instant

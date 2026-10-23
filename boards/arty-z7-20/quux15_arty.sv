@@ -99,9 +99,9 @@ module quux15_arty #(
     // design for both, the flow choosing it.
     parameter int unsigned REVISION = 15,
     // **THE PERIOD**, in nanoseconds: the MMCM's divide below, the one place
-    // it is decided on this board: the board's, 50 ns at revision 15 and 55
+    // it is decided on this board: the board's, 50 ns at revision 15 and 60
     // ns at revision 16.
-    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 55 : 50
+    parameter int unsigned PERIOD_NS = REVISION >= 16 ? 60 : 50
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,

@@ -1397,7 +1397,7 @@ console's word 42 reads and clears the two sticky faults.
 changing it needs a fit (1. The video mode): 1280 by 1024 here and 1920 by
 1080 on the Kria KR260. The sleep's second is counted in clocks of the board's
 period, to the nearest clock: 20,000,000 at the Arty Z7-20's 50 ns,
-18,181,818 at its revision 16's 55 ns, and 40,000,000 at the DE25-Nano's 25
+16,666,667 at its revision 16's 60 ns, and 40,000,000 at the DE25-Nano's 25
 ns.
 
 **What holds it.** `build/display_out.quux.pass` builds the display at the
