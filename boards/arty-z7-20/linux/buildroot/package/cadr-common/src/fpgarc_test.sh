@@ -340,10 +340,32 @@ echo "\$*" >> "$WORK/ip.calls"
 # N\` removes the first at N and fails when there is none.  \$WORK/ip.rule.adds
 # is how many adds succeed before every later one fails, as a kernel without
 # CONFIG_IP_MULTIPLE_TABLES fails them all at 0.
+#
+# **AN ADD IS PARSED AS BUSYBOX's \`ip rule\` PARSES IT** (BusyBox 1.37.0,
+# networking/libiproute/iprule.c:35-39, :241-243, :327-337): every word is one
+# of its keywords, each with its argument, and a rule's type is named only
+# after \`type\`.  A bare \`blackhole\` is not a keyword, and BusyBox refuses
+# it with this sentence and status 1, as the board did.
 if [ "\$1" = rule ]; then
 	echo "ip \$*" >> "$WORK/tap.calls"
 	case "\$2" in
 	add)
+		_r=\$*
+		shift 2
+		while [ \$# -gt 0 ]; do
+			case "\$1" in
+			from|to|preference|order|priority|tos|fwmark|realms|table|lookup|suppress_prefixlength|suppress_ifgroup|dev|iif|nat|map-to)
+				[ \$# -ge 2 ] || { echo "ip: command line is not complete, try \\"help\\"" >&2; exit 1; }
+				shift 2 ;;
+			type)
+				case "\${2:-}" in
+				local|nat|broadcast|brd|anycast|multicast|prohibit|unreachable|blackhole|xresolve|unicast|throw) shift 2 ;;
+				*) echo "ip: invalid argument '\${2:-}' to 'type'" >&2; exit 1 ;;
+				esac ;;
+			*) echo "ip: invalid argument '\$1' to 'ip'" >&2; exit 1 ;;
+			esac
+		done
+		set -- \$_r
 		if [ -f "$WORK/ip.rule.adds" ]; then
 			_left=\$(cat "$WORK/ip.rule.adds")
 			[ "\$_left" -gt 0 ] || { echo "RTNETLINK answers: Operation not supported" >&2; exit 2; }
@@ -7328,8 +7350,8 @@ LL_NET=$(printf '169.254.%d.%d/%d' 0 0 16)
 LAN_START_LIST="ip link show dev quux0
 tunctl -t quux0
 ip rule del priority 1169
-ip rule add iif eth0 to $LL_NET priority 1169 blackhole
-ip rule add iif quux0 to $LL_NET priority 1169 blackhole
+ip rule add iif eth0 to $LL_NET priority 1169 type blackhole
+ip rule add iif quux0 to $LL_NET priority 1169 type blackhole
 sysctl -q -w net.ipv6.conf.quux0.disable_ipv6=1
 sysctl -q -w net.ipv4.conf.quux0.arp_ignore=0
 sysctl -q -w net.ipv4.conf.quux0.arp_filter=1
@@ -7398,7 +7420,7 @@ tap_record_is "host-only stop" "ip rule del priority 1169" "ip link show dev quu
 case_head "a host-only start removes every rule left at the link-local rule's priority, and adds none"
 sandbox
 printf '%s\r\n' '--machine quux' > "$RC"
-printf '%s\n' "iif eth0 to $LL_NET priority 1169 blackhole" "iif quux0 to $LL_NET priority 1169 blackhole" \
+printf '%s\n' "iif eth0 to $LL_NET priority 1169 type blackhole" "iif quux0 to $LL_NET priority 1169 type blackhole" \
 	"from all lookup main priority 32766 " > "$WORK/ip.rules"
 if prepare quux-ethernet-device S82quux-ethernet-device; then
 	run_script S82quux-ethernet-device
@@ -7668,11 +7690,11 @@ for adds in 0 1; do
 		which="the first add fails"
 		[ "$adds" = 0 ] || which="the second add fails"
 		if [ "$adds" = 0 ]; then
-			made="ip rule add iif eth0 to $LL_NET priority 1169 blackhole"
+			made="ip rule add iif eth0 to $LL_NET priority 1169 type blackhole"
 			gone="ip rule del priority 1169"
 		else
-			made="ip rule add iif eth0 to $LL_NET priority 1169 blackhole
-ip rule add iif quux0 to $LL_NET priority 1169 blackhole"
+			made="ip rule add iif eth0 to $LL_NET priority 1169 type blackhole
+ip rule add iif quux0 to $LL_NET priority 1169 type blackhole"
 			gone="ip rule del priority 1169
 ip rule del priority 1169"
 		fi

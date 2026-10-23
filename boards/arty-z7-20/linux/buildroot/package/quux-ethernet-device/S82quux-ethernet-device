@@ -90,7 +90,11 @@ LANFILE=/var/run/quux-ethernet-device.lan
 # machine through the board.  The priority is after the local table's rule
 # at 0, so the board's own link-local addresses still answer, and the board's
 # own traffic is not touched, since each rule names an input interface.  The
-# rules need the kernel's policy routing, CONFIG_IP_MULTIPLE_TABLES.
+# rules need the kernel's policy routing, CONFIG_IP_MULTIPLE_TABLES.  The
+# type is written `type blackhole`: BusyBox's `ip rule` takes a rule's type
+# only after the word `type` and refuses a bare `blackhole` as an unknown
+# keyword (networking/libiproute/iprule.c:241-243, :327-337); iproute2 takes
+# both forms.
 LINK_LOCAL_NET=169.254.0.0/16
 RULE_PRIORITY=1169
 
@@ -219,8 +223,8 @@ tap_made() {
 	ip link show dev "$TAP" > /dev/null 2>&1 || tunctl -t "$TAP" > /dev/null || return 1
 	rules_removed
 	if [ -n "${1:-}" ]; then
-		if ! ip rule add iif "$1" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" blackhole ||
-		   ! ip rule add iif "$TAP" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" blackhole; then
+		if ! ip rule add iif "$1" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" type blackhole ||
+		   ! ip rule add iif "$TAP" to "$LINK_LOCAL_NET" priority "$RULE_PRIORITY" type blackhole; then
 			echo "quux-ethernet-device: the link-local rule could not be made, iif $1 and iif $TAP at priority $RULE_PRIORITY; it needs the kernel's policy routing, CONFIG_IP_MULTIPLE_TABLES."
 			return 1
 		fi
