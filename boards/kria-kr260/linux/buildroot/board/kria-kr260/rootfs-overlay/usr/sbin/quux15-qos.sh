@@ -2,19 +2,19 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# QUUX revision 15's main-memory priority on the Kria KR260 (contract G3
-# revision 15, A15b.5): HP0's read and write QoS, `AFIFM2`'s RDQOS at
-# 0xFD380008 and WRQOS at 0xFD38001C (UG1087), set to 0xF after every
-# fabric load, so that the machine's traffic rides at the DDR controller's
-# video-class priority against the scan-out and the processing system.  The
-# firmware leaves both 0.
+# QUUX revision 15's and 16's main-memory priority on the Kria KR260
+# (contract G3 revision 15, A15b.5): HP0's read and write QoS, `AFIFM2`'s
+# RDQOS at 0xFD380008 and WRQOS at 0xFD38001C (UG1087), set to 0xF after
+# every fabric load, so that the machine's traffic rides at the DDR
+# controller's video-class priority against the scan-out and the processing
+# system.  The firmware leaves both 0.
 #
 # Run as root on the board after the bitstream is loaded and before the
 # machine is released.  The image runs it at every boot from
 # /etc/init.d/S78quux15-qos, which asks the fabric first and runs it on
-# revision 15 only; by hand it is for a fabric loaded since.  It writes both
-# registers, reads them back, and prints one line for the board-run log; it
-# exits non-zero when either reads back other than 0xF.
+# revisions 15 and 16 only; by hand it is for a fabric loaded since.  It
+# writes both registers, reads them back, and prints one line for the
+# board-run log; it exits non-zero when either reads back other than 0xF.
 
 set -u
 RDQOS=0xFD380008

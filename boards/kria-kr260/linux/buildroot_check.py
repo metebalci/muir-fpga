@@ -33,11 +33,11 @@
 #     `env save`, `sf` or `fatwrite` anywhere in the script, the served file
 #     or the card's template.
 #
-# **`qos`: HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISION 15 AND ON NOTHING
-# ELSE.**  The overlay's /etc/init.d/S78quux15-qos is run under the host's
+# **`qos`: HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISIONS 15 AND 16 AND ON
+# NOTHING ELSE.**  The overlay's /etc/init.d/S78quux15-qos is run under the host's
 # POSIX shells against a stub `devmem` and a stub `cadr-console`, with
 # cadr-common's real fault.sh and the overlay's real quux15-qos.sh: on
-# revision 15 both registers are written 0xF and read back; on the CADR,
+# revisions 15 and 16 both registers are written 0xF and read back; on the CADR,
 # revision 13, a fabric the console does not know, the fault bitstream and an
 # image with no console nothing is written.  And the overlay carries both
 # files, executable, the defconfig names the overlay, and the hook runs before
@@ -382,6 +382,9 @@ OVERLAY = "board/kria-kr260/rootfs-overlay"
 QOS_HOOK = "etc/init.d/S78quux15-qos"
 QOS_SCRIPT = "usr/sbin/quux15-qos.sh"
 QOS_REGS = (0xFD380008, 0xFD38001C)
+# The revisions whose machine takes HP0 at 0xF: 15, and 16, its machine with
+# the Ethernet device.
+QOS_REVISIONS = (15, 16)
 # The tally's two EMIO words, which fault.sh reads (cadr_board.h's KR260
 # half), and the fault bitstream's word in them.
 QOS_TALLY = (0xFF0A006C, 0xFF0A0070)
@@ -521,11 +524,11 @@ def qos_run(tree, shell, fabric, console=True, stuck=(), action="start"):
 
 
 def qos(tree):
-    """**HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISION 15 AND ON NOTHING
-    ELSE** (contract G3 revision 15, A15b.5): the overlay's init script, run
-    against stubs of `devmem` and of the fabric's identity, writes both
-    registers to 0xF when `cadr-console machine quux 15` says the fabric is
-    revision 15, and writes nothing at all on the CADR, on revision 13, on a
+    """**HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISIONS 15 AND 16 AND ON
+    NOTHING ELSE** (contract G3 revision 15, A15b.5): the overlay's init
+    script, run against stubs of `devmem` and of the fabric's identity, writes
+    both registers to 0xF when `cadr-console machine quux 16` or `machine quux
+    15` says the fabric is revision 16 or 15, and writes nothing at all on the CADR, on revision 13, on a
     fabric the console does not know, on the fault bitstream, or with no
     console program; and the image carries it, ahead of every daemon."""
     overlay = os.path.join(tree, OVERLAY)
@@ -559,27 +562,30 @@ def qos(tree):
     cases = 0
     for sh in shells:
         name = sh[0]
-        # Revision 15: both registers written 0xF, nothing else written,
-        # read back and said.
-        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15")
-        cases += 1
-        if regs != want15:
-            die("%s, QUUX revision 15: HP0's QoS reads %s, wanting 0xF on both:"
-                % (name, {hex(a): hex(v) for a, v in regs.items()}), out)
-        if sorted(int(a, 16) for a, _ in writes) != sorted(QOS_REGS) or \
-                any(int(v, 0) != 0xF for _, v in writes):
-            die("%s, QUUX revision 15: devmem wrote %s, wanting 0xF to each register once"
-                % (name, writes), out)
-        if "machine quux 15" not in calls:
-            die("%s, QUUX revision 15: the console was asked %s, not `machine quux 15`"
-                % (name, calls))
-        if "quux15-qos: HP0 RDQOS 0x0000000F WRQOS 0x0000000F" not in out:
-            die("%s, QUUX revision 15: the boot does not say what the registers read back:"
-                % name, out)
-        if "machine: QUUX revision 15" not in out:
-            die("%s, QUUX revision 15: the boot does not print the identity line:" % name, out)
-        if st != 0:
-            die("%s, QUUX revision 15: the hook exited %d" % (name, st), out)
+        # Revisions 15 and 16: both registers written 0xF, nothing else
+        # written, read back and said.  Revision 16 is revision 15's machine
+        # with the Ethernet device, on the same port.
+        for rev in QOS_REVISIONS:
+            st, out, writes, regs, calls = qos_run(tree, sh, "quux %d" % rev)
+            cases += 1
+            if regs != want15:
+                die("%s, QUUX revision %d: HP0's QoS reads %s, wanting 0xF on both:"
+                    % (name, rev, {hex(a): hex(v) for a, v in regs.items()}), out)
+            if sorted(int(a, 16) for a, _ in writes) != sorted(QOS_REGS) or \
+                    any(int(v, 0) != 0xF for _, v in writes):
+                die("%s, QUUX revision %d: devmem wrote %s, wanting 0xF to each register once"
+                    % (name, rev, writes), out)
+            if "machine quux %d" % rev not in calls:
+                die("%s, QUUX revision %d: the console was asked %s, not `machine quux %d`"
+                    % (name, rev, calls, rev))
+            if "quux15-qos: HP0 RDQOS 0x0000000F WRQOS 0x0000000F" not in out:
+                die("%s, QUUX revision %d: the boot does not say what the registers read back:"
+                    % (name, rev), out)
+            if out.count("machine: QUUX revision %d" % rev) != 1:
+                die("%s, QUUX revision %d: the boot does not print the identity line once:"
+                    % (name, rev), out)
+            if st != 0:
+                die("%s, QUUX revision %d: the hook exited %d" % (name, rev, st), out)
         # Every other fabric: nothing written, the registers still 0.
         for fabric, console, why in (("cadr", True, "the CADR"),
                                      ("quux 13", True, "QUUX revision 13"),
@@ -607,7 +613,7 @@ def qos(tree):
         if writes or st != 0:
             die("%s, stop: devmem wrote %s, status %d" % (name, writes, st), out)
     print("buildroot-kr260: /%s runs /%s at S%02d, before %s: HP0's QoS reads 0xF on QUUX"
-          " revision 15 and nothing is written on the CADR, revision 13, an unknown fabric,"
+          " revisions 15 and 16 and nothing is written on the CADR, revision 13, an unknown fabric,"
           " the fault bitstream or with no console (%d cases, %s)"
           % (QOS_HOOK, QOS_SCRIPT, mine, nums[0][1], cases,
              " and ".join(s[0] for s in shells)))

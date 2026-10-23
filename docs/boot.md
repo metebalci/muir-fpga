@@ -519,10 +519,10 @@ after the kernel started, and starts any controller that died again by
 unbinding and binding its Xilinx glue. The card is then found a few seconds
 later than usual.
 
-**On the Kria KR260, QUUX revision 15's main memory port gets the DDR
+**On the Kria KR260, QUUX revision 15's and 16's main memory port gets the DDR
 controller's video-class priority at every boot.** `/etc/init.d/S78quux15-qos`
-asks the fabric which machine it is (`cadr-console machine quux 15`), and only
-on revision 15 runs `/usr/sbin/quux15-qos.sh`, which writes 0xF to HP0's read
+asks the fabric which machine it is (`cadr-console machine quux 16`, then
+`machine quux 15`), and only on revision 16 or 15 runs `/usr/sbin/quux15-qos.sh`, which writes 0xF to HP0's read
 and write QoS (`AFIFM2`'s RDQOS at 0xFD380008 and WRQOS at 0xFD38001C) and
 prints what they read back. On the CADR, on revision 13 and on the fault
 bitstream it writes nothing, and both registers keep the firmware's 0. It runs

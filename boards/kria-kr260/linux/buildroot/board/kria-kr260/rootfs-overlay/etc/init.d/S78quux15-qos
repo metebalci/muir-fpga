@@ -2,17 +2,20 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# HP0's QoS AT EVERY FABRIC LOAD, ON QUUX REVISION 15 ONLY (contract G3
-# revision 15, A15b.5): /usr/sbin/quux15-qos.sh writes `AFIFM2`'s RDQOS and
-# WRQOS to 0xF and reads them back.  The fabric is loaded by U-Boot just
-# before the kernel, so a boot is a fabric load, and this runs once a boot.
+# HP0's QoS AT EVERY FABRIC LOAD, ON QUUX REVISIONS 15 AND 16 ONLY (contract
+# G3 revision 15, A15b.5; revision 16 is revision 15's machine with the
+# Ethernet device, on the same port): /usr/sbin/quux15-qos.sh writes
+# `AFIFM2`'s RDQOS and WRQOS to 0xF and reads them back.  The fabric is
+# loaded by U-Boot just before the kernel, so a boot is a fabric load, and
+# this runs once a boot.
 #
 # **THE FABRIC SAYS WHICH MACHINE IT IS, NOT THE CARD.**  `cadr-console
-# machine quux 15` reads entry 21 of the readout window, prints the identity
-# line and exits 0 only when the fabric is QUUX revision 15.  On the CADR, on
-# revision 13, on a fabric it does not know, with no cadr-console and on the
-# fault bitstream (asked first, as every init script that touches the fabric
-# does), nothing is written and both registers keep the firmware's 0.
+# machine quux 16` reads entry 21 of the readout window, prints the identity
+# line and exits 0 only when the fabric is QUUX revision 16, and `machine quux
+# 15` the same for revision 15.  On the CADR, on revision 13, on a fabric it
+# does not know, with no cadr-console and on the fault bitstream (asked
+# first, as every init script that touches the fabric does), nothing is
+# written and both registers keep the firmware's 0.
 #
 # S78: before S79usb-hubs, which may wait 16 s, and before S80cadr-disk-packs
 # and every other program that serves the machine.  A boot always goes on:
@@ -33,13 +36,17 @@ start() {
 		echo "quux15-qos: no cadr-console to ask which machine the fabric is; HP0's QoS left as the firmware set it"
 		return 0
 	fi
-	id=$(cadr-console machine quux 15 2>&1)
+	id=$(cadr-console machine quux 16 2>&1)
 	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		id=$(cadr-console machine quux 15 2>&1)
+		rc=$?
+	fi
 	# The identity line, and not the refusal that follows it on any other
 	# fabric: a CADR board is not told at every boot that it is not QUUX.
 	printf '%s\n' "$id" | grep 'machine: ' | grep -v 'NOT THE MACHINE ASKED FOR'
 	if [ "$rc" -ne 0 ]; then
-		echo "quux15-qos: the fabric is not QUUX revision 15; HP0's QoS left as the firmware set it"
+		echo "quux15-qos: the fabric is not QUUX revision 15 or 16; HP0's QoS left as the firmware set it"
 		return 0
 	fi
 	sh "$QOS_SH" ||

@@ -6541,8 +6541,8 @@ BR_KR260_CHECK := boards/kria-kr260/linux/buildroot_check.py
 # is the only place the KR260's half of `cadr/cadr_board.h` is compiled before
 # a board build.  And HP0's QoS hook in the image's overlay
 # (`buildroot_check.py qos`): run against a stub `devmem` and a stub
-# `cadr-console`, it writes 0xF on QUUX revision 15 and nothing on any other
-# fabric.
+# `cadr-console`, it writes 0xF on QUUX revisions 15 and 16 and nothing on any
+# other fabric.
 KR260_LINUX_WORK := $(HOME)/.cache/muir-fpga-kr260-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
                            boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig \
