@@ -4,48 +4,120 @@ SPDX-License-Identifier: GPL-2.0-only
 Subject: [PATCH] net: macb: restart the transmit queues after a link flap
 
 The GEM driver can stall a transmit queue for good when the link goes
-down and up while frames are still in its ring.  On link-up,
-gem_shuffle_tx_one_ring() rotates each ring so that the oldest
-unfinished frame sits at index 0, and macb_mac_link_up() enables the
-transmitter.  Nothing restarts the queue after that: the stack holds it
-stopped on the bytes still in flight, so no new frame comes to write
-TSTART, and the frames behind it are never sent.  Measured on the Zynq
-UltraScale+ GEM (two queues) and the Zynq-7000 GEM (one), each under
-saturating load across a restart of autonegotiation.
+down and up while frames are still in its ring.  macb_mac_link_down()
+masks the TX interrupts and clears TE.  On link-up,
+gem_shuffle_tx_one_ring() rotates each ring so that the oldest frame
+not yet reaped sits at index 0, and macb_mac_link_up() sets TE again.
+Measured on the Zynq UltraScale+ GEM (two queues) and the Zynq-7000 GEM
+(one), each under saturating load across a restart of autonegotiation,
+three states stall a queue, and each needs its own part of this patch.
 
 1. TBQP, the controller's pointer into the ring, is not set back to the
-   ring base, and can stand past the pending frames: measured at
-   link-up, one queue's pointer at index 397 with its pending frames at
-   387 to 396.  The first two hunks write TBQP to the ring base on every
-   path that sets the tail to 0.  They are the upstream patch "net: macb:
-   reprogram TBQP after shuffling the TX ring on link-up" (netdev, July
-   2026, https://lkml.iu.edu/2607.0/11020.html; Fixes: 881a0263d502
-   "net: macb: Shuffle the tx ring before enabling tx"), unchanged but
-   for this kernel's line numbers.
+   ring base.  Both TRMs say clearing TE resets it (UG1085 v2.5, ch. 34,
+   TX Buffers; UG585 v1.7, 16.2.5, Tx Buffers, and the tx_en bit), but
+   its read-back stayed in place after TE was cleared in 13 of 20
+   link-downs on one UltraScale+ queue (none of 20 on the other) and in
+   5 of 25 on the Zynq-7000, and the controller then sat past the
+   pending frames (one queue's pointer at index 397 with its frames at
+   387 to 396).  TBQP is now written to the ring base on every path of
+   the shuffle.  This is the upstream patch "net: macb: reprogram TBQP
+   after shuffling the TX ring on link-up" (netdev, July 2026,
+   https://lkml.iu.edu/2607.0/11020.html; Fixes: 881a0263d502 "net:
+   macb: Shuffle the tx ring before enabling tx"), here also on the path
+   where no rotation is needed, which upstream leaves alone.
 
 2. TSTART is not written, so with the pointer at the frames the
-   transmitter stays idle.  The last hunk writes TSTART once after
-   enabling the transmitter if any queue still holds frames.  It is not
-   from upstream.
+   transmitter stays idle, and the stack, holding the queue stopped on
+   those frames' bytes, sends nothing that would write it.  The last
+   hunk writes TSTART once after TE is set if any queue still holds
+   frames.  It is not from upstream.
 
-Measured on the UltraScale+ GEM: without this patch, and with the first
-half alone, both queues stalled at the first flap; with the second half
-alone 80 flaps of 80 drained, and with both 100 of 100.
+3. A frame the controller sent before TE was cleared has TX_USED set in
+   its first descriptor (the TRMs: written back to the first buffer of a
+   frame once it is transmitted) but is not reaped, the TX interrupts
+   being masked first.  Such frames led a ring at link-up when the
+   link-down was handled late: with 20 ms between the masking and the
+   clearing of TE, at 19 of 20 link-ups on one UltraScale+ ring and 9 of
+   20 on the Zynq-7000; with 30 us, at 11 of 30 on the Zynq-7000, each
+   time followed by frames not yet sent; and with no delay added, on the
+   Zynq-7000 at the first flap without this patch and at the third with
+   parts 1 and 2 alone.  Rotated to the base, the first of them is the
+   descriptor the restarted controller reads: it stops there at once
+   (TXUBR; the TRMs: transmission halts when a descriptor with its used
+   bit set is read), the driver then reaps those frames, and its tail
+   passes the controller's pointer.  Every later TSTART, which
+   macb_tx_restart() writes on each TXUBR, reads the same descriptor: no
+   frame is sent again, and TXUBR interrupts come at 100,000 to 250,000
+   a second.  Under parts 1 and 2 alone this followed each of the three
+   logged link-ups that found such frames, and none of the 71 that did
+   not.  The shuffle now rotates the first frame without TX_USED to the
+   base and leaves the sent frames just behind it, at the end of the
+   ring, where macb_tx_complete() reaps them.  They raise no TCOMP, and
+   only queue 0 has TXUBR (UG1087, int_q1_status; UG1085, Priority
+   Queuing: TXUBR is a resource error, raised once every queue's next
+   descriptor is TX_USED), so a second queue whose frames had all been
+   sent stayed stopped on its byte limit, never reaped: measured at the
+   second flap with 2 ms between the masking and the clearing of TE, and
+   at the first or second with the TX polls held off across the
+   link-down.  The TSTART therefore comes with a run of every queue's TX
+   poll; with the polls so held off, 20 of 20 flaps then drained, such a
+   queue found at 19 of the link-ups.
 
-Not fixed: a third state, in which after the restarted frames were sent
-the pointer is back at the ring base on a used descriptor, behind the
-tail, and TXUBR interrupts come at 100,000 to 250,000 a second.  On the
-UltraScale+ GEM it follows when the link-down is handled 20 ms later
-than it is here (a delay added before TE is cleared), with or without
-this patch.  On the Zynq-7000 GEM it came at the third flap with this
-patch (and without it the queue stalled at the second, idle at the
-ring base), and also with the transmitter halted before TE is cleared.
+Measured with the flap test (autonegotiation restarted under saturating
+UDP load; each queue's in-flight bytes back to 0 within 6 s): without
+this patch both boards stalled at the first flap.  With parts 1 and 2
+alone (this patch's previous form) the UltraScale+ drained 100 of 100
+flaps, but with the link-down handled 20 ms late both stalled in state
+3 (the UltraScale+ at the first flap, the Zynq-7000 at the fifth).
+With this patch every flap drained: 100 of 100 on each board, and 20
+of 20 on each with the link-down handled 20 ms late.  Without a delay,
+the frames still in a ring when TE was cleared were all unsent at
+link-up (20 link-downs on the UltraScale+, 25 on the Zynq-7000), and
+they were sent after the restart.
+
+Not fixed here: macb_mac_link_down() clears TE without bp->lock, and a
+TSTART that macb_start_xmit() writes at the same time can set it again
+(measured twice in about 250 link-downs; the queues drained).
 
 Applied to Buildroot's mainline kernel by BR2_GLOBAL_PATCH_DIR.
 ---
 --- a/drivers/net/ethernet/cadence/macb_main.c
 +++ b/drivers/net/ethernet/cadence/macb_main.c
-@@ -697,7 +697,7 @@ static void gem_shuffle_tx_one_ring(stru
+@@ -675,7 +675,7 @@ static void gem_shuffle_tx_one_ring(stru
+ 	unsigned int head, tail, count, ring_size, desc_size;
+ 	struct macb_tx_skb tx_skb, *skb_curr, *skb_next;
+ 	struct macb_dma_desc *desc_curr, *desc_next;
+-	unsigned int i, cycles, shift, curr, next;
++	unsigned int i, cycles, shift, curr, next, start;
+ 	struct macb *bp = queue->bp;
+ 	unsigned char desc[24];
+ 	unsigned long flags;
+@@ -691,16 +691,33 @@ static void gem_shuffle_tx_one_ring(stru
+ 	ring_size = bp->tx_ring_size;
+ 	count = CIRC_CNT(head, tail, ring_size);
+ 
+-	if (!(tail % ring_size))
+-		goto unlock;
++	/* A frame the controller sent before TE was cleared has TX_USED set
++	 * in its first descriptor but may not have been reaped, as the TX
++	 * interrupts were masked at link-down. The controller starts again
++	 * at the ring base and stops at the first TX_USED descriptor it reads
++	 * there, so rotate the first frame not yet sent to the base and leave
++	 * the sent ones just behind it, at the end of the ring, for
++	 * macb_tx_complete() to reap.
++	 */
++	rmb();
++	for (start = tail; start != head; start++) {
++		if (!(macb_tx_desc(queue, start)->ctrl & MACB_BIT(TX_USED)))
++			break;
++		/* skb is set for the last buffer of the frame */
++		while (!macb_tx_skb(queue, start)->skb && start + 1 != head)
++			start++;
++	}
++
++	if (!(start % ring_size))
++		goto reset_hw_ptr;
+ 
  	if (!count) {
  		queue->tx_head = 0;
  		queue->tx_tail = 0;
@@ -53,29 +125,44 @@ Applied to Buildroot's mainline kernel by BR2_GLOBAL_PATCH_DIR.
 +		goto reset_hw_ptr;
  	}
  
- 	shift = tail % ring_size;
-@@ -746,6 +746,13 @@ static void gem_shuffle_tx_one_ring(stru
+-	shift = tail % ring_size;
++	shift = start % ring_size;
+ 	cycles = gcd(ring_size, shift);
+ 
+ 	for (i = 0; i < cycles; i++) {
+@@ -740,13 +757,19 @@ static void gem_shuffle_tx_one_ring(stru
+ 		       sizeof(struct macb_tx_skb));
+ 	}
+ 
+-	queue->tx_head = count;
+-	queue->tx_tail = 0;
++	queue->tx_head = head - start;
++	queue->tx_tail = tail - start;
+ 
  	/* Make descriptor updates visible to hardware */
  	wmb();
  
+-unlock:
 +reset_hw_ptr:
-+	/* tx_tail was reset to the ring base, so TBQP must be reprogrammed
-+	 * to match; otherwise it keeps pointing at a stale descriptor. Safe
-+	 * to write directly here as TX is still disabled (called from
-+	 * macb_mac_link_up() before TE is set).
++	/* The ring base now holds the first frame not yet sent, or the end
++	 * of the queue, so TBQP must be reprogrammed to match; otherwise it
++	 * keeps pointing at a stale descriptor. Safe to write directly here
++	 * as TX is still disabled (called from macb_mac_link_up() before TE).
 +	 */
 +	queue_writel(queue, TBQP, lower_32_bits(queue->tx_ring_dma));
- unlock:
  	spin_unlock_irqrestore(&queue->tx_ptr_lock, flags);
  }
-@@ -823,6 +830,27 @@ static void macb_mac_link_up(struct phyl
+ 
+@@ -823,6 +846,34 @@ static void macb_mac_link_up(struct phyl
  
  	macb_writel(bp, NCR, ctrl | MACB_BIT(RE) | MACB_BIT(TE));
  
 +	/* Frames queued before the link went down are still in the rings,
 +	 * now at their bases, and the transmitter was enabled idle: start it,
 +	 * since no new frame may come to do so while the stack holds the
-+	 * queues stopped on those frames' bytes.
++	 * queues stopped on those frames' bytes. Frames it sent before TE
++	 * was cleared raise no TCOMP, and only queue 0 can raise TXUBR:
++	 * poll every queue so that those frames are reaped.
 +	 */
 +	if (!(bp->caps & MACB_CAPS_MACB_IS_EMAC)) {
 +		bool pending = false;
@@ -90,6 +177,11 @@ Applied to Buildroot's mainline kernel by BR2_GLOBAL_PATCH_DIR.
 +			spin_lock_irqsave(&bp->lock, flags);
 +			macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
 +			spin_unlock_irqrestore(&bp->lock, flags);
++
++			local_bh_disable();
++			for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue)
++				napi_schedule(&queue->napi_tx);
++			local_bh_enable();
 +		}
 +	}
 +
