@@ -24,6 +24,12 @@ BR2_ARM_ENABLE_NEON=y
 BR2_ARM_ENABLE_VFP=y
 BR2_DL_DIR="$(BR2_EXTERNAL_CADR_PATH)/../../../../vendor/buildroot-dl"
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+# One patch to the kernel, in board/arty-z7-20/patches/linux/, whose header
+# says what it fixes (the network port's transmit queue stalled for good
+# after a link flap) and which half of it is upstream's.  The Kria KR260
+# carries the same one.  boards/arty-z7-20/linux/kernel_patch_check.py holds
+# that the build applied it.
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/patches"
 
 # A prebuilt cross toolchain rather than one built here: glibc, so the C
 # programs the next slice adds meet the libc they would meet anywhere else.

@@ -4218,6 +4218,10 @@ def check_makefile():
     # fault it exists for by running it on the check 3a that read a symbol
     # Kconfig does not write (an unmet `depends on`) as a missing source line:
     # the Arty Z7-20 and the DE25-Nano refused.
+    # `kernel_patches` is Python over the two Zynq boards' defconfigs and the
+    # shared kernel patch directory, with nothing verilated; it was shown to
+    # catch what it exists for by breaking the defconfig line, the directory
+    # and the patch one way at a time (each refused, the tree as it is passing).
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
@@ -4237,7 +4241,7 @@ def check_makefile():
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
-                           "br_force", "br_kconfig", "machine_guard",
+                           "br_force", "br_kconfig", "kernel_patches", "machine_guard",
                            "quux15_replay_quux", "quux15_generator_quux", "quux15_halt_probe_quux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this

@@ -168,7 +168,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
-       $(BUILD)/br_force.pass $(BUILD)/br_kconfig.pass \
+       $(BUILD)/br_force.pass $(BUILD)/br_kconfig.pass $(BUILD)/kernel_patches.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) $(CADR_LAT) \
        muir-pin current
@@ -6328,6 +6328,12 @@ $(BUILD)/br_kconfig.pass: tools/br_kconfig_check.py $(BR_POST_BUILD) $(BR_DEFCON
 # question this one cannot: whether the TARGET holds only what the packages
 # install.  Neither sees the other's fault.
 BR_ROOTFS_CHECK := boards/arty-z7-20/linux/rootfs_check.py
+# The Zynq boards' kernel patch (`boards/arty-z7-20/linux/kernel_patch_check.py`
+# says what it holds): before a build, each defconfig names the shared patch
+# directory and the directory holds exactly the patches the check names; after
+# one, the kernel was built with them applied.
+BR_PATCH_CHECK := boards/arty-z7-20/linux/kernel_patch_check.py
+BR_PATCHES := $(shell find $(BR_EXTERNAL)/board/arty-z7-20/patches -type f 2>/dev/null)
 # Not written as $(MAKE) in the recipe: GNU make runs any recipe line that
 # names $(MAKE) even under -n, so `make -n buildroot` would start the build.
 # The inner make gets a clean MAKEFLAGS anyway (see above), so nothing the
@@ -6357,6 +6363,15 @@ $(BUILD)/rootfs_packages.pass: boards/arty-z7-20/linux/rootfs_check.py \
 	python3 $(BR_ROOTFS_CHECK) packages $(BR_EXTERNAL)
 	@touch $@
 
+# The Zynq boards' kernel patch, before any build: both defconfigs and the
+# shared patch directory, as BR_PATCH_CHECK above says.
+$(BUILD)/kernel_patches.pass: $(BR_PATCH_CHECK) $(BR_PATCHES) \
+        boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig \
+        boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig | $(BUILD)
+	@python3 $(BR_PATCH_CHECK) patches $(BR_EXTERNAL) boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig
+	@python3 $(BR_PATCH_CHECK) patches $(BR_EXTERNAL) boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig
+	@touch $@
+
 .PHONY: buildroot buildroot-check buildroot-packages-check buildroot-rebuild
 
 # The generated start-up routine has to be what boards/arty-z7-20/vivado/ps7_init.ops gives
@@ -6364,6 +6379,7 @@ $(BUILD)/rootfs_packages.pass: boards/arty-z7-20/linux/rootfs_check.py \
 # Vivado, so it runs anywhere the repository does.
 buildroot-check: buildroot-packages-check
 	@python3 $(BR_GEN_PS7) --check
+	@python3 $(BR_PATCH_CHECK) patches $(BR_EXTERNAL) boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig
 
 # Both ways the derivation above can come out short are failures here rather
 # than quiet omissions.  A .mk that declares no site method at all cannot be
@@ -6395,6 +6411,7 @@ buildroot: buildroot-check
 	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@python3 $(BR_PATCH_CHECK) patched $(BR_EXTERNAL) $(BR_OUT)
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL) $(BR_OUT) $(BR_OUT)/images/rootfs.cpio.uboot
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
@@ -6412,6 +6429,7 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	$(call BR_FORCE,$(BR_OUT))
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@python3 $(BR_PATCH_CHECK) patched $(BR_EXTERNAL) $(BR_OUT)
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL) $(BR_OUT) $(BR_OUT)/images/rootfs.cpio.uboot
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
@@ -6572,6 +6590,7 @@ $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
 buildroot-kr260-check: buildroot-packages-check
 	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
 	@python3 $(BR_KR260_CHECK) qos boards/kria-kr260/linux/buildroot
+	@python3 $(BR_PATCH_CHECK) patches $(BR_EXTERNAL) boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig
 
 buildroot-kr260: buildroot-kr260-check
 	@test -f $(BR_TARBALL) || { \
@@ -6585,6 +6604,7 @@ buildroot-kr260: buildroot-kr260-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260) BR2_EXTERNAL=$(BR_EXTERNAL_KR260) kria_kr260_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260)
 	@python3 $(BR_KR260_CHECK) configs boards/kria-kr260/linux/buildroot $(BR_OUT_KR260)
+	@python3 $(BR_PATCH_CHECK) patched $(BR_EXTERNAL) $(BR_OUT_KR260)
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_KR260) $(BR_OUT_KR260) $(BR_OUT_KR260)/images/rootfs.cpio.uboot
 	@echo "buildroot-kr260: images in $(BR_OUT_KR260)/images:"
 	@ls -l $(BR_OUT_KR260)/images/ | grep -v '^total'
@@ -6594,6 +6614,7 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 	$(call BR_FORCE,$(BR_OUT_KR260))
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260)
 	@python3 $(BR_KR260_CHECK) configs boards/kria-kr260/linux/buildroot $(BR_OUT_KR260)
+	@python3 $(BR_PATCH_CHECK) patched $(BR_EXTERNAL) $(BR_OUT_KR260)
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_KR260) $(BR_OUT_KR260) $(BR_OUT_KR260)/images/rootfs.cpio.uboot
 	@echo "buildroot-kr260: images in $(BR_OUT_KR260)/images:"
 	@ls -l $(BR_OUT_KR260)/images/ | grep -v '^total'

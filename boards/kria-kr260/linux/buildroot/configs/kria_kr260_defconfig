@@ -36,6 +36,11 @@ BR2_aarch64=y
 BR2_cortex_a53=y
 BR2_DL_DIR="$(BR2_EXTERNAL_CADR_PATH)/../../../../vendor/buildroot-dl"
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+# One patch to the kernel, the Arty Z7-20's, from the shared tree: its
+# header says what it fixes (the network port's transmit queues stalled for
+# good after a link flap) and which half of it is upstream's.
+# boards/arty-z7-20/linux/kernel_patch_check.py holds that the build applied it.
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/patches"
 
 # The same prebuilt toolchain as the DE25-Nano's: aarch64, glibc.
 BR2_TOOLCHAIN_EXTERNAL=y

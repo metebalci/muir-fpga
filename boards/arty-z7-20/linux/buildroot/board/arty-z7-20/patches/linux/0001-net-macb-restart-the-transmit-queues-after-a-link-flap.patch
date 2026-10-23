@@ -1,0 +1,98 @@
+SPDX-FileCopyrightText: 2026 Mete Balci
+SPDX-License-Identifier: GPL-2.0-only
+
+Subject: [PATCH] net: macb: restart the transmit queues after a link flap
+
+The GEM driver can stall a transmit queue for good when the link goes
+down and up while frames are still in its ring.  On link-up,
+gem_shuffle_tx_one_ring() rotates each ring so that the oldest
+unfinished frame sits at index 0, and macb_mac_link_up() enables the
+transmitter.  Nothing restarts the queue after that: the stack holds it
+stopped on the bytes still in flight, so no new frame comes to write
+TSTART, and the frames behind it are never sent.  Measured on the Zynq
+UltraScale+ GEM (two queues) and the Zynq-7000 GEM (one), each under
+saturating load across a restart of autonegotiation.
+
+1. TBQP, the controller's pointer into the ring, is not set back to the
+   ring base, and can stand past the pending frames: measured at
+   link-up, one queue's pointer at index 397 with its pending frames at
+   387 to 396.  The first two hunks write TBQP to the ring base on every
+   path that sets the tail to 0.  They are the upstream patch "net: macb:
+   reprogram TBQP after shuffling the TX ring on link-up" (netdev, July
+   2026, https://lkml.iu.edu/2607.0/11020.html; Fixes: 881a0263d502
+   "net: macb: Shuffle the tx ring before enabling tx"), unchanged but
+   for this kernel's line numbers.
+
+2. TSTART is not written, so with the pointer at the frames the
+   transmitter stays idle.  The last hunk writes TSTART once after
+   enabling the transmitter if any queue still holds frames.  It is not
+   from upstream.
+
+Measured on the UltraScale+ GEM: without this patch, and with the first
+half alone, both queues stalled at the first flap; with the second half
+alone 80 flaps of 80 drained, and with both 100 of 100.
+
+Not fixed: a third state, in which after the restarted frames were sent
+the pointer is back at the ring base on a used descriptor, behind the
+tail, and TXUBR interrupts come at 100,000 to 250,000 a second.  On the
+UltraScale+ GEM it follows when the link-down is handled 20 ms later
+than it is here (a delay added before TE is cleared), with or without
+this patch.  On the Zynq-7000 GEM it came at the third flap with this
+patch (and without it the queue stalled at the second, idle at the
+ring base), and also with the transmitter halted before TE is cleared.
+
+Applied to Buildroot's mainline kernel by BR2_GLOBAL_PATCH_DIR.
+---
+--- a/drivers/net/ethernet/cadence/macb_main.c
++++ b/drivers/net/ethernet/cadence/macb_main.c
+@@ -697,7 +697,7 @@ static void gem_shuffle_tx_one_ring(stru
+ 	if (!count) {
+ 		queue->tx_head = 0;
+ 		queue->tx_tail = 0;
+-		goto unlock;
++		goto reset_hw_ptr;
+ 	}
+ 
+ 	shift = tail % ring_size;
+@@ -746,6 +746,13 @@ static void gem_shuffle_tx_one_ring(stru
+ 	/* Make descriptor updates visible to hardware */
+ 	wmb();
+ 
++reset_hw_ptr:
++	/* tx_tail was reset to the ring base, so TBQP must be reprogrammed
++	 * to match; otherwise it keeps pointing at a stale descriptor. Safe
++	 * to write directly here as TX is still disabled (called from
++	 * macb_mac_link_up() before TE is set).
++	 */
++	queue_writel(queue, TBQP, lower_32_bits(queue->tx_ring_dma));
+ unlock:
+ 	spin_unlock_irqrestore(&queue->tx_ptr_lock, flags);
+ }
+@@ -823,6 +830,27 @@ static void macb_mac_link_up(struct phyl
+ 
+ 	macb_writel(bp, NCR, ctrl | MACB_BIT(RE) | MACB_BIT(TE));
+ 
++	/* Frames queued before the link went down are still in the rings,
++	 * now at their bases, and the transmitter was enabled idle: start it,
++	 * since no new frame may come to do so while the stack holds the
++	 * queues stopped on those frames' bytes.
++	 */
++	if (!(bp->caps & MACB_CAPS_MACB_IS_EMAC)) {
++		bool pending = false;
++
++		for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
++			spin_lock_irqsave(&queue->tx_ptr_lock, flags);
++			if (queue->tx_head != queue->tx_tail)
++				pending = true;
++			spin_unlock_irqrestore(&queue->tx_ptr_lock, flags);
++		}
++		if (pending) {
++			spin_lock_irqsave(&bp->lock, flags);
++			macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
++			spin_unlock_irqrestore(&bp->lock, flags);
++		}
++	}
++
+ 	netif_tx_wake_all_queues(ndev);
+ }
+ 
