@@ -47,7 +47,10 @@ BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_STABLE=y
 # in mainline's SOM tree.  The network port is the J10C jack, GEM1, which the
 # kernel names eth1: both of the processing system's Ethernet controllers are
 # enabled in the carrier's tree, GEM0 at 0xFF0B_0000 on J10D first, and the
-# kernel names them in that order.
+# kernel names them in that order.  J10D is not used: GEM0 is SGMII through
+# the PS-GTR, which this design does not set up, and with the cable there the
+# link comes up at 1 Gb/s while the kernel cannot make the port's 125 MHz
+# clock and the port receives nothing, so DHCP gets no lease.
 BR2_TARGET_GENERIC_HOSTNAME="cadr"
 BR2_TARGET_GENERIC_ISSUE="the Kria KR260 beside the CADR"
 BR2_TARGET_GENERIC_ROOT_PASSWD="root"

@@ -58,9 +58,13 @@ setenv fdt_high 0xffffffffffffffff
 setenv initrd_high 0xffffffffffffffff
 setenv cadr_bootargs 'console=ttyPS1,115200 earlycon'
 
-# The network port is GEM1, the J10C jack.  GEM0, which the factory
-# environment makes the active port, is not connected here, and every network
-# command would first wait out its auto-negotiation.
+# The network port is GEM1, the J10C jack.  GEM0, the J10D jack, which the
+# factory environment makes the active port, is SGMII through the PS-GTR,
+# which this design does not set up: with the cable on J10D the link comes up
+# at 1 Gb/s, but the kernel cannot make the port's 125 MHz clock ("unable to
+# generate target frequency: 125000000 Hz") and the port receives nothing, so
+# DHCP gets no lease.  With no cable on GEM0, every network command on it
+# would first wait out its auto-negotiation.
 setenv ethact ethernet@ff0c0000
 
 # The device this script came from, which the distro scan names.  Run by hand
