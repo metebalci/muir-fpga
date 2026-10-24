@@ -9,7 +9,7 @@ text cannot say:
 
   - that a machine's node COMPILES to what it says: a tree whose cells are
     counted wrong, whose `no-map` is misspelt, or which keeps the CADR's node
-    beside revision 13's, reads the same to a regular expression and means
+    beside QUUX's, reads the same to a regular expression and means
     something else to the kernel and to U-Boot;
   - that each machine's tree reaches its builds: the kernel's, U-Boot's, and
     the card's pairing of the tree with the machine's bitstream and loader;
@@ -18,13 +18,14 @@ text cannot say:
     what it places clear of the node, while the bitstream it loaded is already
     live; the loads at the fixed addresses of its environment it does not move.
 
-**EACH MACHINE HAS ITS OWN TREES** (docs/linux.md): the CADR's and QUUX
-revision 12's reserve the CADR's region (`cadr-reserved.dtsi`); revision 13's
-reserve from its main memory to the end of the disk pack program's records
-(`quux13-reserved.dtsi`, after the CADR's, which it takes out), on the Arty
-Z7-20 and the DE25-Nano.  A card carries one machine: its bitstream, its
-kernel's tree under the board tree's name, and its loader, whose own tree is
-the machine's.
+**EACH MACHINE HAS ITS OWN TREES** (docs/linux.md): the CADR's reserve the
+CADR's region (`cadr-reserved.dtsi`); QUUX's reserve from its main memory to
+the end of the disk pack program's records (`quux13-reserved.dtsi`, named for
+the revision the trees were first made for, after the CADR's, which it takes
+out), on the Arty Z7-20, the DE25-Nano and the Kria KR260.  The card that
+carries QUUX, revision 16, is selected by `REVISION=13`.  A card carries one
+machine: its bitstream, its kernel's tree under the board tree's name, and
+its loader, whose own tree is the machine's.
 
 WHAT IT DOES, machine by machine, with no board and no Buildroot:
 
@@ -36,7 +37,7 @@ WHAT IT DOES, machine by machine, with no board and no Buildroot:
      base, its reg the package's region for that machine, inside the memory
      and clear of every other reserved node.
   2. Holds that the machine's trees reach its builds: the kernel's copy hook,
-     U-Boot's list of tree files, revision 13's own tree including the board's
+     U-Boot's list of tree files, QUUX's own tree including the board's
      and then its reservation, its -u-boot.dtsi including the board's, the
      hook that makes its loader, and the card script's REVISION=13 staging
      that tree and that loader.
@@ -90,7 +91,7 @@ FAMILIES = {
             ("boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig",
              "boards/arty-z7-20/linux/buildroot/external.mk", "CADR_LINUX_COPY_RESERVED_DTSI"),
         ],
-        # Revision 13 runs on the first build's board alone.
+        # QUUX's trees are held on the first build's board alone.
         "quux13": {
             "defconfig": "boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig",
             "external": "boards/arty-z7-20/linux/buildroot/external.mk",
@@ -331,7 +332,7 @@ def check_builds(root, fam):
                 or not re.search(r"^LINUX_PRE_BUILD_HOOKS \+= %s$" % hook, e, re.M):
             disagree("%s: the kernel's tree is not given cadr-reserved.dtsi by %s" % (external, hook))
     q = f["quux13"]
-    # Revision 13's own tree: the board's, then its reservation.
+    # QUUX's own tree: the board's, then its reservation.
     dts = read(root, q["dts"])
     incs = re.findall(r'^#include "([^"]+)"', dts, re.M)
     if incs != [q["board_dts"], "quux13-reserved.dtsi"]:
@@ -352,7 +353,7 @@ def check_builds(root, fam):
         disagree("%s: the kernel's tree is not given quux13-reserved.dtsi" % q["external"])
     made = [n for n, b in hooks if "quux13-loader.sh" in b and q["arm"] in b]
     if not made or not re.search(r"^UBOOT_POST_BUILD_HOOKS \+= %s$" % made[0], e, re.M):
-        disagree("%s: no U-Boot hook makes revision 13's loader for %s" % (q["external"], q["arm"]))
+        disagree("%s: no U-Boot hook makes QUUX's loader for %s" % (q["external"], q["arm"]))
     if not any(q["loader"] in b and "BINARIES_DIR" in b for n, b in hooks):
         disagree("%s: no hook installs %s" % (q["external"], q["loader"]))
     # The card's pairing: REVISION=13 stages that tree and that loader.

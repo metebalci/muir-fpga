@@ -129,30 +129,7 @@ module cadr_memory_path #(
     // `LMTV` zero, and then the color addresses give the NXM whatever the
     // console asks for --- which is a machine with no color board, exactly
     // as `busint::decode` describes one.
-    parameter int LMTV = 1,
-
-    // "cadr" or "quux", from `cadr_machine.sv`: which machine's Xbus I/O
-    // space the three decodes below describe, and which display board is
-    // the first: the CADR's SIMPLE or LISPM TV, `cadr_tv.sv`, or QUUX's video
-    // controller, `quux_video.sv`, of `VIDEO_WORDS` words.
-    parameter string MACHINE = "cadr",
-    parameter int unsigned VIDEO_WORDS = 40960,
-    // QUUX's microcycle in ticks, `cadr_machine.sv`'s `SYNC_K`: a device
-    // register's cycle is acknowledged this long after its grant
-    // (`quux_mem_port.sv`).  Unread on the CADR.
-    parameter int unsigned SYNC_K = 4,
-    // 32; or 40 on QUUX, revision 13: its 28-bit space and its memory port
-    // with packed storage at `QUUX13_MAIN_BASE` (`quux_mem_port.sv`).
-    parameter int unsigned WORD_BITS = 32,
-    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,  // 0: `cadr_ddr_map::QUUX13_MAIN_BASE`
-    // 13, or revision 14's 29-bit bus address with the device window at
-    // `<28>` (A14.1) and its memory system's side seam into the port.
-    parameter int unsigned REVISION = 13,
-    localparam bit          REV13      = MACHINE == "quux" && WORD_BITS > 32,
-    localparam bit          PAGED      = REV13 && REVISION >= 14,
-    localparam int unsigned PHYS_BITS  = PAGED ? 29 : REV13 ? 28 : 22,
-    localparam int unsigned VADDR_BITS = PAGED ? 32 : REV13 ? 28 : 24,
-    localparam int unsigned RLINE_BITS = REV13 ? 320 : 128
+    parameter int LMTV = 1
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -166,16 +143,16 @@ module cadr_memory_path #(
     input  var logic        mclk,         // MCLK7, the microcycle boundary
     input  var logic        n_memrq,      // -MEMRQ
     input  var logic        wrcyc,        // WRCYC
-    input  var logic [PHYS_BITS-1:0] phys,  // -PMA21..8 and -VMA7..0; 28 bits on revision 13
-    input  var logic [WORD_BITS-1:0] wdata, // MEM out of the cpu, the whole word
+    input  var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
+    input  var logic [31:0] wdata,        // MEM out of the cpu
     output var logic        n_memgrant,   // -MEMGRANT
     output var logic        n_memack,     // -MEMACK
     output var logic        n_loadmd,     // -LOADMD
-    output var logic [WORD_BITS-1:0] rdata, // MEM into the cpu, the whole word
+    output var logic [31:0] rdata,        // MEM into the cpu
     output var logic        timed_out,    // NXM TIMEOUT
 
-    // How many 64K-word memory boards are fitted: 1 to 60, or 1 to 1,024 on
-    // revision 13 (`cadr_xbus_decode.sv`).
+    // How many 64K-word memory boards are fitted: 1 to 60
+    // (`cadr_xbus_decode.sv`).
     input  var logic [10:0] boards,
     // **WHETHER MAIN MEMORY ALWAYS ANSWERS A CYCLE IT TAKES**: up on a board
     // whose main memory is DDR behind the processing system's bridge, down on
@@ -245,16 +222,14 @@ module cadr_memory_path #(
 
     // The disk controller's memory channel, the second master on this bus.
     // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
-    // main memory does not answer for that address.  On revision 13 the
-    // address is 28 bits and the word 40, block-disk's pages of packed
-    // storage (`quux_block_disk.sv`), which the memory port packs.
+    // main memory does not answer for that address.
     input  var logic        ch_req,
     input  var logic        ch_write,
-    input  var logic [PHYS_BITS-1:0] ch_addr,
-    input  var logic [WORD_BITS-1:0] ch_wdata,
+    input  var logic [21:0] ch_addr,
+    input  var logic [31:0] ch_wdata,
     output var logic        ch_done,
     output var logic        ch_nxm,
-    output var logic [WORD_BITS-1:0] ch_rdata,
+    output var logic [31:0] ch_rdata,
 
     // What else the decode made of the address, so that a cycle nothing
     // answers can say why rather than merely time out.
@@ -292,14 +267,14 @@ module cadr_memory_path #(
     // processor's and `cadr_machine.sv` reads them where they are made.
     //
     // `cpu_memory_o` is `is_memory` with every frame buffer the bridge
-    // answers, `tv_fb`, `tvc_fb` and QUUX's `video_fb`, and NOT `is_memory`
+    // answers, `tv_fb` and `tvc_fb`, and NOT `is_memory`
     // alone, because a display's frame buffer is this bridge at a second base:
     // a frame-buffer cycle decodes as `device` and issues a transaction
     // anyway, and an audit that did not know that would fault on the first
     // pixel the machine ever painted.  **It is `bus_sel`'s processor arm, term
     // for term**, and a window added to one and not the other is the defect:
-    // `video_fb` was, and the audit counted every video controller cycle of
-    // `quux_tv` as a fault while every check stayed green.
+    // a frame buffer once was, and the audit counted every one of its cycles
+    // as a fault while every check stayed green.
     //
     // `bus_changing_o` is the idle tick this module already inserts at every
     // change of owner.  The audit uses it to close one cycle and open the
@@ -543,108 +518,10 @@ module cadr_memory_path #(
     output var logic        mem_req,
     output var logic        mem_write,
     output var logic [31:0] mem_addr,
-    output var logic [WORD_BITS-1:0] mem_wdata,
+    output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
-    input  var logic [31:0] mem_rdata,
-    // **QUUX'S LINE FILL**: `mem_line` asks four words at a 16-byte
-    // boundary, two 64-bit beats, and they come back on `mem_rline`, the
-    // lowest address in bits 31:0.  The CADR never asks one.
-    output var logic        mem_line,
-    output var logic [2:0]  mem_beats,
-    output var logic        mem_wide,
-    input  var logic [RLINE_BITS-1:0] mem_rline,
-
-    // --- QUUX'S MEMORY PORT (contract Q6), `quux_mem_port.sv`: block-disk
-    // wrote a register, so the cache goes at the next grant; the cycle is
-    // main memory's, for the processor's release; and the port's state for
-    // the host.  Tied off, and unread, on the CADR.
-    input  var logic        quux_invalidate,
-    output var logic        cached,
-    output var logic        port_drained,
-    output var logic [31:0] cache_hits,
-    output var logic [31:0] cache_misses,
-    // Revision 12's cache-only prefetch, `quux_mem_port.sv`'s, between the
-    // processor and the port.  Tied off, and unread, on the CADR.
-    input  var logic        pf_fetch,
-    input  var logic [VADDR_BITS-1:0] pf_vaddr,
-    input  var logic        pf_drop,
-    output var logic        pf_nx_v,
-    output var logic [VADDR_BITS-1:0] pf_nx_vaddr,
-    output var logic [PHYS_BITS-1:0]  pf_nx_phys,
-    output var logic [WORD_BITS-1:0]  pf_nx_word,
-    output var logic        pf_nx_fetch_v,
-    output var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr,
-    // The Xbus bridge's own seam, which on QUUX is the uncached requester
-    // and not main memory's: what the transaction audit watches there.
-    output var logic        br_req_o,
-    output var logic        br_write_o,
-    output var logic [31:0] br_addr_o,
-    output var logic [31:0] br_wdata_o,
-    output var logic        br_done_o,
-
-    // --- QUUX'S REGISTER PAGE (contract Q2 and Q4), which is
-    // `quux_feature_page.sv` in `cadr_machine.sv`, reaching three things that
-    // live here: the bus errors (word 101, `cadr_busint_regs.sv`), error stop
-    // (word 102, `cadr_spy_registers.sv`) and the Chaosnet interface (words
-    // 140-147, `cadr_io_board.sv`, whose port says what each wire is).  And
-    // the I/O board's switches for QUUX's mouse word.  Tied off, and unread,
-    // on the CADR.
-    output var logic [2:0]  page_err,
-    input  var logic        page_err_clear,
-    input  var logic        page_errstop_we,
-    input  var logic        page_errstop,
-    input  var logic        page_ch_land,
-    input  var logic        page_ch_wr,
-    input  var logic [2:0]  page_ch_which,
-    input  var logic [15:0] page_ch_wdata,
-    output var logic [15:0] page_ch_rdata,
-    output var logic        chaos_ireq,
-    output var logic [2:0]  mouse_buttons,
-    // The video controller's black-on-white, the one bit of its mode, for the
-    // readout (a checkpoint's `Tv::mode`); zero on the CADR.
-    output var logic        video_bow_o,
-
-    // Revision 14's side seam (`quux_mmu.sv` to `quux_mem_port.sv`).
-    input  var logic        sd_look,
-    input  var logic [28:0] sd_phys,
-    output var logic        sd_ready,
-    output var logic        sd_walk_ready,
-    output var logic        sd_grant_ready,
-    output var logic signed [10:0] sd_ack_at,
-    output var logic        sd_hit,
-    output var logic [39:0] sd_word,
-    output var logic        sd_hit_live,
-    output var logic        sd_h1_live,
-    output var logic [39:0] sd_word0_live,
-    output var logic [39:0] sd_word1_live,
-    input  var logic        sd_commit,
-    input  var logic        sd_wr,
-    input  var logic [39:0] sd_wdata,
-    input  var logic [29:0] sd_wbits,
-    input  var logic signed [10:0] sd_until,
-    output var logic signed [10:0] sd_done,
-    output var logic        sd_fill_v,
-    output var logic [39:0] sd_fill_word,
-    output var logic        sd_wdone,
-    input  var logic        sd_relook,
-    input  var logic        wb_hold,
-    input  var logic        wb_rel_v,
-    input  var logic        wb_rel_now,
-    input  var logic signed [10:0] wb_rel,
-    input  var logic signed [10:0] wb_rel_q
+    input  var logic [31:0] mem_rdata
 );
-
-  // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
-  // never sends a cycle of the processor's there (`cadr_xbus_decode.sv`), and
-  // on QUUX the slaves the Unibus reached are cut off it here: the I/O board,
-  // whose Chaosnet interface and mouse QUUX reaches through its register page
-  // instead, its serial line tied off, and the bus interface's registers,
-  // whose error flops alone QUUX keeps for the page's word 101; and the debug
-  // cable, a Unibus master, which QUUX has no connector for.  What stays is
-  // the diagnostic registers and the console's path to them, the host's
-  // view: the spy is the host's port on QUUX (`rtl/plumbing/cadr_console.sv`).
-  // The CADR keeps all of it.
-  localparam bit QUUX = MACHINE == "quux";
 
   logic is_memory;
   logic dev_ack, memory_ack;
@@ -747,8 +624,6 @@ module cadr_memory_path #(
   localparam logic [7:0] NOT_FREE = 8'o100;
 
   logic [7:0]  regs_err_status;   // the seven this board holds
-  // QUUX's word 101: `UB MAP ERROR`, `UB NXM ERROR`, `XB NXM ERROR`.
-  assign page_err = {regs_err_status[5], regs_err_status[3], regs_err_status[0]};
   logic        busint_busy;       // `-FREE`, inverted
   logic [7:0]  dbg_err_status;
   assign dbg_err_status = regs_err_status | (busint_busy ? NOT_FREE : 8'd0);
@@ -764,7 +639,7 @@ module cadr_memory_path #(
   cadr_dbgin dbgin (
       .clk             (clk),
       .rst             (dbg_rst),
-      .dbg_in_req      (QUUX ? 1'b0 : dbg_in_req),
+      .dbg_in_req      (dbg_in_req),
       .dbg_in_wr       (dbg_in_wr),
       .dbg_in_a        (dbg_in_a),
       .dbd_in          (dbd_in),
@@ -882,7 +757,7 @@ module cadr_memory_path #(
   logic color_fitted;
   assign color_fitted = (LMTV != 0) && color_tv;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .REVISION(REVISION)) decode (
+  cadr_xbus_decode decode (
       .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
@@ -904,9 +779,7 @@ module cadr_memory_path #(
   logic ch_memory_c, ch_memory;
   logic ch_device_c, ch_nxm_c, ch_unibus_c;
 
-  // On revision 13 it is the 28-bit space's, and the channel's view of it,
-  // main memory alone (`cadr_xbus_decode.sv`'s `CHANNEL`).
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .REVISION(REVISION), .CHANNEL(1)) ch_decode (
+  cadr_xbus_decode ch_decode (
       .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
@@ -941,7 +814,7 @@ module cadr_memory_path #(
   logic        mp_own, mp_ack_q, mp_memory, mp_memory_c;
   logic        mp_device_c, mp_nxm_c, mp_unibus_c;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) mp_decode (
+  cadr_xbus_decode mp_decode (
       .color_tv(color_fitted),
       .phys  (map_addr),
       .boards(boards),
@@ -1002,20 +875,16 @@ module cadr_memory_path #(
   logic [21:0] bus_phys;
   logic [31:0] bus_wdata;
   logic        bus_write, bus_rq, bus_sel, bus_display, bus_display_color;
-  // The processor's arm of the bridge, which QUUX has not got (below): its
-  // address, word and request reach nothing there, so that no path runs
-  // from the processor through the bridge into the memory's adapter.
+  // The processor's arm of the bridge: its address, word and request.
   logic [21:0] br_cpu_phys;
   logic [31:0] br_cpu_wdata;
   logic        br_cpu_write, br_cpu_rq;
-  assign br_cpu_phys  = QUUX ? 22'd0 : phys[21:0];
-  assign br_cpu_wdata = QUUX ? 32'd0 : wdata[31:0];
-  assign br_cpu_write = QUUX ? 1'b0  : cpu_write;
-  assign br_cpu_rq    = QUUX ? 1'b0  : cpu_rq;
-  // Revision 13's channel reaches the port past the bridge's address and
-  // word (below): these are the Xbus's 22 bits and 32.
-  assign bus_phys  = ch_own ? ch_addr[21:0] : mp_own ? map_addr  : br_cpu_phys;
-  assign bus_wdata = ch_own ? ch_wdata[31:0] : mp_own ? map_wdata : br_cpu_wdata;
+  assign br_cpu_phys  = phys;
+  assign br_cpu_wdata = wdata;
+  assign br_cpu_write = cpu_write;
+  assign br_cpu_rq    = cpu_rq;
+  assign bus_phys  = ch_own ? ch_addr : mp_own ? map_addr  : br_cpu_phys;
+  assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : br_cpu_wdata;
   assign bus_write = ch_own ? ch_write : mp_own ? map_write : br_cpu_write;
   assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
   // The bridge answers main memory and the display boards' frame buffers, at
@@ -1024,13 +893,8 @@ module cadr_memory_path #(
   // registers.  The two windows are disjoint by construction --- the boards
   // are strapped to two 32,768-word slots --- so `bus_display_color` picks
   // between them and never both.
-  //
-  // **ON QUUX NOTHING OF THE PROCESSOR'S IS ON THE BRIDGE** (contracts Q6
-  // and Q7): main memory and the video controller's frame buffer are the
-  // memory port's, through its cache, and the device registers are the
-  // register decode's, so the bridge carries block-disk's transfers alone.
   logic cpu_bridged;
-  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
+  assign cpu_bridged       = is_memory || tv_fb || tvc_fb;
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory : cpu_bridged;
   assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
   assign bus_display_color = !ch_own && !mp_own && tvc_fb;
@@ -1042,10 +906,7 @@ module cadr_memory_path #(
   // this is the channel's equivalent, and it costs a tick a word.
   assign ch_done  = ch_own && ch_ack_q;
   assign ch_nxm   = ch_own && !ch_memory;
-  // Revision 13's word is the whole word from the port, held as the bridge
-  // holds its own (below, `g_quux_port`).
-  logic [WORD_BITS-1:0] ch_word13;
-  assign ch_rdata = REV13 ? ch_word13 : WORD_BITS'(memory_rdata);
+  assign ch_rdata = memory_rdata;
 
   // The map's window, the same shape and for the same reason: its word is a
   // tick behind main memory's acknowledgment because the bridge's `rdata` is
@@ -1131,203 +992,41 @@ module cadr_memory_path #(
     end
   end
 
-  // **ON QUUX THE PROCESSOR'S CYCLE IS THE MEMORY PORT'S, AND THERE IS NO
-  // BUS INTERFACE AND NO DEVICE BUS** (contracts Q6 and Q7, muir's
-  // `memory_port::MemoryPort` in place of `busint::Busint`): main memory and
-  // the video controller's frame buffer through the cache on its own port,
-  // the device registers by the register decode in two microcycles, and an
-  // address nothing answers failing at once.  `quux_mem_port.sv` says the rest.  The
-  // bridge below then carries block-disk's transfers alone, and asks main
-  // memory through the port as its uncached requester.  The CADR keeps its
-  // bus interface, untouched.  Revision 13's decode puts the frame buffer
-  // window on the memory bus, so the port tells memory from a register by
-  // the decode's `is_memory` and `device` alone.
+  // The bus interface, `cadr_busint_xbus.sv`, takes the processor's cycle;
+  // the bridge below answers main memory, and this is its seam to main
+  // memory's adapter.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
-  logic [WORD_BITS-1:0] br_word;   // the port's word for the uncached requester
-  logic [WORD_BITS-1:0] port_word;
-  assign br_req_o   = br_req;
-  assign br_write_o = br_write;
-  assign br_addr_o  = br_addr;
-  assign br_wdata_o = br_wdata;
-  assign br_done_o  = br_done;
 
-  if (QUUX) begin : g_quux_port
-    quux_mem_port #(.K(SYNC_K), .WORD_BITS(WORD_BITS), .MAIN13_BASE(QUUX13_MAIN_BASE), .PAGED(PAGED)) port (
-        .clk        (clk),
-        .rst        (rst),
-        .mclk       (mclk),
-        .n_memrq    (n_memrq),
-        .wrcyc      (wrcyc),
-        .phys       (phys),
-        .wdata      (wdata),
-        // Revision 13's decode puts the window on the memory bus itself.
-        .is_memory  (is_memory),
-        .is_device  (device),
-        .n_memgrant (n_memgrant),
-        .n_memack   (n_memack),
-        .n_loadmd   (n_loadmd),
-        .timed_out  (timed_out),
-        .cached     (cached),
-        .word       (port_word),
-        .busy       (busint_busy),
-        .dev_rq     (cpu_rq),
-        .dev_write  (cpu_write),
-        .dev_rdata  (video_drives ? video_rdata : device_rdata),
-        .invalidate (quux_invalidate),
-        .u_req      (br_req),
-        .u_write    (br_write),
-        .u_addr     (br_addr),
-        // **REVISION 13'S TRANSFER IS WHOLE WORDS OF MAIN MEMORY**, which the
-        // port packs from `u_phys` (`quux_mem_port.sv`): the channel's word
-        // and address reach it past the bridge's 32 bits and 22, and the
-        // bridge carries the handshake.
-        .u_wdata    (ch_wdata),
-        .u_main     (ch_own && ch_memory),
-        .u_phys     (ch_addr),
-        .u_done     (br_done),
-        .u_rdata    (br_word),
-        .mem_req    (mem_req),
-        .mem_write  (mem_write),
-        .mem_line   (mem_line),
-        .mem_beats  (mem_beats),
-        .mem_wide   (mem_wide),
-        .mem_addr   (mem_addr),
-        .mem_wdata  (mem_wdata),
-        .mem_done   (mem_done),
-        .mem_rdata  (mem_rdata),
-        .mem_rline  (mem_rline),
-        .drained    (port_drained),
-        .hits       (cache_hits),
-        .misses     (cache_misses),
-        .pf_fetch   (pf_fetch),
-        .pf_vaddr   (pf_vaddr),
-        .pf_drop    (pf_drop),
-        .pf_nx_v    (pf_nx_v),
-        .pf_nx_vaddr(pf_nx_vaddr),
-        .pf_nx_phys (pf_nx_phys),
-        .pf_nx_word (pf_nx_word),
-        .pf_nx_fetch_v    (pf_nx_fetch_v),
-        .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
-        .boards     (boards),
-        .sd_look    (sd_look),
-        .sd_phys    (sd_phys),
-        .sd_ready   (sd_ready),
-        .sd_walk_ready(sd_walk_ready),
-        .sd_grant_ready(sd_grant_ready),
-        .sd_ack_at  (sd_ack_at),
-        .sd_hit     (sd_hit),
-        .sd_word    (sd_word),
-        .sd_hit_live(sd_hit_live),
-        .sd_h1_live (sd_h1_live),
-        .sd_word0_live(sd_word0_live),
-        .sd_word1_live(sd_word1_live),
-        .sd_commit  (sd_commit),
-        .sd_wr      (sd_wr),
-        .sd_wdata   (sd_wdata),
-        .sd_wbits   (sd_wbits),
-        .sd_until   (sd_until),
-        .sd_done    (sd_done),
-        .sd_fill_v  (sd_fill_v),
-        .sd_fill_word(sd_fill_word),
-        .sd_wdone   (sd_wdone),
-        .sd_relook  (sd_relook),
-        .wb_hold    (wb_hold),
-        .wb_rel_v   (wb_rel_v),
-        .wb_rel_now (wb_rel_now),
-        .wb_rel     (wb_rel),
-        .wb_rel_q   (wb_rel_q)
-    );
-    assign br_rdata = br_word[31:0];
-    // The channel's word, taken where the bridge takes its own `rdata`: at
-    // main memory's answer, which is a tick before `ch_done`.
-    always_ff @(posedge clk) begin
-      if (rst) ch_word13 <= '0;
-      else if (br_done && !br_write) ch_word13 <= br_word;
-    end
-    // No Unibus, no arbitration for it, no debug block (contract Q5).
-    assign ub_msyn   = 1'b0;
-    assign ub_write  = 1'b0;
-    assign arb_stage = 3'd0;
-    // The register decode answers every register at the grant's
-    // instant, so nothing waits for a register's acknowledgment.
-    logic unused_quux_port;
-    // QUUX's port has no NXM timer on memory at all (`quux_mem_port.sv`), so
-    // it has no use for `mem_answers` either.  Nor for the video
-    // controller's frame buffer select, `video_fb`, which told revision 12's
-    // buffer from a register: revision 13's decode puts the window on the
-    // memory bus itself.
-    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack, mem_answers, video_fb};
-  end else begin : g_cadr_busint
-    // No memory system of revision 14's on the CADR.
-    assign sd_ready     = 1'b0;
-    assign sd_walk_ready = 1'b0;
-    assign sd_grant_ready = 1'b0;
-    assign sd_ack_at    = '0;
-    assign sd_hit       = 1'b0;
-    assign sd_word      = '0;
-    assign sd_hit_live  = 1'b0;
-    assign sd_h1_live   = 1'b0;
-    assign sd_word0_live = '0;
-    assign sd_word1_live = '0;
-    assign sd_done      = '0;
-    assign sd_fill_v    = 1'b0;
-    assign sd_fill_word = '0;
-    assign sd_wdone     = 1'b0;
-    logic unused_sd;
-    assign unused_sd = ^{sd_look, sd_commit, sd_wr, sd_phys, sd_wdata, sd_wbits, sd_until, sd_relook, wb_hold, wb_rel_v, wb_rel_now, wb_rel, wb_rel_q};
-    cadr_busint_xbus busint (
-        .clk        (clk),
-        .rst        (rst),
-        .mclk       (mclk),
-        .n_memrq    (n_memrq),
-        .wrcyc      (wrcyc),
-        .n_memgrant (n_memgrant),
-        .n_memack   (n_memack),
-        .n_loadmd   (n_loadmd),
-        .timed_out  (timed_out),
-        .dev_rq     (cpu_rq),
-        .dev_write  (cpu_write),
-        .dev_ack    (dev_ack),
-        // The bridge has the processor's cycle and its memory answers.
-        .dev_hold   (mem_answers && cpu_bridged),
-        .unibus     (unibus),
-        .select_debug(select_debug),
-        .ub_msyn    (ub_msyn),
-        .ub_write   (ub_write),
-        .ub_ssyn    (ub_ssyn),
-        .arb_stage  (arb_stage),
-        .busy       (busint_busy)
-    );
-    assign mem_req      = br_req;
-    assign mem_write    = br_write;
-    assign mem_addr     = br_addr;
-    assign mem_wdata    = WORD_BITS'(br_wdata);
-    assign br_done      = mem_done;
-    assign br_rdata     = mem_rdata;
-    assign br_word      = '0;
-    assign ch_word13    = '0;
-    logic unused_cadr_word;
-    assign unused_cadr_word = ^br_word;
-    assign mem_line     = 1'b0;
-    assign mem_beats    = 3'd0;
-    assign mem_wide     = 1'b0;
-    assign cached       = 1'b0;
-    assign port_word    = '0;
-    assign port_drained = 1'b1;
-    assign cache_hits   = 32'd0;
-    assign cache_misses = 32'd0;
-    assign pf_nx_v           = 1'b0;
-    assign pf_nx_vaddr       = '0;
-    assign pf_nx_phys        = '0;
-    assign pf_nx_word        = '0;
-    assign pf_nx_fetch_v     = 1'b0;
-    assign pf_nx_fetch_vaddr = '0;
-    logic unused_cadr_port;
-    // And the video controller's buffer match, which only QUUX's port reads,
-    // and the prefetch's inputs.
-    assign unused_cadr_port = ^{mem_rline, quux_invalidate, video_fb, pf_fetch, pf_vaddr, pf_drop};
-  end
+  cadr_busint_xbus busint (
+      .clk        (clk),
+      .rst        (rst),
+      .mclk       (mclk),
+      .n_memrq    (n_memrq),
+      .wrcyc      (wrcyc),
+      .n_memgrant (n_memgrant),
+      .n_memack   (n_memack),
+      .n_loadmd   (n_loadmd),
+      .timed_out  (timed_out),
+      .dev_rq     (cpu_rq),
+      .dev_write  (cpu_write),
+      .dev_ack    (dev_ack),
+      // The bridge has the processor's cycle and its memory answers.
+      .dev_hold   (mem_answers && cpu_bridged),
+      .unibus     (unibus),
+      .select_debug(select_debug),
+      .ub_msyn    (ub_msyn),
+      .ub_write   (ub_write),
+      .ub_ssyn    (ub_ssyn),
+      .arb_stage  (arb_stage),
+      .busy       (busint_busy)
+  );
+  assign mem_req      = br_req;
+  assign mem_write    = br_write;
+  assign mem_addr     = br_addr;
+  assign mem_wdata    = br_wdata;
+  assign br_done      = mem_done;
+  assign br_rdata     = mem_rdata;
 
   // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it
   // out of the held match and the REQTIM counter takes the PROM's second
@@ -1345,11 +1044,7 @@ module cadr_memory_path #(
   logic unused_page;
   assign unused_page = &{1'b0, ub_page[13:9]};
 
-  // QUUX lands a console write at the master clock edge alone: see
-  // `cadr_spy_registers.sv`'s `SYNC`.
-  cadr_spy_registers #(
-      .SYNC(MACHINE == "quux")
-  ) spy_registers (
+  cadr_spy_registers spy_registers (
       .clk        (clk),
       .rst        (rst),
       .mclk       (mclk),
@@ -1375,8 +1070,10 @@ module cadr_memory_path #(
       .prog_boot  (prog_boot),
       .n_boot     (n_boot),
       .no_auto_boot(no_auto_boot),
-      .page_errstop_we(page_errstop_we),
-      .page_errstop   (page_errstop)
+      // `cadr_spy_registers.sv`'s second writer of error stop, which no
+      // CADR has.
+      .page_errstop_we(1'b0),
+      .page_errstop   (1'b0)
   );
 
   // --- the I/O board, the second Unibus slave -----------------------------
@@ -1422,7 +1119,7 @@ module cadr_memory_path #(
   cadr_io_board iob (
       .clk        (clk),
       .rst        (rst),
-      .ub_msyn    (QUUX ? 1'b0 : sr_msyn),
+      .ub_msyn    (sr_msyn),
       .ub_write   (sr_write),
       .ub_addr    (sr_addr),
       .ub_wdata   (sr_wdata),
@@ -1439,14 +1136,14 @@ module cadr_memory_path #(
       .ser_cmd    (ser_cmd),
       .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data),
-      .ser_tx_take(QUUX ? 1'b0 : ser_tx_take),
-      .ser_tx_done(QUUX ? 1'b0 : ser_tx_done),
-      .ser_rx_strobe(QUUX ? 1'b0 : ser_rx_strobe),
+      .ser_tx_take(ser_tx_take),
+      .ser_tx_done(ser_tx_done),
+      .ser_rx_strobe(ser_rx_strobe),
       .ser_rx_data(ser_rx_data),
-      .ser_rx_end (QUUX ? 1'b0 : ser_rx_end),
-      .ser_rx_parity(QUUX ? 1'b0 : ser_rx_parity),
-      .ser_rx_framing(QUUX ? 1'b0 : ser_rx_framing),
-      .ser_plugged(QUUX ? 1'b0 : ser_plugged),
+      .ser_rx_end (ser_rx_end),
+      .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing),
+      .ser_plugged(ser_plugged),
       .ser_status (ser_status),
       .ser_syn_face(ser_syn_face),
       .chaos_address(chaos_address),
@@ -1489,14 +1186,21 @@ module cadr_memory_path #(
       .mouse_y    (mouse_y),
       .clock_ready(clock_ready),
       .interval   (interval),
-      .qp_land    (page_ch_land),
-      .qp_wr      (page_ch_wr),
-      .qp_which   (page_ch_which),
-      .qp_wdata   (page_ch_wdata),
-      .qp_rdata   (page_ch_rdata),
-      .chaos_ireq (chaos_ireq),
-      .mouse_buttons(mouse_buttons)
+      // `cadr_io_board.sv`'s second door to the Chaosnet interface and its
+      // switches, which no CADR has.
+      .qp_land    (1'b0),
+      .qp_wr      (1'b0),
+      .qp_which   (3'd0),
+      .qp_wdata   (16'd0),
+      .qp_rdata   (unused_qp_rdata),
+      .chaos_ireq (unused_chaos_ireq),
+      .mouse_buttons(unused_mouse_buttons)
   );
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [15:0] unused_qp_rdata;
+  logic        unused_chaos_ireq;
+  logic [2:0]  unused_mouse_buttons;
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // --- the bus interface's own registers, the third Unibus slave ----------
   //
@@ -1521,7 +1225,7 @@ module cadr_memory_path #(
   cadr_busint_regs busint_regs (
       .clk       (clk),
       .rst       (rst),
-      .ub_msyn   (QUUX ? 1'b0 : sr_msyn),
+      .ub_msyn   (sr_msyn),
       .ub_write  (sr_write),
       .ub_addr   (sr_addr),
       .ub_wdata  (sr_wdata),
@@ -1545,7 +1249,7 @@ module cadr_memory_path #(
       .ub_int    (ub_int),
       .ub_int_hand(ub_int_hand),
       .err_status(regs_err_status),
-      .page_err_clear(page_err_clear),
+      .page_err_clear(1'b0),
       // The DBGOUT end of MIT's debug cable, this machine as the debugger.
       // It leaves the machine to `rtl/plumbing/cadr_dbg_cable.sv`, which is
       // the connector and the role; `select_debug` does not leave at all and
@@ -1582,10 +1286,8 @@ module cadr_memory_path #(
   );
 
   // What the other slaves see: the processor's cycle and never the channel's.
-  // See the note at the top --- the channel reaches main memory alone.  On
-  // QUUX the registers are not on the bridge's bus at all, so a transfer
-  // holding the bridge cannot keep a register from being asked.
-  assign dev_rq    = (ch_own && !QUUX) ? 1'b0 : cpu_rq;
+  // See the note at the top --- the channel reaches main memory alone.
+  assign dev_rq    = ch_own ? 1'b0 : cpu_rq;
   assign dev_write = cpu_write;
 
   // --- the display, the second Xbus slave that is not main memory ---------
@@ -1620,11 +1322,7 @@ module cadr_memory_path #(
       .board_lispm(tv_lispm),
       // The first display board is always in the backplane.  A CADR with no
       // display at all is not a machine anything here has a reference for.
-      // **ON QUUX IT IS NOT FITTED**, the video controller being QUUX's
-      // display below, so it answers nothing and raises nothing; it stays at this
-      // instance, rather than in a branch of its own, so that the CADR's
-      // board keeps the name its constraints and checks know it by.
-      .fitted     (MACHINE != "quux"),
+      .fitted     (1'b1),
       .sel        (device),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),
@@ -1644,42 +1342,6 @@ module cadr_memory_path #(
       .disp_map_a (4'd0),
       .disp_map_q (unused_first_map)
   );
-
-  // **QUUX'S DISPLAY IS THE VIDEO CONTROLLER**, `quux_video.sv`, a frame
-  // buffer and one register, word 210 of the register page: no sync program,
-  // no color map and no interrupt.  It answers beside the unfitted board
-  // above and the joins below take both; on the CADR its four lines are
-  // zero.
-  logic        video_ack, video_drives, video_fb;
-  logic [31:0] video_rdata;
-  if (MACHINE == "quux") begin : g_quux_video
-    logic video_bow;
-    quux_video #(
-        .BUFFER_WORDS(VIDEO_WORDS)
-    ) video (
-        .clk      (clk),
-        .rst      (rst),
-        .sel      (device),
-        .dev_rq   (dev_rq),
-        .dev_write(dev_write),
-        .phys     (phys[21:0]),
-        .wdata    (wdata[31:0]),
-        .dev_ack  (video_ack),
-        .rdata    (video_rdata),
-        .drives   (video_drives),
-        .fb_sel   (video_fb),
-        .bow      (video_bow)
-    );
-    // Black-on-white reaches nothing but the readout: the display output's
-    // polarity is a setting of the board's (`BOW` in `cadr_display_out.sv`).
-    assign video_bow_o = video_bow;
-  end else begin : g_cadr_no_video
-    assign video_bow_o  = 1'b0;
-    assign video_ack    = 1'b0;
-    assign video_drives = 1'b0;
-    assign video_fb     = 1'b0;
-    assign video_rdata  = 32'd0;
-  end
 
   // --- and the second display board, the color TV -------------------------
   //
@@ -1751,7 +1413,7 @@ module cadr_memory_path #(
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || video_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
   // display drives the lines only while answering a READ of a control word
@@ -1779,16 +1441,11 @@ module cadr_memory_path #(
   // zero.  **Which of the two is right is a question about the real Xbus and
   // is not this file's to decide**, so nothing is changed here: it is written
   // down where somebody meeting the line will meet it.
-  // On QUUX every cycle's word is the port's: the cache's or the line's
-  // for the memory bus, the register's as it was when asked, and zero for
-  // an address nothing answers (`quux_mem_port.sv`).
-  assign rdata   = QUUX         ? port_word
-                 : ub_ssyn      ? WORD_BITS'({16'h0000, ub_rdata})
-                 : tv_drives    ? WORD_BITS'(tv_rdata)
-                 : tvc_drives   ? WORD_BITS'(tvc_rdata)
-                 : video_drives ? WORD_BITS'(video_rdata)
-                 : device_ack   ? WORD_BITS'(device_rdata)
-                                : WORD_BITS'(memory_rdata);
+  assign rdata   = ub_ssyn      ? {16'h0000, ub_rdata}
+                 : tv_drives    ? tv_rdata
+                 : tvc_drives   ? tvc_rdata
+                 : device_ack   ? device_rdata
+                                : memory_rdata;
 
 endmodule
 

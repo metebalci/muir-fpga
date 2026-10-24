@@ -1,18 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Build a bitstream of QUUX revision 15 for the Arty Z7-20
+# Build a bitstream of QUUX for the Arty Z7-20
 # (`boards/arty-z7-20/quux15_arty.sv`).
 #
 #     make build/boot_prom.quux15.hex
-#     PERIOD_NS=50 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
+#     PERIOD_NS=60 vivado -mode batch -source boards/arty-z7-20/vivado/quux15_bitstream.tcl
 #
 # Run from the repository root.  `PERIOD_NS` is the machine's period, the
-# MMCM's divide (by default the board's period, 50 at revision 15 and 60 at
-# revision 16); `PROM` the boot PROM's image, a 64-bit word a line, PROM
+# MMCM's divide (by default the board's period, 60); `PROM` the boot PROM's image, a 64-bit word a line, PROM
 # 2002 (`build/boot_prom.quux15.hex`) by default and a test program
 # (`golden/src/quux15.rs --prom`) only when named; `OUTDIR` where it all
-# goes (`build/bitstream-arty-quux15`).  The memories are placed as `quux15_ram.xdc` says, and asked after synthesis;
+# goes (`build/bitstream-arty-quux16`).  The memories are placed as `quux15_ram.xdc` says, and asked after synthesis;
 # the report says the period the fit met and the area, and the bitstream
 # carries the tree's build stamp.  It is the Kria KR260's flow
 # (`boards/kria-kr260/vivado/quux15_bitstream.tcl`) on this part, with the
@@ -20,13 +19,13 @@
 # under the machine's size, and `rams_enable_check.tcl` last.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xc7z020clg400-1"}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
-# `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
-# (QUUX's Ethernet contract, §10), the top's generic and the output's name.
-set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 15}]
-# The board's period: 50 ns at revision 15, 60 ns at revision 16.
-set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : ($revision >= 16 ? 60 : 50)}]
-if {$revision ni {15 16}} {
-    puts "Q15ARTY: FAILED --- REVISION=$revision is not 15 or 16"
+# `REVISION` is QUUX's, 16 (QUUX's Ethernet contract, §10), the top's
+# generic and the output's name; another is refused.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 16}]
+# The board's period, 60 ns.
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 60}]
+if {$revision ne "16"} {
+    puts "Q15ARTY: FAILED --- REVISION=$revision: QUUX is built at one revision; leave REVISION unset"
     exit 1
 }
 set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-arty-quux$revision"}]
@@ -42,7 +41,7 @@ if {![file exists $prom]} {
     exit 1
 }
 file mkdir $outdir
-puts "Q15ARTY: QUUX revision $revision on the Arty Z7-20 at $period ns, the PROM $prom"
+puts "Q15ARTY: QUUX on the Arty Z7-20 at $period ns, the PROM $prom"
 
 set sources [list \
     rtl/machine/cadr_tick_pkg.sv rtl/plumbing/cadr_ddr_map.sv \

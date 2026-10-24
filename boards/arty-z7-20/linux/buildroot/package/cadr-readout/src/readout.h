@@ -157,12 +157,12 @@ int ro_halt_to_read(struct readout *r, int *was_running);
 // CYCLES stood, and a machine that has stopped retiring with SRUN up --- a
 // wait that never ends, a pipeline that never drains --- stands as still as
 // a halted one.  A checkpoint is of the second, halted between two
-// microcycles, so `ro_found` asks why it stands.  On the CADR and QUUX to
-// revision 14, FLAG-1 must name a halt, as `cadr-console status` reads it:
-// SRUN down, the console's; ERR up, HALT-CONS under ERRSTOP; or -STATHALT
-// low, the statistics counter's.  On revision 15 the pipeline's own halted
-// bit must be up, the halted pipeline's word 19 `<0>` (`quux15_core.sv`'s
-// `halted`), which rises only when the drain ends.  SRUN is not enough there:
+// microcycles, so `ro_found` asks why it stands.  On the CADR, FLAG-1 must
+// name a halt, as `cadr-console status` reads it: SRUN down, the console's;
+// ERR up, HALT-CONS under ERRSTOP; or -STATHALT low, the statistics
+// counter's.  On QUUX (`rev15`) the pipeline's own halted bit must be up,
+// the halted pipeline's word 19 `<0>` (`quux15_core.sv`'s `halted`), which
+// rises only when the drain ends.  SRUN is not enough there:
 // it follows RUN, so a write of zero lowers it on a pipeline that never
 // drains.  Returns `RO_FOUND_RUNNING` when CYCLES moved, `RO_FOUND_HALTED`,
 // `RO_FOUND_STUCK` when it stood and is not halted, or `RO_FOUND_LOST` when
@@ -176,16 +176,12 @@ struct ro_stand {
 	uint16_t flag1;		/* FLAG-1 as read */
 	int srun, err, stathalt, wait;	/* FLAG-1's, in the console's senses */
 	uint16_t pc, opc;	/* fourteen bits each */
-	int drained;		/* revision 15's halted bit; -1 on the others */
+	int drained;		/* QUUX's pipeline's halted bit; -1 on the CADR */
 };
 int ro_found(struct readout *r, int rev15, struct ro_stand *s);
 // A machine `ro_found` found stuck, in words: where CYCLES stood, FLAG-1,
-// PC and OPC, and on revision 15 the halted bit.
+// PC and OPC, and on QUUX the pipeline's halted bit.
 void ro_stand_text(const struct ro_stand *s, int rev15, char *out, size_t n);
-// QUUX's memory port idle and its write buffer empty (the flag word's
-// `IMG_F_MEM_DRAINED`), asked of the machine as it stands: 1, 0, or -1 when
-// the window answered for another address.  Always 0 on the CADR.
-int ro_mem_drained(struct readout *r);
 
 // The machine's own counters, low half then high: the high word is latched by
 // the low word's read, which is the rule for the whole of page 0.
@@ -201,38 +197,37 @@ int ro_color_map(struct readout *r, int board,
 
 // Everything the window can say, into `img`.  Main memory and the display are
 // not here --- they are DDR and come through /dev/mem.  Returns 0, or -1.  On
-// an image allocated as QUUX's this reads QUUX's sizes and `ro_read_quux`.
+// an image allocated as QUUX's this is `ro_read_quux15`.
 int ro_read_machine(struct readout *r, struct cadr_image *img);
 
 // **WHICH MACHINE THE BITSTREAM IS**, asked of the fabric: the register
-// table's entry 21 carries QUUX's signature, `0x5155`, over K and L, and the
-// CADR answers `RO_NO_MEMORY` there.  Returns 1 for QUUX with `*k` and `*l`
-// set, 0 for the CADR, and -1 for a stale echo or a word that is neither.
+// table's entry 21 carries QUUX's signature, `0x5155`, over the clock's
+// period in <31:24> and 0 in <23:16>, and MACHINE-ID's <15:0>, 0 or of
+// processor type 4; the CADR answers `RO_NO_MEMORY` there.  Returns 1 for
+// QUUX with `*k` and `*l` set to <31:24> and <23:16>, 0 for the CADR, and -1
+// for a stale echo or a word that is neither.
 int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 
-// **WHICH REVISION OF QUUX**: entry 21's <15:0>, MACHINE-ID's on revision 13
-// (`IMG_QUUX_ID_13`), 14 (`IMG_QUUX_ID_14`) and 15 (`IMG_QUUX_ID_15`).  15,
-// 14 or 13; 12 for any other, which revision 12's 0 there was, so that a
-// bitstream of that retired revision is refused by its name; 0 for the
-// CADR, and -1 for a stale echo or a word that is neither.
+// **WHICH REVISION OF QUUX**: entry 21's <15:0>, MACHINE-ID's, its <11:4>
+// where <3:0> is the processor type 4, as the identity line reads it, so
+// that a bitstream of a revision this program does not read is refused by
+// its name; 12 for 0 there, revision 12's, retired; 0 for the CADR, and -1
+// for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
 
 // **THE MEMORIES `cadr-readout --word` AND `--dump` REACH, BY MACHINE**,
-// with their depth and width on each layout the window has: the CADR;
-// QUUX revision 13, whose words are 40 bits, whose dispatch
-// memory is 4,096 entries and whose map is 8,192 seven-bit level-1 entries
-// over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1); revision 14,
-// revision 13's with no map levels, a TLB, which no checkpoint keeps
-// (contract G3 revision 14, A14.14); and revision 15, revision 14's sizes
-// behind its own window (A15b.13, `quux15_core.sv`'s readout): the control
+// with their depth and width on each layout the window has: the CADR, and
+// QUUX behind its own window (A15b.13, `quux15_core.sv`'s readout): words of
+// 40 bits, a dispatch memory of 4,096 entries, no map levels, the control
 // store and the PROM at 64 bits, no transaction audit, and a register table
-// of its own (`img_rg15`).
+// of its own (`img_rg15`).  QUUX's layout keeps the name of the revision
+// that brought it, `RO_M_QUUX15`.
 //
 // **`ro_machine_of` takes `ro_quux_revision`'s answer and returns -1 for a
-// revision it has no layout for**, so that a revision added to the fabric
-// is refused by name here and never read with another machine's layout;
-// revision 12, retired, has none.
-enum ro_machine { RO_M_CADR, RO_M_QUUX13, RO_M_QUUX14, RO_M_QUUX15, RO_MACHINES };
+// revision it has no layout for**, so that a revision other than
+// `IMG_QUUX_REVISION` is refused by name here and never read with another
+// machine's layout.
+enum ro_machine { RO_M_CADR, RO_M_QUUX15, RO_MACHINES };
 extern const char *const ro_machine_names[RO_MACHINES];
 int ro_machine_of(int revision);
 struct ro_mem {
@@ -245,14 +240,14 @@ struct ro_mem {
 extern const struct ro_mem ro_mems[];
 extern const unsigned ro_mem_count;
 const struct ro_mem *ro_mem_by_name(const char *name);
-// One word of `m` at `addr` on `machine`: revision 15's by `ro_word64`, whose
-// echo moves only when the word is there, and the others' by `ro_word`.  0,
+// One word of `m` at `addr` on `machine`: QUUX's by `ro_word64`, whose echo
+// moves only when the word is there, and the CADR's by `ro_word`.  0,
 // or -1 for an echo that was not the address asked for.
 int ro_mem_word(struct readout *r, int machine, const struct ro_mem *m, unsigned addr,
 		uint64_t *word);
 // The register table's names on `machine`, `ro_mem_by_name("regs")`'s depth
-// of them: the CADR's order (`cadr_microcycle.sv`) on all but revision 15,
-// and `img_rg15`'s there.
+// of them: the CADR's order (`cadr_microcycle.sv`) on the CADR, and
+// `img_rg15`'s on QUUX.
 const char *const *ro_reg_names(int machine);
 
 // **HOW MUCH MAIN MEMORY THE MACHINE HAS**, out of `RO_BOARDS`, in 64K-word
@@ -287,23 +282,13 @@ void ro_main_amount(unsigned units, char *out, size_t n);
 // amount is in the machine's range is the caller's.
 int ro_parse_megawords(const char *text, unsigned *units);
 
-// QUUX's own state, into `img->qx`: the clocks, the keyboard and mouse,
-// block-disk and the page.  **THE CLOCKS RUN WHILE THEY ARE READ**, so each
-// timer's word carries the microsecond clock's low bits of its own tick; the
-// clock is read whole before and after them and the two must be within
-// `RO_QUUX_SPAN` ticks, so that those bits name one tick.  A read that took
-// longer is tried again, `RO_QUUX_TRIES` times.  Returns 0, or -1.
-#define RO_QUUX_SPAN  6400u	/* 64 us: half of the 128 the low bits span */
-#define RO_QUUX_TRIES 8
-int ro_read_quux(struct readout *r, struct cadr_image *img);
-
-// **REVISION 15'S MACHINE** (A15b.13), into `img`, an image allocated as
-// revision 15's: the devices' snapshot, then every memory and table of
-// `quux15_core.sv`'s window, `ro_word64` at a time.  Main memory and the
-// display are not here.  Returns 0, or -1 at the first stale echo.
+// **QUUX'S MACHINE** (A15b.13), into `img`, an image allocated as QUUX's:
+// the devices' snapshot, then every memory and table of `quux15_core.sv`'s
+// window, `ro_word64` at a time.  Main memory and the display are not here.
+// Returns 0, or -1 at the first stale echo.
 int ro_read_quux15(struct readout *r, struct cadr_image *img);
-// `ro_word` with the face's word 12 whole: a word's `<63:32>` on revision
-// 15, whose control store is 64 bits.
+// `ro_word` with the face's word 12 whole: a word's `<63:32>` on QUUX, whose
+// control store is 64 bits.
 int ro_word64(struct readout *r, unsigned sel, unsigned addr, uint64_t *word);
 
 // The transaction audit at selector 11, unpacked.  **Every one of its nine

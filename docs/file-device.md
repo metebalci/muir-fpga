@@ -284,24 +284,13 @@ does.
 
 The fabric's side:
 
-- `build/quux13_files.quux.k4.pass` runs a program on the whole machine that
-  drives every register of the file device against muir's own device, with
-  the testbench playing the program at muir's instants through the machine's
-  host side, the rings at revision 13's addresses and the entries' words
-  whole, 40 bits. It also checks that when the host is first shown a
-  command, the command's entry is already in main memory as the processor
-  wrote it.
-- `build/quux13_rtc.quux.k4.pass` reads word 103 against muir's clock with the
-  host setting it twice, once to the last second.
-- `build/quux_fd_face.pass` drives this page over AXI in the program's order,
-  with the machine's register page behind it, and holds every rule above,
-  including each ordering by the tick.
 - `build/gp0_split.pass` sweeps the port with the page present, as QUUX
   builds it, and absent, as the CADR builds it.
-- `build/quux15_fd_face.pass` drives the page over AXI with revision 15's
-  register-page devices behind it, and holds every rule of the host's side
-  at revision 15's period and timing.
-- `build/quux15_filedev.quux.pass` runs revision 15's file device programs
+- `build/quux15_fd_face.pass` drives the page over AXI in the program's
+  order, with QUUX's register-page devices behind it, and holds every rule of
+  the host's side, including each ordering by the clock, at QUUX's period
+  and timing.
+- `build/quux15_filedev.quux.pass` runs QUUX's file device programs
   against muir clock for clock. Its testbench is the program: it reads STATE
   for the epoch, takes the claim, stages HANDLES and writes RESP_PROD so that
   each completion lands at muir's clock.

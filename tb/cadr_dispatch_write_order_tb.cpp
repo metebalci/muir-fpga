@@ -37,14 +37,6 @@
 // A program ends in a jump to itself, so its end state does not depend on
 // how many microcycles run past that point; the golden says how many run and
 // this runs as many.
-//
-// AND AT REVISION 13 (the golden's header says `revision 13`, the machine
-// built at `WORD_BITS` 40): revision 13's sizes --- a dispatch memory of
-// 4,096, a level-1 map of 8,192 and a level-2 map of 4,096 --- 40-bit words
-// at the end, and main memory as packed storage from `QUUX13_TB_BASE`, five
-// bytes a word, filled five beats a line of eight and written five bytes a
-// word, `tb/cadr_machine_tb.cpp`'s layout; a byte nothing wrote is zero, as
-// muir's main memory is.
 
 #include <algorithm>
 #include <cerrno>
@@ -86,8 +78,6 @@ struct Program {
   std::string name;
   size_t rows = 0;
   std::vector<uint64_t> prom;
-  // On QUUX, the program in the control store's RAM, its PROM being at 36000.
-  std::vector<std::pair<uint32_t, uint64_t>> imem;
   std::vector<std::pair<uint32_t, uint32_t>> l2, dmem, main;
   uint32_t speed = 0;   // {SPEED1, SPEED0} of the mode register at the boot
   std::vector<Row> trace;
@@ -118,19 +108,8 @@ std::vector<uint64_t> Words(const char *p) {
   return out;
 }
 
-// Which machine the golden's programs ran on: its header names QUUX with
-// `machine: quux`, and the fabric under test is then built as QUUX.  QUUX's
-// level 2 is 2048 entries and its PDL 16K words, and it has no hung
-// microcycle, so the two bounds a hung write is held to are not reached.
-bool quux = false, rev13 = false;
-size_t L2Words() { return rev13 ? 4096 : quux ? 2048 : 1024; }
-size_t PdlWords() { return quux ? 16384 : 1024; }
-size_t L1Words() { return rev13 ? 8192 : 2048; }
-size_t DmemWords() { return rev13 ? 4096 : 2048; }
-#ifndef QUUX13_TB_BASE
-#define QUUX13_TB_BASE 0x12000000u
-#endif
-constexpr uint32_t kMain13Base = QUUX13_TB_BASE;
+// The memories' sizes, the CADR's.
+constexpr size_t kL2Words = 1024, kPdlWords = 1024, kL1Words = 2048, kDmemWords = 2048;
 
 bool Load(const char *path, std::vector<Program> &all) {
   std::FILE *f = std::fopen(path, "r");
@@ -141,8 +120,6 @@ bool Load(const char *path, std::vector<Program> &all) {
   char line[1024];
   Program *p = nullptr;
   while (std::fgets(line, sizeof line, f)) {
-    if (line[0] == '#' && std::strstr(line, "machine: quux")) quux = true;
-    if (line[0] == '#' && std::strstr(line, "revision 13")) rev13 = true;
     if (line[0] == '#' || line[0] == '\n') continue;
     char tag[32] = {0}, sub[32] = {0};
     unsigned long long a = 0, b = 0;
@@ -157,8 +134,6 @@ bool Load(const char *path, std::vector<Program> &all) {
     if (std::sscanf(line, "prom %llx %llx", &a, &b) == 2) {
       if (p->prom.size() <= a) p->prom.resize(a + 1, 0);
       p->prom[a] = b;
-    } else if (std::sscanf(line, "imem %llx %llx", &a, &b) == 2) {
-      p->imem.emplace_back(a, b);
     } else if (std::sscanf(line, "l2 %llx %llx", &a, &b) == 2) {
       p->l2.emplace_back(a, b);
     } else if (std::sscanf(line, "dmem %llx %llx", &a, &b) == 2) {
@@ -243,32 +218,20 @@ int Run(const Program &p, Totals &tot) {
 
   // The program and the memories it starts from, into the fabric's own
   // arrays: `Machine::new` with the program's PROM, as muir's test builds it.
-  // The control store is left as the fabric brings it up, all ones, but on
-  // QUUX, whose program runs out of it from 0 (the golden's `imem` lines).
+  // The control store is left as the fabric brings it up, all ones.
 #define PROC(x) root->cadr_machine__DOT__processor__DOT__##x
   for (size_t k = 0; k < 1024; ++k) PROC(prom_mem)[k] = k < p.prom.size() ? p.prom[k] : 0;
-  for (const auto &e : p.imem) PROC(imem)[e.first] = e.second;
-  for (size_t k = 0; k < DmemWords(); ++k) PROC(dmem)[k] = 0;
-  for (size_t k = 0; k < L1Words(); ++k) PROC(l1_map)[k] = 0;
-  for (size_t k = 0; k < L2Words(); ++k) PROC(l2_map)[k] = 0;
+  for (size_t k = 0; k < kDmemWords; ++k) PROC(dmem)[k] = 0;
+  for (size_t k = 0; k < kL1Words; ++k) PROC(l1_map)[k] = 0;
+  for (size_t k = 0; k < kL2Words; ++k) PROC(l2_map)[k] = 0;
   for (size_t k = 0; k < 1024; ++k) PROC(amem)[k] = 0;
-  for (size_t k = 0; k < PdlWords(); ++k) PROC(pdl)[k] = 0;
+  for (size_t k = 0; k < kPdlWords; ++k) PROC(pdl)[k] = 0;
   for (size_t k = 0; k < 32; ++k) PROC(mmem)[k] = 0;
   for (size_t k = 0; k < 32; ++k) PROC(spcm)[k] = 0;
   for (const auto &e : p.l2) PROC(l2_map)[e.first] = e.second;
   for (const auto &e : p.dmem) PROC(dmem)[e.first] = e.second;
   std::map<uint32_t, uint32_t> mem;
   for (const auto &e : p.main) mem[e.first] = e.second;
-  // Revision 13's main memory, bytes of packed storage, zero where nothing
-  // wrote; the program's words placed five bytes a word.
-  std::map<uint32_t, uint8_t> mem13;
-  auto byte13 = [&](uint32_t a) -> uint8_t {
-    const auto it = mem13.find(a);
-    return it == mem13.end() ? 0 : it->second;
-  };
-  for (const auto &e : p.main)
-    for (int b = 0; b < 5; ++b)
-      mem13[kMain13Base + 5u * e.first + b] = static_cast<uint8_t>(static_cast<uint64_t>(e.second) >> (8 * b));
 
   // When -MEMACK is due for the bus cycle a row starts: the first nonzero
   // `ack` at or after that row, as `tb/cadr_machine_tb.cpp` finds it.
@@ -296,19 +259,6 @@ int Run(const Program &p, Totals &tot) {
   bool memack_q_was = true, mbusy_was = false;
   long ack_at_tick = 0;
   uint64_t ack_want = 0;
-  // QUUX's main memory, answering the port: when the operation standing is
-  // due, whether it has been answered, and the word of a single read.
-  long q_due = -1;
-  bool q_answered = false;
-  uint32_t q_word = 0;
-  uint64_t q_seed = 0x5155u;
-  auto q_rng = [&]() {
-    q_seed = q_seed * 6364136223846793005ull + 1442695040888963407ull;
-    return static_cast<uint32_t>(q_seed >> 33);
-  };
-  // Whether the cycle acknowledged was QUUX's main memory's, whose release
-  // is the acknowledgment itself (muir's `Ack::cached`).
-  bool fin_cached = false;
   const long kMaxTicks = static_cast<long>(p.rows) * 200 + 1024;
   auto fail = [&](const Row &r, const char *what, uint64_t got, uint64_t want) {
     if (bad < 8)
@@ -339,61 +289,7 @@ int Run(const Program &p, Totals &tot) {
     // edge in the processor's own `n_memack_q`, is held to zero below.
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-    // **ON QUUX MAIN MEMORY IS BEHIND THE MEMORY PORT** (contract Q6): the
-    // port's cache asks a line of four words on a miss and writes a word
-    // through its buffer after the cycle, so the model answers each
-    // operation as a memory does, one to five ticks after it is asked ---
-    // sooner than the nominal 380 and 290 ns, so every acknowledgment is the
-    // port's floor and lands on muir's instant --- with the words at the
-    // address asked, and holds the answer until the port lets go.
-    if (quux && dut->mem_req) {
-      if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
-      if (t >= q_due) {
-        const uint32_t w = (dut->mem_addr - kMainBase) / 4;
-        if (!q_answered && rev13) {
-          // Revision 13: a line of eight words in five beats, or a word's
-          // five bytes written; a single read the port never makes.
-          q_answered = true;
-          const uint32_t a = dut->mem_addr;
-          constexpr int kRlineWords = static_cast<int>(sizeof(dut->mem_rline) / 4);
-          if (dut->mem_line && !dut->mem_write) {
-            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
-            for (int b = 0; b < 8 * dut->mem_beats && b / 4 < kRlineWords; ++b)
-              dut->mem_rline[b / 4] |= static_cast<uint32_t>(byte13(a + b)) << (8 * (b % 4));
-            ++tot.reads;
-          } else if (dut->mem_write) {
-            for (int b = 0; b < 5; ++b)
-              mem13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
-            ++tot.writes;
-          } else {
-            std::fprintf(stderr, "FAIL: %s: a single read of main memory at %08x, which revision 13's "
-                         "port never makes\n", p.name.c_str(), a);
-            ++bad;
-          }
-        }
-        if (!q_answered) {
-          q_answered = true;
-          if (dut->mem_line) {
-            for (int x = 0; x < 4; ++x) {
-              const auto it = mem.find((w & ~3u) + x);
-              dut->mem_rline[x] = it == mem.end() ? 0 : it->second;
-            }
-            ++tot.reads;
-          } else if (dut->mem_write) {
-            mem[w] = dut->mem_wdata;
-            ++tot.writes;
-          } else {
-            const auto it = mem.find(w);
-            q_word = it == mem.end() ? 0 : it->second;
-          }
-        }
-        dut->mem_rdata = q_word;
-        dut->mem_done = 1;
-      }
-    } else if (quux) {
-      q_due = -1;
-      q_answered = false;
-    } else if (dut->mem_req && bus_outstanding && t >= answer_tick) {
+    if (dut->mem_req && bus_outstanding && t >= answer_tick) {
       const long w = (static_cast<long>(dut->mem_addr) - static_cast<long>(kMainBase)) / 4;
       if (dut->mem_write) {
         mem[static_cast<uint32_t>(w)] = dut->mem_wdata;
@@ -421,21 +317,16 @@ int Run(const Program &p, Totals &tot) {
       if (ack_armed && memack_q_was && !memack_q) {
         ack_armed = false;
         fin_armed = true;
-        fin_cached = root->cadr_machine__DOT__cached;
         tot.ack_slip[static_cast<long>(ack_want) - ns_now]++;
         if (static_cast<long>(ack_want) != ns_now)
           std::fprintf(stderr, "  %s: -MEMACK %+ld ns from muir, at %ld ns\n", p.name.c_str(),
                        static_cast<long>(ack_want) - ns_now, ns_now);
       }
       // `mbusy` falls on the edge before MFINISHD's instant, so the edge
-      // after this one is the first whose registers see it down.  A cycle
-      // of QUUX's main memory is released on the acknowledgment itself: its
-      // `mbusy` falls on that edge, which already takes it down through
-      // `mbusy_now` (`cadr_microcycle.sv`), so that edge is the instant.
+      // after this one is the first whose registers see it down.
       if (fin_armed && mbusy_was && !mbusy) {
         fin_armed = false;
-        tot.fin_slip[fin_cached ? static_cast<long>(ack_want) - ns_now
-                                : static_cast<long>(ack_want) + 30 - (ns_now + kTickNs)]++;
+        tot.fin_slip[static_cast<long>(ack_want) + 30 - (ns_now + kTickNs)]++;
       }
       memack_q_was = memack_q;
       mbusy_was = mbusy;
@@ -501,10 +392,10 @@ int Run(const Program &p, Totals &tot) {
                  static_cast<unsigned>(PROC(spcptr)), p.spcptr);
     ++bad;
   }
-  bad += Memory(p, "the dispatch memory", PROC(dmem), DmemWords(), p.end_dmem);
-  bad += Memory(p, "the level-1 map", PROC(l1_map), L1Words(), p.end_l1);
-  bad += Memory(p, "the level-2 map", PROC(l2_map), L2Words(), p.end_l2);
-  bad += Memory(p, "the PDL", PROC(pdl), PdlWords(), p.end_pdl);
+  bad += Memory(p, "the dispatch memory", PROC(dmem), kDmemWords, p.end_dmem);
+  bad += Memory(p, "the level-1 map", PROC(l1_map), kL1Words, p.end_l1);
+  bad += Memory(p, "the level-2 map", PROC(l2_map), kL2Words, p.end_l2);
+  bad += Memory(p, "the PDL", PROC(pdl), kPdlWords, p.end_pdl);
 #ifdef CADR_GAP_MONITOR
   std::printf("    %-26s writes %" PRIu64 ", early %" PRIu64 " (boundary three on %" PRIu64
               "), two ticks after MD a tick late %" PRIu64 " and two late %" PRIu64 "; nearest MD %" PRId64
@@ -551,10 +442,10 @@ int main(int argc, char **argv) {
     std::printf("  %-26s %s\n", p.name.c_str(), bad ? "DIFFERS" : "agrees");
     if (bad) ++failed;
   }
-  std::printf("dispatch_write_order%s: %zu programs, %ld microcycles, %ld dispatch writes, "
+  std::printf("dispatch_write_order: %zu programs, %ld microcycles, %ld dispatch writes, "
               "%ld microcycles held by -WAIT or -HANG, "
               "%ld reads and %ld writes of main memory\n",
-              rev13 ? " (revision 13)" : "", all.size(), tot.rows, tot.disp_writes, tot.stalls, tot.reads,
+              all.size(), tot.rows, tot.disp_writes, tot.stalls, tot.reads,
               tot.writes);
   // The model's placement is the stimulus the whole check stands on, so it is
   // held here rather than trusted: every -MEMACK where muir's is.
@@ -590,8 +481,8 @@ int main(int argc, char **argv) {
               " two late; nearest MD %" PRId64 " ticks, nearest boundary %" PRId64 "\n",
               tot.gm_writes, tot.gm_early, tot.gm_early_b3, tot.gm_late_l, tot.gm_late_k,
               tot.gm_min_md, tot.gm_min_b);
-  if (!quux && (!tot.gm_early_b3 || !tot.gm_late_l || !tot.gm_late_k || tot.gm_min_md != 2 ||
-                tot.gm_min_b != 3)) {
+  if (!tot.gm_early_b3 || !tot.gm_late_l || !tot.gm_late_k || tot.gm_min_md != 2 ||
+      tot.gm_min_b != 3) {
     std::fprintf(stderr, "FAIL: the programs did not bring a hung write to both of its bounds\n");
     return 1;
   }

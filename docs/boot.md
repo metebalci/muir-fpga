@@ -519,13 +519,13 @@ after the kernel started, and starts any controller that died again by
 unbinding and binding its Xilinx glue. The card is then found a few seconds
 later than usual.
 
-**On the Kria KR260, QUUX revision 15's and 16's main memory port gets the DDR
-controller's video-class priority at every boot.** `/etc/init.d/S78quux15-qos`
-asks the fabric which machine it is (`cadr-console machine quux 16`, then
-`machine quux 15`), and only on revision 16 or 15 runs `/usr/sbin/quux15-qos.sh`, which writes 0xF to HP0's read
-and write QoS (`AFIFM2`'s RDQOS at 0xFD380008 and WRQOS at 0xFD38001C) and
-prints what they read back. On the CADR, on revision 13 and on the fault
-bitstream it writes nothing, and both registers keep the firmware's 0. It runs
+**On the Kria KR260, QUUX's main memory port gets the DDR controller's
+video-class priority at every boot.** `/etc/init.d/S78quux15-qos` asks the
+fabric which machine it is (`cadr-console machine quux 16`), and only on QUUX
+runs `/usr/sbin/quux15-qos.sh`, which writes 0xF to HP0's read and write QoS
+(`AFIFM2`'s RDQOS at 0xFD380008 and WRQOS at 0xFD38001C) and prints what they
+read back. On the CADR, on an older QUUX and on the fault bitstream it writes
+nothing, and both registers keep the firmware's 0. It runs
 before S80cadr-disk-packs and every other program that serves the machine.
 
 **Unpack into the root of the card, not into a folder on it.** `BOOT.BIN` and
@@ -540,8 +540,8 @@ empty. `README.TXT` at the root says which board the zip is for and what each
 part is, because a card in a Windows reader otherwise shows a folder named
 after a board and a 270 MB `.img` and explains nothing.
 
-**A release is six zips: the CADR and QUUX revision 13 for each of the Arty
-Z7-20, the DE25-Nano and the Kria KR260.** The
+**A release is six zips: the CADR and QUUX for each of the Arty Z7-20, the
+DE25-Nano and the Kria KR260.** The
 CADR's are these.
 
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
@@ -555,19 +555,18 @@ file was added; the Kria KR260's include it.
 
 A QUUX zip, `quux-arty-z7-20.zip`, `quux-de25-nano.zip` or
 `quux-kria-kr260.zip`, holds the same files as its board's CADR zip, the
-fault bitstream included, except these. The fabric is QUUX revision 13's, and
-the kernel's device tree is revision 13's, which reserves revision 13's region
-in place of the CADR's (`docs/linux.md`, "Each machine's reservation"); on the
-Arty Z7-20 and the DE25-Nano the loader is revision 13's too, since U-Boot
-runs with its own copy of the tree. `fpgarc` has `--machine quux` live, which
+fault bitstream included, except these. The fabric is QUUX's, and the
+kernel's device tree is QUUX's (the `quux13` files), which reserves QUUX's
+region in place of the CADR's (`docs/linux.md`, "Each machine's
+reservation"); on the Arty Z7-20 and the DE25-Nano the loader is QUUX's too,
+since U-Boot runs with its own copy of the tree. `fpgarc` has `--machine quux` live, which
 every init script reads, since nothing can ask the fabric which machine it
 is, and offers QUUX's main memory in MW. And `README.TXT` says QUUX revision
 13, and that `packs/disk-pack-0.img` is QUUX's one disk.
 
 Every README also names the commit the zip was built from, and the system the
-card is for: System 1003 for the CADR's and System 2001 for QUUX's, with its
-muir-sys release and its two files, the numbered release's
-(`release-2001-disk.vhd.gz` and `release-2001-sys.tar.gz`) and the rolling
+card is for: System 1003 for the CADR's and System 2002 for QUUX's, with its
+muir-sys release and its two files, the numbered release's and the rolling
 release's, whose names never change (`latest-quux`'s `quux-disk.vhd.gz` and
 `quux-sys.tar.gz`; for the CADR `release-1003-pack.img.gz`,
 `release-1003-sys.tar.gz`, and `latest-cadr`'s `cadr-pack.img.gz` and
@@ -698,8 +697,9 @@ exactly that.
 `build/sd/buildroot/card/` is the card's contents as a directory, and
 `build/sd/buildroot/<machine>-<board>.zip` is that directory zipped, which is
 what a user unpacks. The machine is `cadr`, or `quux` when `MACHINE=quux
-REVISION=13` says the bitstream is QUUX's; `MACHINE=quux` alone, which was
-revision 12's card, is refused. The zip is read back afterwards --- unpacked to a scratch
+REVISION=13` says the bitstream is QUUX's (`REVISION=13` names the card's
+QUUX device tree and loader, the `quux13` files); `MACHINE=quux` alone is
+refused. The zip is read back afterwards --- unpacked to a scratch
 directory and compared against what was staged, every file byte for byte and
 the name sets both ways --- because what is published is the zip and not the
 directory. **What the image's readback could say and this cannot is that the
@@ -741,13 +741,14 @@ a missing one stops the run before anything is built, and the six zips
 are printed together at the end with their sizes and digests, where a missing
 one is visible. `RELEASE_COMMIT` is written into every README, and so is the
 system each card is for, `CADR_SYSTEM` (1003 unless given) and `QUUX_SYSTEM`
-(2001). A Zynq bitstream's build stamp beside it, `<bit>.stamp`, must name
+(2002). A Zynq bitstream's build stamp beside it, `<bit>.stamp`, must name
 that commit and a clean tree, or the release stops. The bitstreams are named
 on the command line because they are not in this repository: they are built
 by Vivado and by Quartus, which `make check` does not run. Nothing in a
 bitstream file says which machine it is, so the target holds what the flows
-hold: a QUUX bitstream is `quux_<board>` in a directory whose name says
-`quux13`, and a CADR bitstream is `cadr_<board>` in one that names no QUUX.
+hold: a QUUX bitstream is `quux15_<board>` or the DE25-Nano's `quux_de25` in
+a directory whose name says `quux16`, and a CADR bitstream is `cadr_<board>`
+in one that names no QUUX.
 
 **Then the six are read back**, by `tools/release_check.py`, which
 `make release-check RELEASE_COMMIT=<the commit>` also runs over any
@@ -771,8 +772,9 @@ Each board's Buildroot output must exist first, which is `make buildroot`,
     FAULT_BIT=<the DE25-Nano's fault core image> \
     BIT=<the DE25-Nano's released core image> boards/arty-z7-20/linux/mksd-release.sh
 
-and `MACHINE=quux REVISION=13 SYSTEM=2001` with a revision 13 bitstream makes
-that board's QUUX zip. The zip
+and `MACHINE=quux REVISION=13 SYSTEM=2002` with a QUUX bitstream makes that
+board's QUUX zip; `REVISION=13` names the card's QUUX device tree and loader,
+the `quux13` files. The zip
 goes in a directory named for the board, `quux-<board>` for QUUX's, and
 carries the machine's and the board's names in its own name, so two boards' releases can be built one after the other
 without either being overwritten, and a file somebody downloaded a month ago

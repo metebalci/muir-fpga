@@ -11,10 +11,10 @@
 // in that order; there is no framing inside it and no checksum over it, so a
 // field of the wrong width silently shifts everything after it.
 //
-// **THE VERSION IS 54, OR 55 FOR REVISION 13's WORDS AND 56 FOR REVISION
-// 15's, AND A FILE OF ANY OTHER VERSION IS REFUSED BY NAME**, which is the one
-// thing that stops a format change here from being read wrong somewhere else.
-// When muir's `checkpoint::VERSION`, `VERSION_40` or `VERSION_15` moves, this
+// **THE VERSION IS 54, OR 58 FOR QUUX'S, AND A FILE OF ANY OTHER VERSION IS
+// REFUSED BY NAME**, which is the one thing that stops a format change here
+// from being read wrong somewhere else.  When muir's `checkpoint::VERSION` or
+// `VERSION_16` moves, this
 // file moves with it or the board's checkpoints stop loading --- loudly, which
 // is the right way round.  A file this program wrote at 49, 50 or 51, before
 // the Chaosnet interface's pending state was in the format, is refused by
@@ -33,21 +33,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// muir's `checkpoint::VERSION`, a 32-bit machine's, and `VERSION_40`, QUUX
-// revision 13's (contract G2 appendix A1.13): every word 5 bytes, `<7:0>`
-// first, so that main memory in it is packed storage byte for byte.  The
-// file's version says which, and `chk_write_file` takes it from the body.
-// 54 and 55 are 49 and 50 with the Chaosnet interface's pending state after
-// its turn timer (`chk_rtl.c`'s `emit_chaos`).
+// muir's `checkpoint::VERSION`, the CADR's, a 32-bit machine's: 49 with the
+// Chaosnet interface's pending state after its turn timer (`chk_rtl.c`'s
+// `emit_chaos`).
 #define CHK_VERSION 54u
-#define CHK_VERSION_40 55u
-// QUUX revision 15's (A15b.13; muir's `VERSION_15`): version 55's words,
-// the pipeline's state after the machine.  A body says so in `version`.
-#define CHK_VERSION_15 56u
-// Revision 16's, muir's `VERSION_16`: revision 15's body with the Ethernet
-// device after word 225 (QUUX's Ethernet contract, section 2.9) and no
-// Chaosnet interface on the I/O board (section 8 R4).  57 was revision 16's
-// with the interface, and muir refuses it.
+// QUUX's, muir's `VERSION_16`: every word 5 bytes, `<7:0>` first, so that
+// main memory in it is packed storage byte for byte; the pipeline's state
+// after the machine (A15b.13), the Ethernet device after word 225 (QUUX's
+// Ethernet contract, section 2.9) and no Chaosnet interface on the I/O board
+// (section 8 R4).  A body says so in `version`, and `chk_write_file` takes it
+// from the body.
 #define CHK_VERSION_16 58u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
@@ -75,13 +70,13 @@ struct chk {
 	// short read.
 	int broken;
 	// The bytes a word takes, muir's `Writer::set_word_bits`: 4, or 5 on
-	// revision 13.  `chk_init` makes it 4.
+	// QUUX.  `chk_init` makes it 4.
 	unsigned word_bytes;
-	// The format's version when the width alone does not say it: 0, or
-	// `CHK_VERSION_15`.  `chk_init` makes it 0.
+	// The format's version: 0, the CADR's `CHK_VERSION`, or
+	// `CHK_VERSION_16`.  `chk_init` makes it 0.
 	unsigned version;
 	// Where `len` stood when `chk_hole` was called, and the bytes that go
-	// there: revision 13's main memory, which is not copied into `p`.
+	// there: QUUX's main memory, which is not copied into `p`.
 	const volatile uint8_t *hole;
 	size_t hole_at, hole_len;
 };

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * The Kria KR260 as Linux sees it, with QUUX revision 13 beside it.
+ * The Kria KR260 as Linux sees it, with QUUX beside it.
  *
  * THE CADR's TREE (`zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dts`) WITH
- * REVISION 13's RESERVATION IN PLACE OF THE CADR's, and nothing else
+ * QUUX's RESERVATION IN PLACE OF THE CADR's, and nothing else
  * different: the same model and the QSPI flash controller off, said again
  * because an overlay applied to mainline's tree cannot include another's
  * fragments by reference.  `post-image.sh` applies it to mainline's tree and
- * writes zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb, which a revision 13
+ * writes zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb, which a QUUX
  * card or served set carries under the CADR tree's own name.
  *
  * AN OVERLAY ON MAINLINE'S OWN KR260 TREE.  Mainline builds the board's tree
@@ -26,7 +26,7 @@
  *     carrier's overlay), so that the card staging can read which board's
  *     tree this is out of this file, as it reads the other boards' out of
  *     theirs;
- *   revision 13's 161.125 MB at 0x5A00_0000, no-map, from
+ *   QUUX's 161.125 MB at 0x5A00_0000, no-map, from
  *     quux13-reserved.dtsi, which says why there;
  *   the QSPI FLASH CONTROLLER TURNED OFF.  The flash holds the board's own
  *     boot firmware, two images of it, and this project never writes it.

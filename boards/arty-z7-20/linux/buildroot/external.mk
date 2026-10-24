@@ -29,7 +29,7 @@ CADR_BOARD_DIR = $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20
 CADR_RESERVED_DTSI = $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi
 CADR_QUUX13_RESERVED_DTSI = $(BR2_EXTERNAL_CADR_PATH)/../quux13-reserved.dtsi
 
-# **AND QUUX REVISION 13's RESERVATION, beside it**, which revision 13's own
+# **AND QUUX's RESERVATION, beside it**, which QUUX's own
 # tree, zynq-arty-z7-20-quux13.dts, includes after the CADR's: the kernel
 # builds both trees, as every .dts in the board's dts/ is built, and a card or
 # a served set carries the one that goes with its bitstream (docs/linux.md).
@@ -45,9 +45,9 @@ LINUX_PRE_BUILD_HOOKS += CADR_LINUX_COPY_RESERVED_DTSI
 # file.  board/arty-z7-20/post-build.sh checks the result.
 LINUX_MAKE_ENV += KBUILD_BUILD_USER=buildroot KBUILD_BUILD_HOST=buildroot
 
-# **REVISION 13's u-boot.img, beside the board's**: U-Boot's own tree carries
-# the machine's reservation, so a revision 13 card carries a loader of its
-# own, the build's U-Boot with revision 13's tree (`../quux13-loader.sh`, which
+# **QUUX's u-boot.img, beside the board's**: U-Boot's own tree carries
+# the machine's reservation, so a QUUX card carries a loader of its
+# own, the build's U-Boot with QUUX's tree (`../quux13-loader.sh`, which
 # says how, and refuses a recipe that does not reproduce the build's own
 # u-boot.img).  The Arty Z7-20's alone, because this file's hooks run on
 # every board's build.

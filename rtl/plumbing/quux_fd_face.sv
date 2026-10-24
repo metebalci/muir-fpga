@@ -57,8 +57,8 @@
 `default_nettype none
 
 module quux_fd_face #(
-    // IDENT: the board's top level gives it, "QF13" on revision 13 and
-    // later; no default, so no instance can carry a stale one, as
+    // IDENT: the board's top level gives it, "QF13" on QUUX; no default,
+    // so no instance can carry a stale one, as
     // revision 12's "QFD9" was.
     parameter logic [31:0] IDENT,
     parameter int unsigned ID_W  = 12,

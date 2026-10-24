@@ -631,19 +631,11 @@ gives:
 
     main-memory-size 32M: main memory is given in megawords, with the unit MW, such as 32MW
 
-**The range is the board's.** On revision 13 it is 1MW to what the board keeps
-for QUUX's main memory, its reservation (`docs/linux.md`): 32MW on the Arty
-Z7-20 and the Kria KR260, and 64MW on the DE25-Nano. The default is 32MW, as
-muir's revision 13 has it. An amount outside the range is refused with the
-range:
-
-    main-memory-size 33MW: revision 13's main memory on this board is 1MW to 32MW
-
-**On revision 15 the size is the bitstream's.** Its main memory is built at
+**On QUUX the size is the bitstream's.** Its main memory is built at
 the board's whole reservation, 32MW on the Kria KR260. Its console's word 37
 is read only, and word 38 gives that size as both the default and the most.
-`cadr-console main-memory-size` with any other amount inside the range writes
-word 37, reads back 32MW, and exits 1.
+`cadr-console main-memory-size` with any other amount writes word 37, reads
+back the bitstream's size, and exits 1.
 
 It is set before the drive comes present, through `cadr-console
 main-memory-size`, for the reason the boards' count is. Which machine the

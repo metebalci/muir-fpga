@@ -188,7 +188,6 @@ FACES = [
     ("u_h2f_split", "CHAOS_BASE", "h2f", "CHAOS"),
     ("u_h2f_split", "SER_BASE", "h2f", "SERIAL"),
     ("u_h2f_split", "INPUT_BASE", "h2f", "INPUT"),
-    ("u_h2f_split", "FD_BASE", "h2f", "FD"),
     ("u_pack", "REG_BASE", "h2f", "PACK"),
     ("u_lw_split", "CON_BASE", "lw", "CONSOLE"),
     ("u_lw_split", "DBG_BASE", "lw", "CONSOLE+0x1000"),
@@ -196,21 +195,18 @@ FACES = [
     ("u_debug_window", "REG_BASE", "lw", "CONSOLE+0x1000"),
 ]
 
-# Every instance on either bridge takes the bridges' AXI4 widths.  QUUX has
-# no debug cable (contract Q5), so on QUUX `u_lw_dbg_rest`, a default slave,
-# answers the window's page in place of `u_debug_window`; both are listed,
-# because the source holds both arms of the generate.
+# Every instance on either bridge takes the bridges' AXI4 widths.
 SHAPED = ["u_h2f_split", "u_pack", "u_chaos", "u_serial", "u_input",
-          "u_fd_face", "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
-          "u_lw_rest", "u_lw_dbg_rest"]
+          "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
+          "u_lw_rest"]
 
 # Which bridge each of them is on, and which instance is that bridge's
 # splitter -- the one whose reset the rest are held to.  The splitter is on
 # the list too: it owns the window before anything behind it does.
 ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_chaos": "h2f",
-             "u_serial": "h2f", "u_input": "h2f", "u_fd_face": "h2f", "u_h2f_rest": "h2f",
+             "u_serial": "h2f", "u_input": "h2f", "u_h2f_rest": "h2f",
              "u_lw_split": "lw", "u_console": "lw", "u_debug_window": "lw",
-             "u_lw_rest": "lw", "u_lw_dbg_rest": "lw"}
+             "u_lw_rest": "lw"}
 SPLITTER = {"h2f": "u_h2f_split", "lw": "u_lw_split"}
 
 WINDOWS = {"h2f": (H2F_BASE, H2F_SIZE), "lw": (LW_BASE, LW_SIZE)}
@@ -287,32 +283,31 @@ WIRED = [
 # takes, which is the fabric's, and never the machine's.
 CABLE_RESET = ["u_dbg_cable", "u_dbg_join"]
 
-# **AND REVISION 15'S TOP LEVEL**, `--quux15`: `boards/de25-nano/quux15_de25.sv`,
+# **AND QUUX'S TOP LEVEL**, `--quux15`: `boards/de25-nano/quux15_de25.sv`,
 # the same two bridges with QUUX's pages.  Its console is `quux15_face.sv`,
 # which takes a page's twelve bits and has no base of its own, so the
-# splitter's page is the console's place; the network's and the serial
-# line's pages and the debug cable's are answered by default slaves, which
+# splitter's page is the console's place; the second page, the CADR's
+# network page, is the Ethernet device's face, at the pack side's + 0x5000
+# (`quux-ethernet-device`'s QED_FACE_OFFSET); the serial line's page and the
+# debug cable's are answered by default slaves, which
 # are held to the bridges' shape and reset like every other face.  It has no
 # debug cable, so there is no seam to read; its eight pads on JP1 are the
 # CADR's connector's, named, undriven and read by nothing.
 QUUX15_TOP = "boards/de25-nano/quux15_de25.sv"
 QUUX15_FACES = [
     ("u_h2f_split", "PACK_BASE", "h2f", "PACK"),
-    ("u_h2f_split", "CHAOS_BASE", "h2f", "CHAOS"),
+    ("u_h2f_split", "CHAOS_BASE", "h2f", "PACK+0x5000"),
     ("u_h2f_split", "SER_BASE", "h2f", "SERIAL"),
     ("u_h2f_split", "INPUT_BASE", "h2f", "INPUT"),
     ("u_h2f_split", "FD_BASE", "h2f", "FD"),
-    # And on revision 16 the second page is the Ethernet device's face, at
-    # the pack side's + 0x5000 (`quux-ethernet-device`'s QED_FACE_OFFSET).
-    ("u_h2f_split", "CHAOS_BASE@16", "h2f", "PACK+0x5000"),
     ("u_pack", "REG_BASE", "h2f", "PACK"),
     ("u_lw_split", "CON_BASE", "lw", "CONSOLE"),
     ("u_lw_split", "DBG_BASE", "lw", "CONSOLE+0x1000"),
 ]
-QUUX15_SHAPED = ["u_h2f_split", "u_pack", "u_h2f_chaos", "u_ed_face", "u_h2f_ser", "u_input",
+QUUX15_SHAPED = ["u_h2f_split", "u_pack", "u_ed_face", "u_h2f_ser", "u_input",
                  "u_fd_face", "u_h2f_rest", "u_lw_split", "u_face",
                  "u_lw_dbg_rest", "u_lw_rest"]
-QUUX15_ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_h2f_chaos": "h2f", "u_ed_face": "h2f",
+QUUX15_ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_ed_face": "h2f",
                     "u_h2f_ser": "h2f", "u_input": "h2f", "u_fd_face": "h2f",
                     "u_h2f_rest": "h2f", "u_lw_split": "lw", "u_face": "lw",
                     "u_lw_dbg_rest": "lw", "u_lw_rest": "lw"}
@@ -350,14 +345,6 @@ def instance_parameters(text, instance):
     out = {}
     for name, value in re.findall(r"\.(\w+)\s*\(\s*([^()]*?)\s*\)", m.group(2)):
         v = value.replace("_", "").strip()
-        # A page chosen by the revision, `ETHERNET ? <16's> : <15's>`
-        # (`quux15_de25.sv`'s second page): the name for revision 15's and
-        # `<name>@16` for revision 16's.
-        n = re.match(r"^ETHERNET\s*\?\s*(?:\d+)'h([0-9a-fA-F]+)\s*:\s*(?:\d+)'h([0-9a-fA-F]+)$", v)
-        if n:
-            out[name + "@16"] = int(n.group(1), 16)
-            out[name] = int(n.group(2), 16)
-            continue
         n = re.match(r"^(?:\d+)'h([0-9a-fA-F]+)$", v)
         if n:
             out[name] = int(n.group(1), 16)
@@ -720,7 +707,7 @@ def main():
     ap.add_argument("root", help="the repository's root")
     ap.add_argument("--stamp", help="write this file when the check passes")
     ap.add_argument("--quux15", action="store_true",
-                    help="revision 15's top level, boards/de25-nano/quux15_de25.sv")
+                    help="QUUX's top level, boards/de25-nano/quux15_de25.sv")
     args = ap.parse_args()
     global TOP, FACES, SHAPED, ON_BRIDGE
     if args.quux15:
@@ -834,9 +821,9 @@ def main():
     if args.quux15:
         bad += check_quux15_pads(args.root, top)
         if bad:
-            fail("%d of revision 15's DE25-Nano faces or pads are not where they "
+            fail("%d of QUUX's DE25-Nano faces or pads are not where they "
                  "belong" % bad)
-        print("de25_faces: %d faces of revision 15, each at the offset its program's "
+        print("de25_faces: %d faces of QUUX, each at the offset its program's "
               "address is into its bridge's window" % len(FACES))
         if args.stamp:
             os.makedirs(os.path.dirname(args.stamp), exist_ok=True)

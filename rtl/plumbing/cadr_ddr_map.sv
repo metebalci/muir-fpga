@@ -46,11 +46,11 @@
 //
 // **THE DISPLAY STAYS WHERE IT WAS, AND MAIN MEMORY SITS DIRECTLY BELOW IT.**
 // The reservation was 128 MB with main memory at its base and the display
-// 64 MB up; it is now the 17.125 MB around the same display, so that QUUX
-// revision 13's main memory, which fills the room below the display, did not
-// move, and so that every board's new reservation is inside its old one.  A
-// card whose loader still carries the old reservation in its own tree keeps
-// its relocation clear of the new one.
+// 64 MB up; it is now the 17.125 MB around the same display, so that QUUX's
+// main memory, which fills the room below the display, did not move, and so
+// that every board's new reservation is inside its old one.  A card whose
+// loader still carries the old reservation in its own tree keeps its
+// relocation clear of the new one.
 //
 // **THE BASE IS THE BOARD'S, AND THE LAYOUT UNDER IT IS NOT.**  The DE25-Nano's
 // processor has 1 GB of LPDDR4 at `0x8000_0000` to `0xBFFF_FFFF`, and the fabric
@@ -153,14 +153,14 @@ package cadr_ddr_map;
       DISPLAY_BASE + 32'(DISPLAY_WORDS_REACHABLE << 2);
 
   // QUUX's video controller: one buffer of up to 64K words from
-  // `DISPLAY_BASE` (`mono_display_byte_address`), 256 KB.
+  // `DISPLAY_BASE`, 256 KB.
   localparam int unsigned VIDEO_WORDS_MAX = 65536;
 
-  // **QUUX REVISION 13's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3,
-  // G1 §4.1).  Main memory is packed storage, word w at byte
-  // `QUUX13_MAIN_BASE + 5w`, directly below the display; the display and the
-  // disk pack program's records stay where the CADR's are, so they are at the
-  // same addresses on every machine and only main memory moves.
+  // **QUUX'S MEMORY, AND ITS OWN RESERVATION** (contract G2 §3, G1 §4.1).
+  // Main memory is packed storage, word w at byte `QUUX13_MAIN_BASE + 5w`,
+  // directly below the display; the display and the disk pack program's
+  // records stay where the CADR's are, so they are at the same addresses on
+  // every machine and only main memory moves.
   //
   //   board        main memory                 room               display
   //   Arty Z7-20   0x1200_0000-0x1BFF_FFFF     160 MB, 32M words  0x1C00_0000
@@ -169,11 +169,11 @@ package cadr_ddr_map;
   //
   // **EACH MACHINE HAS ITS OWN DEVICE TREE**, beside its bitstream: the
   // CADR's reserves `RESERVED_BASE` for `RESERVED_BYTES`, as above; and
-  // revision 13's from `QUUX13_MAIN_BASE` to
-  // `QUUX13_RESERVED_END`, the end of the records, which is the end of the
-  // CADR's reservation too.
-  // The CADR's main memory at `MAIN_BASE` is inside revision 13's; the two are
-  // two bitstreams, never one.  `quux_mem_port.sv` takes `QUUX13_MAIN_BASE`.
+  // QUUX's from `QUUX13_MAIN_BASE` to `QUUX13_RESERVED_END`, the end of the
+  // records, which is the end of the CADR's reservation too.  The CADR's
+  // main memory at `MAIN_BASE` is inside QUUX's; the two are two
+  // bitstreams, never one.  Each `quux15_*` board top holds its own main
+  // memory's base and size to these.
 `ifdef CADR_DDR_MAP_DE25_NANO
   localparam logic [31:0] QUUX13_MAIN_BASE      = 32'hA000_0000;
   localparam int unsigned QUUX13_MAIN_WORDS_MAX = 64 * 1024 * 1024;
@@ -193,20 +193,13 @@ package cadr_ddr_map;
   localparam logic [31:0] QUUX13_RESERVED_END =
       DISPLAY_BASE + 32'(DISPLAY_WORDS << 2) + 32'(RECORDS_BYTES);
 
-  // **HOW MANY 64K-WORD MEMORY BOARDS EACH MACHINE TAKES**, the console's
-  // page 2 word 37 (`cadr_console.sv`), muir's `--main-memory-boards`: the
-  // CADR comes up with 32 and takes 1 to 60, below the Xbus I/O space;
-  // QUUX, revision 13, comes up with muir's 512, 32M words (contract
-  // G2 §3), and takes 1 to what its reservation holds, `QUUX13_MAIN_WORDS_MAX`,
-  // and never more than muir's 1,024: 512 on the Arty Z7-20 and the Kria
-  // KR260, 1,024 on the DE25-Nano.  Each board's top level hands these to its
-  // console, and `machine_param.pass` reads them back there.
-  function automatic int unsigned mem_boards_default(input bit rev13);
-    return rev13 ? 512 : 32;
-  endfunction
-  function automatic int unsigned mem_boards_max(input bit rev13);
-    return !rev13 ? 60 : (QUUX13_MAIN_WORDS_MAX / 65536 > 1024 ? 1024 : QUUX13_MAIN_WORDS_MAX / 65536);
-  endfunction
+  // **HOW MANY 64K-WORD MEMORY BOARDS THE CADR TAKES**, the console's page
+  // 2 word 37 (`cadr_console.sv`), muir's `--main-memory-boards`: it comes
+  // up with 32 and takes 1 to 60, below the Xbus I/O space.  Each board's
+  // top level hands these to its console, and `machine_param.pass` reads
+  // them back there.
+  localparam int unsigned MEM_BOARDS_DEFAULT = 32;
+  localparam int unsigned MEM_BOARDS_MAX     = 60;
 
   // A CADR word address into a byte address in the region.
   function automatic logic [31:0] main_byte_address(input logic [21:0] phys);
@@ -226,13 +219,6 @@ package cadr_ddr_map;
   // base.  `rtl/machine/cadr_tv.sv` decodes the window --- the second
   // instance, strapped to `tv::COLOR_TV` --- and
   // `rtl/plumbing/cadr_xbus_ddr.sv` answers it here.
-  // QUUX's video controller: one buffer of up to 64K words from the same base, 40,960
-  // at the bitstreams' 1280 by 1024.  QUUX has no color board, so nothing
-  // is placed after it.
-  function automatic logic [31:0] mono_display_byte_address(input logic [15:0] offset);
-    return DISPLAY_BASE + {14'd0, offset, 2'b00};
-  endfunction
-
   function automatic logic [31:0] color_display_byte_address(input logic [14:0] offset);
     return COLOR_DISPLAY_BASE + (32'(offset) << 2);
   endfunction

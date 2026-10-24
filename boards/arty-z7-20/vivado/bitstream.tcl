@@ -122,83 +122,24 @@
 # flow, and the two unknowns are worth separating rather than compounding.
 
 # **WHICH MACHINE**, which is asked first and refused before anything is
-# written, so that a wrong name leaves no directory behind it:
-#
-#     MACHINE=quux WORD_BITS=40 DDR=1 HDMI=1 OUTDIR=build/arty-quux13-hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
-#
-# `cadr`, the default, is MIT's machine and this flow exactly as it was.
-# `quux` is the evolved CADR, a bitstream of its own: the top level's
-# `MACHINE` generic, a default directory of `build/arty-quux13`, and a file
-# named `quux_arty.bit` instead of `cadr_arty.bit`.  **A QUUX BUILD MUST NAME
-# ITS MACHINE IN ITS DIRECTORY**, because the reports beside the bitstream
-# carry no machine in their names, and a QUUX build into `build/ddr` would
-# replace the CADR's.  The generic is passed only for QUUX, so the CADR's
-# synthesis command is the one it has always been.
+# written, so that a wrong name leaves no directory behind it.  This flow
+# builds the CADR, MIT's machine, `MACHINE=cadr` or no value; QUUX is its own
+# flow, `boards/arty-z7-20/vivado/quux15_bitstream.tcl`, and `MACHINE=quux`
+# is refused here and pointed at it.
 set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
-if {$machine ne "cadr" && $machine ne "quux"} {
-    puts "BIT: FAILED --- MACHINE=$machine is not a machine. It is cadr, MIT's"
-    puts "BIT: machine, or quux, the evolved CADR."
+if {$machine eq "quux"} {
+    puts "BIT: FAILED --- MACHINE=quux is not built by this flow, which builds the"
+    puts "BIT: CADR: QUUX's is boards/arty-z7-20/vivado/quux15_bitstream.tcl."
+    exit 1
+}
+if {$machine ne "cadr"} {
+    puts "BIT: FAILED --- MACHINE=$machine is not a machine. This flow builds cadr,"
+    puts "BIT: MIT's machine; quux, the evolved CADR, is quux15_bitstream.tcl's."
     exit 1
 }
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
-set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) \
-                      : ($machine eq "quux" ? ([info exists ::env(REVISION)] && $::env(REVISION) eq "14" \
-                                               ? "build/arty-quux14" : "build/arty-quux13") \
-                                            : "build/bitstream")}]
-if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
-    puts "BIT: FAILED --- MACHINE=quux into OUTDIR=$outdir, whose name does not say"
-    puts "BIT: quux. Name the directory for the machine, as build/arty-quux13-ddr."
-    exit 1
-}
-# **AND THE WORD**: `WORD_BITS=40` is QUUX, revision 13, whose processor
-# comes with its 40-bit word (contract G2), and 32, the default, the CADR's.
-# Revision 12, QUUX at 32 bits, is retired and refused, as the Kria KR260's
-# flow refuses it.  The top level's `WORD_BITS` generic, passed only at 40,
-# and a directory that says `quux13`, for the reason above.
-set word_bits [expr {[info exists ::env(WORD_BITS)] ? $::env(WORD_BITS) : "32"}]
-if {$word_bits ne "32" && $word_bits ne "40"} {
-    puts "BIT: FAILED --- WORD_BITS=$word_bits is not a word. It is 32, or 40 for"
-    puts "BIT: QUUX revision 13."
-    exit 1
-}
-if {$word_bits eq "40" && $machine ne "quux"} {
-    puts "BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine;"
-    puts "BIT: the CADR's word is 32 bits."
-    exit 1
-}
-if {$machine eq "quux" && $word_bits ne "40"} {
-    puts "BIT: FAILED --- MACHINE=quux at WORD_BITS=$word_bits, which was revision 12,"
-    puts "BIT: and revision 12 is retired: give WORD_BITS=40."
-    exit 1
-}
-# **AND THE REVISION**: QUUX at 40 bits is revision 13 unless the flow is
-# asked for revision 14 by name, `REVISION=14` (contract G3 revision 14):
-# the 32-bit virtual address, the TLB, the 29-bit physical address, PROM
-# 2002 and its own constraints.  Nothing builds revision 14 by default, and
-# a revision 14 build goes to a directory that says `quux14`, a revision 13
-# one to a directory that says `quux13`, so that neither replaces the
-# other's bitstream.  The top level's `REVISION` generic is passed only at
-# 14, so revision 13's synthesis command is the one it has always been.
-set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
-if {$revision ne "13" && $revision ne "14"} {
-    puts "BIT: FAILED --- REVISION=$revision is not a revision. QUUX at 40 bits is"
-    puts "BIT: revision 13, the default, or 14."
-    exit 1
-}
-if {$revision eq "14" && $machine ne "quux"} {
-    puts "BIT: FAILED --- REVISION=14 is QUUX's, and MACHINE=$machine."
-    exit 1
-}
-if {$machine eq "quux" && [string first quux$revision [file tail $outdir]] < 0} {
-    puts "BIT: FAILED --- WORD_BITS=$word_bits into OUTDIR=$outdir: a revision $revision"
-    puts "BIT: build goes to a directory that says quux$revision."
-    exit 1
-}
-if {$word_bits eq "40"} {
-    puts "BIT: the machine is $machine, revision $revision (WORD_BITS=40)"
-} else {
-    puts "BIT: the machine is $machine"
-}
+set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
+puts "BIT: the machine is $machine"
 file mkdir $outdir
 
 # HOW LONG A TICK IS, ASKED OF THE FABRIC THAT DECIDES IT.  The board's own
@@ -297,18 +238,8 @@ if {$prove != 0 && $prove != 1 && $prove != 2} {
 # Everything below asks this rather than `$ddr`.
 set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
-# QUUX boots from its own PROM, version 2001, which `make
-# build/boot_prom.quux13.hex` writes out of muir's `data/quux-promh.mcr`
-# (contract G2 §2.8); and revision 14 from PROM 2002, which `make
-# build/boot_prom.quux14.hex` writes out of the hand-over's own file, held
-# to its digest (the Makefile's `QUUX_PROM_2002`).
-if {$machine ne "quux"} {
-    set prom build/boot_prom.hex
-} elseif {$revision eq "14"} {
-    set prom build/boot_prom.quux14.hex
-} else {
-    set prom build/boot_prom.quux13.hex
-}
+# MIT's boot PROM, which `make build/boot_prom.hex` writes.
+set prom build/boot_prom.hex
 puts "BIT: the boot PROM is $prom"
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
@@ -353,12 +284,6 @@ foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
 source boards/arty-z7-20/vivado/rams_check.tcl
 rams_canary $part
 read_verilog -sv $sources
-# **REVISION 14'S TLB IN BLOCK RAM**, chosen here and not in `rtl/machine/`
-# (contract G3 revision 14, §5.4): five RAMB36E1, 4K x 9 each, both ports
-# writing.  Read before synthesis, which is where `RAM_STYLE` is taken; the
-# netlist's cells are asked after it (`tlb_check.tcl`).
-source boards/arty-z7-20/vivado/tlb_check.tcl
-if {$revision eq "14"} { read_tlb_ram_style boards/arty-z7-20/vivado/quux14_tlb_ram.xdc }
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic SYNC_PROM_HEX=[file normalize $sync_prom] \
@@ -366,15 +291,10 @@ synth_design -top cadr_arty -part $part \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
     -generic HDMI=$hdmi \
-    -generic LMTV=$lmtv \
-    {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}] \
-    {*}[expr {$word_bits eq "40" ? [list -generic WORD_BITS=40] : {}}] \
-    {*}[expr {$revision eq "14" ? [list -generic REVISION=14] : {}}]
+    -generic LMTV=$lmtv
 # That every block RAM writes where the RTL says, which synthesis once did
 # not and nothing downstream noticed.  Stops the build if not.
-assert_rams_write_where_the_rtl_says $machine $revision
-# And revision 14's TLB is the memory this board's setting asked for.
-assert_tlb_primitive $revision block
+assert_rams_write_where_the_rtl_says
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."
@@ -410,15 +330,6 @@ if {$prove > 0} {
 # care how many there are.
 read_xdc boards/arty-z7-20/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
-# QUUX's own clauses, which would reach every path on the CADR, each count of
-# K written from `sync_k`: the top level's own K for revision 13, five
-# (`tick.tcl`).
-if {$machine eq "quux"} {
-    set sync_k [cadr_sync_k $word_bits boards/arty-z7-20/cadr_arty.sv $revision]
-    read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc
-}
-# And revision 14's, whose every object is its TLB's.
-if {$revision eq "14"} { read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux14_machine.xdc }
 # Only when the BSCANE2 it names is in the design. See the switch above.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # And the same rule for the memory port's own deadline: every object
@@ -469,8 +380,7 @@ if {$hdmi > 0} {
     # longer one: out of the pixel domain, through the color board's map inside
     # `cadr_machine`, and back.
     set hdmi_map [get_cells -quiet -hier -filter {NAME =~ *map_idx_reg*}]
-    # QUUX has no color board, so the round trip has nothing at its far end.
-    if {[llength $hdmi_map] == 0 && $machine ne "quux"} {
+    if {[llength $hdmi_map] == 0} {
         puts "BIT: FAILED --- no `map_idx` register was found, so the color"
         puts "BIT: map's round trip through rtl/machine/cadr_tv.sv is timed by"
         puts "BIT: nothing at all: the clock group above makes it a false path"
@@ -511,12 +421,7 @@ if {$hdmi > 0} {
 # it exists for is measured and is in its own header --- the machine's
 # diagnostic mux reaching the carrier's latch, 23 levels, -8.772 ns on a board
 # that read +0.914 one commit earlier.
-#
-# **THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5): a QUUX build has no
-# window, no connector and no join, so it reads neither of these two files and
-# asks neither of their assertions below, and asks instead that none of the
-# three is in its design.
-if {$port > 0 && $machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 # And the Pmod carrier's, which is the same cone with a second reader on it:
 # `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the frame registers of the
 # connector's sender. **NOT GATED, where the window's is.** A board is always
@@ -525,7 +430,7 @@ if {$port > 0 && $machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug.
 # so the machine's diagnostic mux reaches that sender on every board. Gated,
 # the memory-off board came out at -9.600 ns on 596 endpoints with the file
 # read by nothing; that file's own header has the measurement.
-if {$machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc }
+read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source boards/arty-z7-20/vivado/constraints_check.tcl
@@ -562,14 +467,12 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # feeds it is the window's own fast registers and not the machine's mux.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$port > 0}        { lappend inside g_ddr.u_axi }
-if {$port > 0 && $machine eq "cadr"} { lappend inside g_ddr.g_dbg_window.u_debug_window }
+if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window }
 # **AND THE CONNECTOR IS IN THE LIST WHATEVER THE SWITCHES SAY**, for the
 # reason its constraint file is read unconditionally: a board is always a
 # debuggee, so the cable's sender is relaxed on every board and the invariant
-# would otherwise fail on the memory-off one.  The CADR's alone, in the
-# top level's `g_dbg_cable`.
-if {$machine eq "cadr"} { lappend inside g_dbg_cable.u_dbg_cable }
+# would otherwise fail on the memory-off one.
+lappend inside u_dbg_cable
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -621,17 +524,8 @@ if {$clocks < 2} {
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here. The audit's own assertion just below is this clause's sharp
 # half, being registers only `slow` relaxes.
-# On QUUX the relaxed set is K ticks (`quux_machine.xdc`), and the count is
-# asked at the build's K, with the audit's assertion below as its sharp half
-# here too: `cadr_machine.xdc` has clauses of five ticks, which QUUX's file
-# re-issues at its own counts.
-if {$machine ne "quux"} {
-    # grid: 75 ns (shared with 80 ns)
-    assert_multicycle_applied $tick 8
-} else {
-    # sync: K
-    assert_multicycle_applied $tick $sync_k
-}
+# grid: 75 ns (shared with 80 ns)
+assert_multicycle_applied $tick 8
 # **AND WHICH SET THE TRANSACTION AUDIT'S REGISTERS FELL INTO, ASKED DIRECTLY
 # RATHER THAN INFERRED FROM A COUNT.** `rtl/plumbing/cadr_bus_audit.sv` is 347
 # registers under `cadr_machine`, which relaxes everything it does not name ---
@@ -662,13 +556,8 @@ if {$machine ne "quux"} {
 # 150.000 ns and the same refusal. A flow nobody runs is a flow that says
 # nothing, which is this project's oldest lesson in a new place.
 # grid: 75 ns
-if {$port > 0 && $machine ne "quux"} {
+if {$port > 0} {
     assert_instance_timing $tick 8 *u_machine/audit/* \
-        {*audit/first_* *audit/micro_reg* *audit/word_reg*}
-} elseif {$port > 0} {
-    # QUUX's relaxed set is K ticks.
-    # sync: K
-    assert_instance_timing $tick $sync_k *u_machine/audit/* \
         {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 } else {
     puts "XDC: the audit has no registers on a board with no console to read\
@@ -688,7 +577,7 @@ if {$port > 0 && $machine ne "quux"} {
 # halves are this clause's alone: the address and data registers must carry
 # the requirement and no other register of the adapter may.
 # grid: 80 ns
-if {$port > 0 && $machine ne "quux"} {
+if {$port > 0} {
     # No other register of the adapter at eight.  The three are left out of
     # this question (`elsewhere`): the clause is written from the processor,
     # so each is reached at two requirements, eight from the processor and
@@ -707,7 +596,7 @@ if {$port > 0 && $machine ne "quux"} {
         {*u_machine/processor/*} $a_addr
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the disk's channel into the adapter" \
-        {*g_cadr_disk.disk/*} $a_addr
+        {*disk/*} $a_addr
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the Unibus map's window into the adapter" \
         {*memory/busint_regs/*} $a_addr
@@ -716,41 +605,15 @@ if {$port > 0 && $machine ne "quux"} {
         {*memory/ch_own_reg* *memory/mp_own_reg* *memory/owner_d_reg*} $a_addr
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
-        {*g_cadr_busint.busint/*} $a_addr
-}
-# **QUUX'S ADAPTER HAS NO CLAUSE** (contract Q7): the processor's cycles
-# never reach it, the frame buffer being the cache's and the device
-# registers the register decode's, so every word it takes is one of QUUX's
-# memory port's registers or of the block-disk's channel, loaded one to
-# three ticks before.  No register of it at the bus's 80 ns, and a tick from
-# each of the two.
-if {$port > 0 && $machine eq "quux"} {
-    # The request the adapter holds, which its transaction is worked out
-    # from (`quux_axi_master.sv`).
-    set q_addr {*g_ddr.g_qaxi.u_qaxi/a_q_reg* *g_ddr.g_qaxi.u_qaxi/wd_q_reg* *g_ddr.g_qaxi.u_qaxi/beats_q_reg*
-                *g_ddr.g_qaxi.u_qaxi/wide_q_reg* *g_ddr.g_qaxi.u_qaxi/line_reg*}
-    # grid: 80 ns
-    assert_instance_timing $tick 8 *g_ddr.g_qaxi.u_qaxi/* {}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
-        {*memory/g_quux_port.port/*} $q_addr
-    # And the block-disk's transfer words, which pass through the bridge
-    # three ticks after the channel loads them, and the arbiter's registers,
-    # which hand it the bus one and two ticks before: one tick each.
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "block-disk's words into QUUX's adapter" \
-        {*g_quux_disk.disk/*} $q_addr
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the Xbus arbiter into QUUX's adapter" \
-        {*memory/ch_own_reg* *memory/owner_d_reg*} $q_addr
+        {*busint/*} $a_addr
 }
 # And the debug cable's six ticks, the same way and for the same reason. The
 # instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
 # other register of the carrier may --- and the count is the `foreach` half,
 # that it reached a path at all.
 # board ticks
-if {$port > 0 && $machine eq "cadr"} {
-    assert_instance_timing $tick 6 *g_ddr.g_dbg_window.u_debug_window/* {*sts_dbd_reg*}
+if {$port > 0} {
+    assert_instance_timing $tick 6 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
 }
 # And the Pmod carrier's, the same two halves, and ASSERTED ON EVERY BOARD
 # because the connector is on every board. The frame registers of the
@@ -758,13 +621,7 @@ if {$port > 0 && $machine eq "cadr"} {
 # the gap counter and the dead man may not, because a counter given six ticks
 # to settle is a counter that no longer counts.
 # board ticks
-if {$machine eq "cadr"} {
-    assert_instance_timing $tick 6 *g_dbg_cable.u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
-} else {
-    # **AND ON QUUX, NONE OF IT IS THERE**: not one cell of the connector,
-    # the join or the window, by name, in the synthesized design.
-    assert_no_debug_cable
-}
+assert_instance_timing $tick 6 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
 
 # And the carrier's deadline against the carrier's own beat, read out of the
 # source rather than remembered here. Pure Tcl and no design, so it runs
@@ -774,7 +631,7 @@ assert_cable_beat rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/xilinx7/cadr_debug_pm
 # registers, `ticks(60)` in `cadr_machine.xdc`, so it no longer says on its own
 # that the carrier's clause reached a path; the instance assertion above does.
 # board ticks
-if {$machine eq "cadr"} { assert_multicycle_applied $tick 6 }
+assert_multicycle_applied $tick 6
 
 # AND THE TWO CLAUSES `cadr_machine.xdc` ADDED FOR THE SLAVES INSIDE THE
 # MACHINE, held the same two ways: the instance half says no OTHER register
@@ -789,15 +646,11 @@ if {$machine eq "cadr"} { assert_multicycle_applied $tick 6 }
 # gives the same eight ticks the bus's setup does, so they are named as
 # relaxed ELSEWHERE: left out of both halves rather than read as swallowed.
 # grid: 80 ns
-# QUUX's display is the video controller, which keeps no word relaxed at its pins,
-# and the CADR's board is not fitted there, so the clause has nothing to reach.
-if {$machine ne "quux"} {
-    assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
-        {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
-}
+assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
+    {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
 # The color TV is the same module a second time, held the same two ways.
 # grid: 80 ns
-if {$machine ne "quux" && $lmtv} {
+if {$lmtv} {
     assert_instance_timing $tick 8 *u_machine/memory/g_color_tv.tv_color/* \
         {*color_map_reg* *pointer_reg*} \
         {*g_color_tv.tv_color/ctl_reg* *g_color_tv.tv_color/fb_reg* *g_color_tv.tv_color/which_reg*}
@@ -806,172 +659,57 @@ if {$machine ne "quux" && $lmtv} {
 assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
 
-if {$machine ne "quux"} {
-    # AND THE SPLIT PATHS `cadr_machine.xdc` NARROWS BELOW THE RELAXED SET, each
-    # asked of its own paths: none may ask for more than its clause gives, and at
-    # least one must ask for exactly that. The clauses are written at the relaxed
-    # set's own priority, so this is what says the tool ranked them above it.
-    # grid: 75 ns - 1 tick
-    assert_clause_timing $tick 7 "IR into the scratchpad latches" \
-        {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
-         *processor/spc_q_reg*}
-    # grid: 60 ns + 1 tick
-    assert_clause_timing $tick 7 "out of the scratchpad latches" \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
-         *processor/spc_q_reg*}
-    # grid: 60 ns - 1 tick
-    assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
-         *processor/spc_q_reg*} {*processor/dmem_reg*}
-    # grid: 60 ns - 1 tick
-    assert_clause_timing $tick 5 "the control store's word" \
-        {*processor/imem_reg*}
-    # grid: 0 ns + 3 ticks
-    assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
-    # grid: 0 ns + 3 ticks
-    assert_clause_timing $tick 3 "the dispatch memory's write" {*processor/dmem_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the three memories' writes into the readout" \
-        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
-        {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
-    # grid: 0 ns + 2 ticks
-    assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} \
-        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
-        {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
-         *processor/mw_late2_q_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
-        {*processor/spc_q_reg*}
-    # REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
-    # every tick whether the output flips on the next, and the NXM timer counts
-    # the flip and takes the timeout from it that tick.  Every path out of it is
-    # the tick's; a rename puts it back in the set, at eight.
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "REQTIM's oscillator" {*g_cadr_busint.busint/vco_acc_reg*}
-    # grid: 60 ns
-    assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
-        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-         *memory/unibus_reg* *memory/ub_addr_reg*}
-}
-
-# QUUX'S CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED, at the build's K.
-# Every clause of the CADR's file is re-issued there at QUUX's counts, so each
-# is asked here the same two ways: none of its paths may ask for more than
-# its count, and at least one must ask for exactly that.  The clocks'
-# countdown must be in the design for their paths to be the tick's: they are
-# out of the relaxed set by name (`cadr_machine.xdc`), so a rename would put
-# them back in it in silence.
-if {$machine eq "quux"} {
-    set quux_tick_cells [get_cells -quiet -hier -filter {NAME =~ *processor/g_quux_tick.clocks/us_reg* && IS_SEQUENTIAL}]
-    if {[llength $quux_tick_cells] == 0} {
-        puts "BIT: FAILED --- QUUX's clocks' countdown is not in the design, so the"
-        puts "BIT: clause taking it out of the relaxed set is on nothing."
-        exit 1
-    }
-    set q_latch {*processor/amem_reg* *processor/mmem_reg* *processor/g_quux_pdl.pdl_reg*
-                 *processor/spc_q_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "IR into the scratchpad latches" \
-        {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
-        $q_latch
-    # sync: K - 1
-    assert_clause_timing $tick [expr {$sync_k - 1}] "out of the scratchpad latches" $q_latch
-    # sync: K - 1
-    assert_clause_timing $tick [expr {$sync_k - 1}] "the latches into the dispatch memory's write" $q_latch \
-        {*processor/dmem_reg*}
-    # sync: K
-    assert_clause_timing $tick $sync_k "the control store's word" \
-        {*processor/imem_reg* *processor/prom_q_reg*}
-    # The maps' clauses are revision 13's: revision 14 has no map, and its
-    # TLB's clauses are asked below.
-    if {$revision eq "13"} {
-        # sync: K
-        assert_clause_timing $tick $sync_k "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
-    }
-    # sync: K
-    assert_clause_timing $tick $sync_k "the dispatch memory's write" {*processor/dmem_reg*}
-    if {$revision eq "13"} {
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the three memories' writes into the readout" \
-            {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
-            {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
-        # sync: K
-        assert_clause_timing $tick $sync_k "MD into the writes' address" {*processor/md_reg*} \
-            {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
-    } else {
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the dispatch memory's write into the readout" \
-            {*processor/dmem_reg*} {*processor/ro_dmem_q_reg*}
-        # sync: K
-        assert_clause_timing $tick $sync_k "MD into the dispatch memory's write address" \
-            {*processor/md_reg*} {*processor/dmem_reg*}
-    }
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
-        {*processor/spc_q_reg*}
-    # sync: K - 2
-    assert_clause_timing $tick [expr {$sync_k - 2}] "into the every-tick registers" \
-        {*processor/ir_reg* *processor/vma_reg* *processor/memstart_reg* *processor/md_reg*} \
-        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-         *memory/ub_addr_reg*}
-    # grid: 0 ns + 2 ticks
-    assert_clause_timing $tick 2 "the second hop of the every-tick registers" \
-        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-         *memory/ub_addr_reg*}
-    # sync: K
-    assert_clause_timing $tick $sync_k "the edge's registers into QUUX's divider" \
-        {*processor/q_reg* *processor/ir_reg*} {*processor/g_quux_muldiv.muldiv/dv_*}
-    # sync: K - 1
-    assert_clause_timing $tick [expr {$sync_k - 1}] "the latches into QUUX's divider" $q_latch \
-        {*processor/g_quux_muldiv.muldiv/dv_*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" {*processor/md_held_reg*} \
-        {*processor/g_quux_muldiv.muldiv/dv_*}
-    # And what a microcycle reads of QUUX's clocks: the microsecond clock
-    # the whole microcycle.  Source 17's status, which had a tick less, is
-    # gone at revision 10 (contract Q11), and so is `L` into the flags a
-    # page read takes: destination 3 writes only M, and nothing of `OB`
-    # reaches the timers.
-    # sync: K
-    assert_clause_timing $tick $sync_k "the microsecond clock a microcycle reads" \
-        {*processor/g_quux_tick.clocks/usec_s_reg*}
-    # QUUX's memory port: none of its tick registers relaxed, and the address
-    # the cache holds at the microcycle.
-    # At revision 14 the cache's held address is also the side seam's, a
-    # walk's look on the tick, so its endpoints' worst paths are the tick's
-    # and the relaxed ones are asked by their source: the edge's VMA.
-    if {$revision eq "13"} {
-        # sync: K
-        assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* \
-            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
-    } else {
-        # sync: K
-        assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* {} \
-            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
-        # sync: K
-        assert_clause_timing $tick $sync_k "VMA into the cache's held address" {*processor/vma_reg*} \
-            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
-    }
-    # And nothing out of the cache relaxed at all: its word reaches MD in the
-    # tick after the lookup's.
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the cache's word into MD" \
-        {*memory/g_quux_port.port/cache/*} {*processor/md_reg* *processor/md_held_reg*}
-    puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
-}
-# **REVISION 14'S CLAUSES, ASKED WHAT THEY REACHED** (`tlb_check.tcl`'s
-# `assert_rev14_clauses` has the list and the reasons).
-if {$revision eq "14"} { assert_rev14_clauses $tick $sync_k }
+# AND THE SPLIT PATHS `cadr_machine.xdc` NARROWS BELOW THE RELAXED SET, each
+# asked of its own paths: none may ask for more than its clause gives, and at
+# least one must ask for exactly that. The clauses are written at the relaxed
+# set's own priority, so this is what says the tool ranked them above it.
+# grid: 75 ns - 1 tick
+assert_clause_timing $tick 7 "IR into the scratchpad latches" \
+    {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
+     *processor/spc_q_reg*}
+# grid: 60 ns + 1 tick
+assert_clause_timing $tick 7 "out of the scratchpad latches" \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
+     *processor/spc_q_reg*}
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
+     *processor/spc_q_reg*} {*processor/dmem_reg*}
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the control store's word" \
+    {*processor/imem_reg*}
+# grid: 0 ns + 3 ticks
+assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+# grid: 0 ns + 3 ticks
+assert_clause_timing $tick 3 "the dispatch memory's write" {*processor/dmem_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the three memories' writes into the readout" \
+    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
+    {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
+# grid: 0 ns + 2 ticks
+assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} \
+    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
+    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
+     *processor/mw_late2_q_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
+    {*processor/spc_q_reg*}
+# REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
+# every tick whether the output flips on the next, and the NXM timer counts
+# the flip and takes the timeout from it that tick.  Every path out of it is
+# the tick's; a rename puts it back in the set, at eight.
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "REQTIM's oscillator" {*busint/vco_acc_reg*}
+# grid: 60 ns
+assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
+    {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+     *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+     *memory/unibus_reg* *memory/ub_addr_reg*}
 
 opt_design
 place_design
@@ -1015,11 +753,6 @@ if {$luts < 1500 || $brams < 20} {
 report_utilization                     -file $outdir/utilisation.rpt
 report_timing_summary -max_paths 10    -file $outdir/timing.rpt
 report_clocks                          -file $outdir/clocks.rpt
-if {$revision eq "14"} {
-    report_utilization -hierarchical -hierarchical_depth 4 -file $outdir/utilisation_hier.rpt
-    report_timing -delay_type max -max_paths 20 -nworst 1 -unique_pins -file $outdir/worst_setup.rpt
-    report_tlb $outdir
-}
 
 # Guarded, because `get_timing_paths` returns an empty list when there is
 # nothing to report --- and nothing to report is what SUCCESS looks like. The

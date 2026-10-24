@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Holds revision 15's core to muir's pipeline clock for clock, over traces of
+// Holds QUUX's core to muir's pipeline clock for clock, over traces of
 // `golden/src/quux15.rs`, whose columns `golden/src/trace15.rs` says.
 //
 //   V<top> <trace>... [+plusargs, handed to the design]
@@ -14,7 +14,7 @@
 // (`QUUX15_CORE`'s build; the stand-in has no memories and ignores them).
 //
 // The design is the Verilated top `QUUX15_TOP` names, built with this file:
-// revision 15's core (`rtl/machine/quux15_core.sv`), or `tb/quux15_replay.sv`,
+// the core (`rtl/machine/quux15_core.sv`), revision 16, or `tb/quux15_replay.sv`,
 // the stand-in that shows this testbench catches what it should
 // (`tools/quux15_replay_check.py`).  Either shows the trace's columns on
 // outputs of the same names, `obs_<column>`.  Each trace is run on a design
@@ -89,23 +89,6 @@
 // in `Encoders::levels`' Gray order, the switches low when pressed, on the
 // core's seven lines (`mouse_lines`), which stay as they are after.
 //
-// **A RUN WITH THE NETWORK** (`golden/src/quux15_network.rs`): this
-// testbench is the far end on the core's Chaosnet cable seam
-// (`quux15_chaos.sv`), as muir's interface saw its cable, each `<clock>`
-// being the first row whose registers have it: `# chaos-address <a>` the
-// switches; `# chaos-rx <clock> <bits> <crc> <n> <words>` a frame, its words
-// on `chaos_rx_word` a clock each in the `n` clocks before the clock before
-// `<clock>`, and `chaos_rx_done` in that clock; `# chaos-lost <clock>`
-// `chaos_rx_lost`, and `# chaos-txdone <clock> <abort>` `chaos_tx_done`, in
-// the clock before; `# chaos-busy <clock> <level>` `chaos_cbl_busy`, a frame
-// on the line, from that clock on; `# chaos-start <clock>` `chaos_rx_start`,
-// the frame's `START^`, in the clock before; `# chaos-stored <clock> <bits>`
-// `chaos_rx_stored`, the bits the receiver would have stored of it, from that
-// clock on.  `# chaos-tx <clock> <n> <words>` is a START muir took at
-// that clock: the core's `chaos_tx_go` must be up in that row with `n`, and
-// its words come out on `chaos_tx_valid` in the rows after, in order; every
-// frame the core sends must be one of these.
-//
 // **A RUN THAT ENDS IN A CHECKPOINT** (`# checkpoint <clock> <file> <rtc start>
 // <rtc base> <read> <write> <occupancy> <cache>`, the checkpoints group):
 // halted, the devices' snapshot is taken at that clock's edge, and after it
@@ -166,7 +149,7 @@
 #include "verilated.h"
 
 #ifndef QUUX15_TOP
-#error "QUUX15_TOP names the Verilated top: Vquux15_replay, or revision 15's core"
+#error "QUUX15_TOP names the Verilated top: Vquux15_replay, or the core"
 #endif
 #define QUUX15_STR2(x) #x
 #define QUUX15_STR(x) QUUX15_STR2(x)
@@ -227,13 +210,9 @@ constexpr uint64_t kVideoW = QUUX15_VIDEO_W, kVideoH = QUUX15_VIDEO_H;
 #define QUUX15_CACHE_WORDS 65536
 #endif
 constexpr uint64_t kCacheWords = QUUX15_CACHE_WORDS;
-// QUUX's revision, as the core's `MACHINE_ID` is built: 15 unless the build
-// says 16 (`QUUX15_REVISION`; the Makefile's `quux16_<group>.quux.pass`),
-// whose traces say so in their `# revision 16` line.
-#ifndef QUUX15_REVISION
-#define QUUX15_REVISION 15
-#endif
-constexpr uint64_t kRevision = QUUX15_REVISION;
+// QUUX's revision, as the core's `MACHINE_ID` is built: 16, which every
+// trace names in its `# revision 16` line.
+constexpr uint64_t kRevision = 16;
 constexpr uint64_t kFbWords = kVideoW / 32 * kVideoH;
 constexpr uint64_t kDisplayBase = 0x0A000000;
 
@@ -336,8 +315,8 @@ struct Run {
   // The cache's words, the Kria's 65,536 unless its `# cache` line says
   // otherwise (another board's).
   uint64_t cache_words = 65536;
-  // QUUX's revision, 15 unless its `# revision` line says 16.
-  uint64_t revision = 15;
+  // QUUX's revision, as its `# revision` line says; 0, none, refused.
+  uint64_t revision = 0;
   // Revision 16's Ethernet device's host (`golden/src/quux15_ethernet.rs`):
   // 244 and 250 as the host's side reads them, from a clock on; 245 and
   // 251 moved at a clock; the words a delivery wrote; the counters.
@@ -390,20 +369,6 @@ struct Run {
     uint64_t clock, x, y, buttons;
   };
   std::vector<Mouse> mice;
-  // The network's far end (`golden/src/quux15_network.rs`).
-  uint64_t chaos_address = 0;
-  struct ChaosRx {
-    uint64_t clock, bits, crc;
-    std::vector<uint64_t> words;
-  };
-  std::vector<ChaosRx> chaos_rx;
-  std::vector<uint64_t> chaos_lost, chaos_start;
-  std::vector<std::pair<uint64_t, uint64_t>> chaos_txdone, chaos_busy, chaos_stored;
-  struct ChaosTx {
-    uint64_t clock;
-    std::vector<uint64_t> words;
-  };
-  std::vector<ChaosTx> chaos_tx;
   // The checkpoint the run ends in, if it does: its clock, muir's file and
   // what the fabric's declares.
   struct Ckpt {
@@ -547,46 +512,6 @@ int read_trace(const char *path, std::vector<Run> &runs) {
                                     std::strtoull(w[2].c_str(), nullptr, 16),
                                     std::strtoull(w[3].c_str(), nullptr, 16),
                                     std::strtoull(w[4].c_str(), nullptr, 16)});
-        continue;
-      }
-      if (w.size() == 2 && w[0] == "chaos-address") {
-        runs.back().chaos_address = std::strtoull(w[1].c_str(), nullptr, 16);
-        continue;
-      }
-      if (w.size() >= 5 && w[0] == "chaos-rx") {
-        Run::ChaosRx f{std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16),
-                       std::strtoull(w[3].c_str(), nullptr, 16), {}};
-        const size_t n = std::strtoull(w[4].c_str(), nullptr, 16);
-        for (size_t k = 5; k < w.size(); ++k) f.words.push_back(std::strtoull(w[k].c_str(), nullptr, 16));
-        if (f.words.size() != n) {
-          std::fprintf(stderr, "%s: a chaos-rx line with %zu words where it says %zu\n", path, f.words.size(), n);
-          result = 2;
-          break;
-        }
-        runs.back().chaos_rx.push_back(f);
-        continue;
-      }
-      if (w.size() == 2 && (w[0] == "chaos-lost" || w[0] == "chaos-start")) {
-        (w[0] == "chaos-lost" ? runs.back().chaos_lost : runs.back().chaos_start)
-            .push_back(std::strtoull(w[1].c_str(), nullptr, 16));
-        continue;
-      }
-      if (w.size() == 3 && (w[0] == "chaos-txdone" || w[0] == "chaos-busy" || w[0] == "chaos-stored")) {
-        (w[0] == "chaos-busy" ? runs.back().chaos_busy
-         : w[0] == "chaos-stored" ? runs.back().chaos_stored : runs.back().chaos_txdone)
-            .emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16));
-        continue;
-      }
-      if (w.size() >= 3 && w[0] == "chaos-tx") {
-        Run::ChaosTx f{std::strtoull(w[1].c_str(), nullptr, 16), {}};
-        const size_t n = std::strtoull(w[2].c_str(), nullptr, 16);
-        for (size_t k = 3; k < w.size(); ++k) f.words.push_back(std::strtoull(w[k].c_str(), nullptr, 16));
-        if (f.words.size() != n) {
-          std::fprintf(stderr, "%s: a chaos-tx line with %zu words where it says %zu\n", path, f.words.size(), n);
-          result = 2;
-          break;
-        }
-        runs.back().chaos_tx.push_back(f);
         continue;
       }
       if (w.size() == 3 && w[0] == "halted") {
@@ -1582,7 +1507,7 @@ int run_trace(const char *path, const Run &run, int seed) {
   // words and register page are built for this testbench's.
   if (run.revision != kRevision) {
     std::fprintf(stderr, "FAIL: %s run %s is of revision %llu, and this testbench and its core are built for "
-                 "%llu (QUUX15_REVISION, MACHINE_ID)\n", path, run.name.c_str(),
+                 "%llu (MACHINE_ID)\n", path, run.name.c_str(),
                  static_cast<unsigned long long>(run.revision), static_cast<unsigned long long>(kRevision));
     return 1;
   }
@@ -1640,73 +1565,8 @@ int run_trace(const char *path, const Run &run, int seed) {
     // The keyboard's cable idle, the mouse at rest with nothing pressed:
     // both phases at 2, every line high.
     dut->kbd_strobe = 0; dut->kbd_code = 0; dut->mouse_lines = 0x7f;
-    // The network's cable idle, at the run's switches.
-    dut->chaos_address = static_cast<uint16_t>(run.chaos_address);
-    dut->chaos_rx_valid = 0; dut->chaos_rx_word = 0; dut->chaos_rx_done = 0; dut->chaos_rx_bits = 0;
-    dut->chaos_rx_crc = 0; dut->chaos_rx_lost = 0; dut->chaos_tx_done = 0; dut->chaos_tx_abort = 0;
-    dut->chaos_cbl_busy = 0;
-    dut->chaos_rx_start = 0; dut->chaos_rx_stored = 0; dut->chaos_rx_store = 0;
   };
   quiet();
-  // **THE NETWORK'S FAR END, BY THE CLOCK IT DRIVES THE SEAM IN**: each
-  // event in the clock before the row that first shows it, a frame's words
-  // in the clocks before that.  Two things on one wire in one clock is the
-  // trace's fault and fails the run.
-  struct Seam {
-    bool rx_valid = false, rx_done = false, lost = false, txdone = false, start = false;
-    uint64_t rx_word = 0, rx_bits = 0, rx_crc = 0, abort = 0;
-  };
-  std::map<uint64_t, Seam> seam;
-  std::string chaos_why;
-  for (const Run::ChaosRx &f : run.chaos_rx) {
-    const uint64_t n = f.words.size();
-    if (f.clock < n + 2) {
-      chaos_why = "a frame at clock " + std::to_string(f.clock) + " whose words would come before clock 1";
-      break;
-    }
-    // The frame's length is on the seam from its first word to its done,
-    // as `cadr_chaos_cable.sv` holds it: the interface places each word by
-    // it as it comes.
-    for (uint64_t j = 0; j < n; ++j) {
-      Seam &c = seam[f.clock - 1 - n + j];
-      if (c.rx_valid) chaos_why = "two frames' words in clock " + std::to_string(f.clock - 1 - n + j);
-      c.rx_valid = true;
-      c.rx_word = f.words[j];
-      c.rx_bits = f.bits;
-    }
-    Seam &c = seam[f.clock - 1];
-    if (c.rx_done) chaos_why = "two frames at clock " + std::to_string(f.clock);
-    c.rx_done = true;
-    c.rx_bits = f.bits;
-    c.rx_crc = f.crc;
-  }
-  for (uint64_t at : run.chaos_lost) {
-    Seam &c = seam[at - 1];
-    if (c.lost) chaos_why = "two frames lost at clock " + std::to_string(at);
-    c.lost = true;
-  }
-  // A frame's `START^`, where the receive gate takes Receive Done.
-  for (uint64_t at : run.chaos_start) {
-    Seam &c = seam[at - 1];
-    if (c.start) chaos_why = "two START^s at clock " + std::to_string(at);
-    c.start = true;
-  }
-  for (const auto &d : run.chaos_txdone) {
-    Seam &c = seam[d.first - 1];
-    if (c.txdone) chaos_why = "two Transmit Dones at clock " + std::to_string(d.first);
-    c.txdone = true;
-    c.abort = d.second;
-  }
-  size_t busy_next = 0, stored_next = 0;
-  // What the core sent: the row of each START and the words that followed.
-  std::vector<Run::ChaosTx> sent;
-  std::vector<uint64_t> sent_len;
-  if (!chaos_why.empty()) {
-    std::fprintf(stderr, "%s: run %s: the network's far end: %s\n", path, run.name.c_str(), chaos_why.c_str());
-    dut->final();
-    delete dut;
-    return 1;
-  }
   // The face's mouse: each count's phase, from `Encoders::default`'s 2, and
   // the counts and buttons muir has.
   unsigned phase_x = 2, phase_y = 2;
@@ -1813,24 +1673,6 @@ int run_trace(const char *path, const Run &run, int seed) {
       mouse_b = m.buttons & 7;
       dut->mouse_lines = static_cast<uint8_t>(((~mouse_b & 7) << 4) | (cable(phase_y) << 2) | cable(phase_x));
     }
-    // The network's far end in this clock.
-    {
-      const auto it = seam.find(k);
-      const Seam c = it == seam.end() ? Seam{} : it->second;
-      dut->chaos_rx_valid = c.rx_valid;
-      dut->chaos_rx_word = static_cast<uint16_t>(c.rx_word);
-      dut->chaos_rx_done = c.rx_done;
-      dut->chaos_rx_bits = static_cast<uint16_t>(c.rx_bits);
-      dut->chaos_rx_crc = c.rx_crc != 0;
-      dut->chaos_rx_lost = c.lost;
-      dut->chaos_tx_done = c.txdone;
-      dut->chaos_tx_abort = c.abort != 0;
-      dut->chaos_rx_start = c.start;
-      while (busy_next < run.chaos_busy.size() && run.chaos_busy[busy_next].first <= k)
-        dut->chaos_cbl_busy = run.chaos_busy[busy_next++].second != 0;
-      while (stored_next < run.chaos_stored.size() && run.chaos_stored[stored_next].first <= k)
-        dut->chaos_rx_stored = static_cast<uint16_t>(run.chaos_stored[stored_next++].second & 07777u);
-    }
     if (!input_why.empty()) {
       std::fprintf(stderr, "%s: run %s: %s\n", path, run.name.c_str(), input_why.c_str());
       if (bad == 0) {
@@ -1862,24 +1704,6 @@ int run_trace(const char *path, const Run &run, int seed) {
       ++bad;
       break;
     }
-#ifdef QUUX15_CORE
-    // What the core sends, as this clock ends.
-    if (dut->chaos_tx_go) {
-      sent.push_back({k, {}});
-      sent_len.push_back(dut->chaos_tx_len);
-    }
-    if (dut->chaos_tx_valid) {
-      if (sent.empty()) {
-        if (bad == 0) {
-          first_clock = k;
-          first_column = "chaos";
-        }
-        if (++bad <= 20) std::fprintf(stderr, "clock %zu: a word on the network's cable with no START\n", k);
-      } else {
-        sent.back().words.push_back(dut->chaos_tx_word);
-      }
-    }
-#endif
     const std::vector<uint64_t> &want = rows[k];
     commits += (want[1 + kCommit] >> 15) & 1;
     operands += ((want[1 + kCommit] >> 15) & 1) && want[1 + kOpnd];
@@ -1960,46 +1784,6 @@ int run_trace(const char *path, const Run &run, int seed) {
 #endif
   }
 #ifdef QUUX15_CORE
-  // **THE FRAMES THE CORE SENT**, against the STARTs muir took: each at its
-  // row, with its length and its words, as far as the rows reach.
-  {
-    size_t want = 0;
-    for (size_t j = 0; j < sent.size(); ++j) {
-      const Run::ChaosTx *t = want < run.chaos_tx.size() ? &run.chaos_tx[want] : nullptr;
-      std::string why;
-      if (!t || t->clock != sent[j].clock)
-        why = "a START at clock " + std::to_string(sent[j].clock) + " where muir took " +
-              (t ? "one at clock " + std::to_string(t->clock) : std::string("none"));
-      else if (sent_len[j] != t->words.size())
-        why = "START at clock " + std::to_string(t->clock) + " sends " + std::to_string(sent_len[j]) +
-              " words, muir's " + std::to_string(t->words.size());
-      else
-        for (size_t i = 0; i < sent[j].words.size() && why.empty(); ++i)
-          if (i >= t->words.size() || sent[j].words[i] != t->words[i])
-            why = "the frame of the START at clock " + std::to_string(t->clock) + ": word " + std::to_string(i) +
-                  " is " + std::to_string(sent[j].words[i]) + ", muir's " +
-                  (i < t->words.size() ? std::to_string(t->words[i]) : std::string("none"));
-      if (why.empty() && sent[j].clock + t->words.size() < rows.size() && sent[j].words.size() != t->words.size())
-        why = "the frame of the START at clock " + std::to_string(t->clock) + " came out with " +
-              std::to_string(sent[j].words.size()) + " words";
-      ++want;
-      if (why.empty()) continue;
-      if (bad == 0) {
-        first_clock = sent[j].clock;
-        first_column = "chaos";
-      }
-      if (++bad <= 20) std::fprintf(stderr, "the network: %s\n", why.c_str());
-    }
-    if (want < run.chaos_tx.size() && run.chaos_tx[want].clock < rows.size()) {
-      if (bad == 0) {
-        first_clock = run.chaos_tx[want].clock;
-        first_column = "chaos";
-      }
-      if (++bad <= 20)
-        std::fprintf(stderr, "the network: muir's START at clock %" PRIu64 " sent nothing from the core\n",
-                     run.chaos_tx[want].clock);
-    }
-  }
   // **A RUN JUDGED BY ITS RESULTS**: the core runs until it has committed
   // its park and stays quiet 64 clocks, its transfer done and no write of
   // its own unanswered, in at most eight times muir's clocks.

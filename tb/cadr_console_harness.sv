@@ -59,11 +59,10 @@
 module cadr_console_harness #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // The console's memory boards: the CADR's 32 from 1 to 60 unless a build
-    // says otherwise, as `console13.pass` does at revision 13's.
+    // says otherwise.
     parameter int unsigned MEM_BOARDS_DEFAULT = 32,
     parameter int unsigned MEM_BOARDS_MAX     = 60,
-    // The video controller's size for word 39: none unless a build gives one,
-    // as `console13.pass` gives the Kria KR260's QUUX.
+    // The video controller's size for word 39: none unless a build gives one.
     parameter int unsigned VIDEO_WIDTH  = 0,
     parameter int unsigned VIDEO_HEIGHT = 0
 ) (
@@ -523,52 +522,17 @@ module cadr_console_harness #(
       .prog_boot  (prog_boot_o),
       .n_boot     (n_boot),
       .no_auto_boot(1'b0),
-      // QUUX's register page's word 102; this is the CADR's register block.
+      // `cadr_spy_registers.sv`'s second writer of error stop, which no
+      // CADR has.
       .page_errstop_we(1'b0),
       .page_errstop   (1'b0)
   );
 
   logic ub_md_ack_u;
 
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic unused_tick_irq;
-  logic [2:0] unused_timer_pending;
-  logic [23:0] unused_tm_rdata;
-  /* verilator lint_on UNUSEDSIGNAL */
-  // The processor's side of revision 12's prefetch, which no port here
-  // takes; named so that lint sees them read.
-  logic        h_pf_fetch, h_pf_drop;
-  logic [23:0] h_pf_vaddr;
-  logic        unused_h_pf;
-  assign unused_h_pf = h_pf_fetch ^ h_pf_drop ^ (^h_pf_vaddr);
-
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
-      // Revision 14's memory system's seams, which a revision-13 or CADR
-      // processor leaves idle.
-      .boards      (11'd0),
-      .ms_we       (1'b0),
-      .ms_idx      (3'd0),
-      .ms_wdata    (32'd0),
-      .sd_ready    (1'b0),
-      .sd_walk_ready(1'b0),
-      .sd_grant_ready(1'b0),
-      .sd_ack_at   (11'sd0),
-      .sd_hit      (1'b0),
-      .sd_word     (40'd0),
-      .sd_hit_live (1'b0),
-      .sd_h1_live  (1'b0),
-      .sd_word0_live(40'd0),
-      .sd_word1_live(40'd0),
-      .sd_done     (11'sd0),
-      .sd_fill_v   (1'b0),
-      .sd_fill_word(40'd0),
-      .sd_wdone    (1'b0),
-      /* verilator lint_off PINCONNECTEMPTY */
-      .ms_rdata (), .sd_look (), .sd_phys (), .sd_commit (), .sd_wr (), .sd_wdata (), .sd_wbits (), .sd_relook (),
-      .sd_until (), .wb_hold (), .wb_rel_v (), .wb_rel_now (), .wb_rel (), .wb_rel_q (),
-      /* verilator lint_on PINCONNECTEMPTY */
       .clk         (clk),
       .rst         (mach_rst),
       .n_boot      (n_boot),
@@ -601,20 +565,6 @@ module cadr_console_harness #(
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
-      // The CADR's cycles are released through MFINISHD and RDFINISH, and
-      // it has no memory port to drain (contract Q6 is QUUX's).
-      .cached      (1'b0),
-      .mem_drained (1'b0),
-      // Revision 12's prefetch is QUUX's memory port's: none here.
-      .pf_fetch    (h_pf_fetch),
-      .pf_vaddr    (h_pf_vaddr),
-      .pf_drop     (h_pf_drop),
-      .pf_nx_v     (1'b0),
-      .pf_nx_vaddr (24'd0),
-      .pf_nx_phys  (22'd0),
-      .pf_nx_word  (32'd0),
-      .pf_nx_fetch_v    (1'b0),
-      .pf_nx_fetch_vaddr(24'd0),
       // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
       // through the Unibus map, which this harness has no register block to
       // make.  Tied off, and the acknowledgment is then never asked for.
@@ -622,16 +572,6 @@ module cadr_console_harness #(
       .ub_md_data  (32'd0),
       .ub_md_ack   (ub_md_ack_u),
       .sintr       (sintr),
-      // QUUX's tick, which a CADR processor holds at zero and nothing here reads.
-      .tick_irq    (unused_tick_irq),
-      .timer_pending(unused_timer_pending),
-      // QUUX's register page's timer words and `RESET-DEVICES`, which a CADR
-      // processor takes nothing from.
-      .tm_we       (1'b0),
-      .tm_idx      (3'd0),
-      .tm_wdata    (24'd0),
-      .tm_rdata    (unused_tm_rdata),
-      .reset_devices(1'b0),
       .pc          (pc),
       .lpc         (lpc),
       .opc         (opc),

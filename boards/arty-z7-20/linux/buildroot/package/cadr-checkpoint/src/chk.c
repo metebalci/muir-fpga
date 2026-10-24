@@ -166,7 +166,7 @@ void chk_opt_u64(struct chk *w, int present, uint64_t v)
 // --- packing ---------------------------------------------------------------
 //
 // **THE BODY IS READ THROUGH A SOURCE, AND THE FILE WRITTEN THROUGH A SINK.**
-// A 32-bit machine's body is one buffer.  Revision 13's is a buffer with a
+// A 32-bit machine's body is one buffer.  QUUX's is a buffer with a
 // hole in it where main memory goes (`chk_hole`), filled by main memory's
 // bytes where they stand --- on a board the DDR mapping, 160 MB at 32M words
 // --- so that neither a copy of it nor a packed copy of the whole body is
@@ -391,13 +391,12 @@ int chk_write_file(const char *path, const char *engine, uint32_t boards,
 	struct chk head;
 	chk_init(&head);
 	put(&head, kMagic, sizeof kMagic - 1);
-	// The version says the width (muir's `checkpoint::write`): 54 for a
-	// machine of 32-bit words, 55 for revision 13's 40.
+	// The version the body says (muir's `checkpoint::write`): 54 for the
+	// CADR, whose body says none, and QUUX's own.
 #if CHK_MUTATE == 31
 	chk_u32(&head, CHK_VERSION);
 #else
-	chk_u32(&head, body->version ? body->version
-		       : body->word_bytes == 5 ? CHK_VERSION_40 : CHK_VERSION);
+	chk_u32(&head, body->version ? body->version : CHK_VERSION);
 #endif
 	size_t n = strlen(engine);
 	chk_u8(&head, (uint8_t)n);

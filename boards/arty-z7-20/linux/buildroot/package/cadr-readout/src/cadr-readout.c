@@ -53,10 +53,10 @@
 // with their depth and width on each machine the window can be on, are
 // `readout.c`'s `ro_mems`; the register table's names are `ro_reg_names`.
 
-// The flag word, bit by bit, in `ro_flags`'s own order.  The last three are
-// QUUX's: its memory port drained (contract Q6), a `MEMSTART` that is the
-// stream's fetch, for the prefetch, and revision 13's fixnum overflow flag; all
-// clear on the CADR.
+// The CADR's flag word, bit by bit, in `ro_flags`'s own order.  The last
+// three are named for the QUUX that once shared the CADR's register table:
+// its memory port drained, a `MEMSTART` that was the stream's fetch, and its
+// fixnum overflow flag; all clear on the CADR.
 #define FLAG_NAMES 36
 static const char *const kFlagNames[FLAG_NAMES] = {
 	"DESTD", "DESTMD", "PWIDX", "PDLWRITED", "INOP", "IWRITED", "NEWLC",
@@ -88,14 +88,10 @@ static void mem_write(struct readout *r, unsigned word, uint32_t v)
 static void list(void)
 {
 	say("the window reaches these, `--dump NAME` or `--word NAME:ADDR`, words by bits");
-	say("  on %s, %s, %s, and %s:", ro_machine_names[RO_M_CADR],
-	    ro_machine_names[RO_M_QUUX13], ro_machine_names[RO_M_QUUX14],
-	    ro_machine_names[RO_M_QUUX15]);
+	say("  on %s and on %s:", ro_machine_names[RO_M_CADR], ro_machine_names[RO_M_QUUX15]);
 	for (unsigned i = 0; i < ro_mem_count; ++i)
-		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u  %5u x %2u   %s", ro_mems[i].name,
+		say("  %-6s %5u x %2u  %5u x %2u   %s", ro_mems[i].name,
 		    ro_mems[i].depth[RO_M_CADR], ro_mems[i].bits[RO_M_CADR],
-		    ro_mems[i].depth[RO_M_QUUX13], ro_mems[i].bits[RO_M_QUUX13],
-		    ro_mems[i].depth[RO_M_QUUX14], ro_mems[i].bits[RO_M_QUUX14],
 		    ro_mems[i].depth[RO_M_QUUX15], ro_mems[i].bits[RO_M_QUUX15], ro_mems[i].what);
 	say("a depth of 0 is a memory the machine has not got.");
 	say("a word is read by writing the address to page 0's word 10 and");
@@ -193,7 +189,7 @@ static int print_audit(struct readout *r)
 
 // The register table, printed.  Octal as well as hex, because MIT's own
 // listings are octal and a PC compared against `ucadr.sym` has to be.
-// Revision 15's table is its own (`img_rg15`), its flags three bits.
+// QUUX's table is its own (`img_rg15`), its flags three bits.
 static int print_registers(struct readout *r, int machine)
 {
 	const struct ro_mem *regs = ro_mem_by_name("regs");
@@ -326,7 +322,7 @@ int main(int argc, char **argv)
 	    (unsigned long long)ro_cycles(&r), (unsigned long long)ro_ticks(&r));
 
 	// **WHICH MACHINE, FOR THE MEMORIES' DEPTHS AND WIDTHS**: the register
-	// table's entry 21, QUUX's signature and on revision 13 its MACHINE-ID.
+	// table's entry 21, QUUX's signature and its MACHINE-ID.
 	const int rev = ro_quux_revision(&r);
 	if (rev < 0) {
 		say("the register table's entry %u is neither QUUX's signature nor the "
@@ -334,7 +330,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	// **A REVISION THIS PROGRAM HAS NO LAYOUT FOR IS REFUSED BY NAME**, and
-	// never read with another machine's: revision 15's fell to the CADR's.
+	// never read with another machine's: the name is MACHINE-ID's, as the
+	// identity line reads it.
 	const int machine = ro_machine_of(rev);
 	if (machine < 0) {
 		say("the bitstream is QUUX revision %d, and this program has no layout "
@@ -343,12 +340,8 @@ int main(int argc, char **argv)
 			ro_start(&r);
 		return 1;
 	}
-	// Revision 16's window is revision 15's, and its name its own.
-	if (rev == 16)
-		say("the bitstream is QUUX revision 16");
-	else
-		say("the bitstream is %s", ro_machine_names[machine]);
-	// **REVISION 15'S HALT IS ITS DRAIN'S END** (`ro_found`): its core reads
+	say("the bitstream is %s", ro_machine_names[machine]);
+	// **QUUX'S HALT IS ITS DRAIN'S END** (`ro_found`): its core reads
 	// its memories only while halted, so a word read before the drain ends
 	// is whatever the port last read (`quux15_face.sv`).
 	if (machine == RO_M_QUUX15) {

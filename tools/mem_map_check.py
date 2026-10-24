@@ -21,7 +21,7 @@ build reads together:
     names (TF-A's plat/intel/soc/agilex5/include/agilex5_system_manager.h,
     GPO at 0xE4 and GPI at 0xE8);
   - on the Zynq boards, the JTAG memory proofs' `MAIN_BASE`;
-  - for QUUX revision 13, which has a device tree of its own on the Arty
+  - for QUUX, which has a device tree of its own on the Arty
     Z7-20 and the DE25-Nano: `quux13-reserved.dtsi`, the node the card
     script names for REVISION=13, and the records' size the disk pack
     program maps.
@@ -40,7 +40,7 @@ reservation's base, none meeting another, and the reservation exactly their
 sum.  Then, for each board family, every copy against the fabric's
 package: the reservation's base and size, main memory, the display and the
 color display, the records above the display, and on the DE25-Nano the GPO
-register's page and offset against the tally's.  And for QUUX revision 13, on
+register's page and offset against the tally's.  And for QUUX, on
 the boards that run it: its main memory and room, the records' size, its own
 reservation from its main memory to the end of the records, and that its
 packed main memory (5 bytes a word) ends at the display.  The package is the reference
@@ -67,7 +67,7 @@ UBOOT_ENV = "boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.en
 ZYNQ_TCL = ("boards/arty-z7-20/vivado/ddr_check.tcl",
             "boards/arty-z7-20/vivado/ddr_run.tcl")
 NAMES = {"zynq": "the Zynq boards", "de25": "the DE25-Nano"}
-# QUUX revision 13's own reservation, in its own tree, on the boards that run
+# QUUX's own reservation, in its own tree, on the boards that run
 # it.
 QUUX13_DTSI = {
     "zynq": "boards/arty-z7-20/linux/quux13-reserved.dtsi",
@@ -238,7 +238,7 @@ def layout(fam, pm):
         disagree("%s: the color TV's buffer at 0x%08X-0x%08X is not in the display's area "
                  "above the first board's" % (NAMES[fam], pm["COLOR_DISPLAY_BASE"], tv_end - 1))
     if pm["QUUX13_RESERVED_END"] != base + size:
-        disagree("%s: revision 13's reservation ends at 0x%08X, the CADR's at 0x%08X; both end "
+        disagree("%s: QUUX's reservation ends at 0x%08X, the CADR's at 0x%08X; both end "
                  "with the records" % (NAMES[fam], pm["QUUX13_RESERVED_END"], base + size))
     if len(problems) == before:
         print("mem_map: %-16s the layout: main memory 0x%08X, %d MB; the display 0x%08X, "
@@ -369,7 +369,7 @@ def kr260(root, pkg):
     w = re.findall(r"^#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX\s+\((\d+)u \* 1024u \* 1024u\)\s*$",
                    m.group(1), re.M)
     if len(w) != 1:
-        fail("%s names no revision 13 room for %s" % (BOARD_H, NAMES[fam]))
+        fail("%s names no QUUX room for %s" % (BOARD_H, NAMES[fam]))
     for k in ("RESERVED", "MAIN", "DISPLAY", "COLOR", "SPARE", "CONSOLE", "QUUX13_MAIN",
               "PACK", "CHAOS", "SERIAL", "INPUT", "FD"):
         if k not in h:
@@ -406,31 +406,31 @@ def kr260(root, pkg):
     same("the records", fam, [
         (DDR_MAP + " DISPLAY_BASE + DISPLAY_WORDS * 4", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4),
         ("cadr_board.h SPARE", h["SPARE"])])
-    same("revision 13's main memory", fam, [
+    same("QUUX's main memory", fam, [
         (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
         ("cadr_board.h QUUX13_MAIN", h["QUUX13_MAIN"])])
-    same("revision 13's room, words", fam, [
+    same("QUUX's room, words", fam, [
         (DDR_MAP + " QUUX13_MAIN_WORDS_MAX", pm["QUUX13_MAIN_WORDS_MAX"]),
         ("cadr_board.h QUUX13_MAIN_WORDS_MAX", int(w[0]) << 20)])
     end13 = pm["QUUX13_MAIN_BASE"] + 5 * pm["QUUX13_MAIN_WORDS_MAX"]
     if end13 != pm["DISPLAY_BASE"]:
-        disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
+        disagree("%s: QUUX's main memory, 5 bytes a word, ends at 0x%08X and the "
                  "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
-    # And revision 13's own reservation, the node its tree carries in place of
+    # And QUUX's own reservation, the node its tree carries in place of
     # the CADR's (K6): from main memory to the end of the records.
     unit13, base13, size13 = dtsi(read(root, KR260_DTSI13), KR260_DTSI13)
-    same("revision 13's reservation", fam, [
+    same("QUUX's reservation", fam, [
         (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
         (KR260_DTSI13 + " reg", base13),
         (KR260_DTSI13 + " unit address", unit13)])
-    same("revision 13's reservation's end", fam, [
+    same("QUUX's reservation's end", fam, [
         (DDR_MAP + " QUUX13_RESERVED_END", pm["QUUX13_RESERVED_END"]),
         ("the spare's base + RECORDS_BYTES", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4
          + pm["RECORDS_BYTES"]),
         (KR260_DTSI13 + " reg", base13 + size13)])
     # And the card's REVISION=13 arm for the board: the node it looks for in
-    # the tree it stages, and that tree the one made from revision 13's
-    # overlay, which includes revision 13's reservation.
+    # the tree it stages, and that tree the one made from QUUX's
+    # overlay, which includes QUUX's reservation.
     m = re.search(r'^case "\$REVISION" in\n(.*?)^esac', read(root, MKSD), re.S | re.M)
     arm = re.search(r"^\s*kria-kr260\)\s*$(.*?);;", m.group(1) if m else "", re.S | re.M)
     if not arm:
@@ -439,7 +439,7 @@ def kr260(root, pkg):
     if len(r) != 1:
         fail("%s: REVISION=13 on kria-kr260 names %d RESERVED=quux13@..., wanting one"
              % (MKSD, len(r)))
-    same("revision 13's card node", fam, [
+    same("QUUX's card node", fam, [
         (KR260_DTSI13 + " unit address", unit13),
         (MKSD + " REVISION=13 RESERVED", int(r[0], 16))])
     t = re.findall(r"^\s*TREE_IMAGE=(\S+)\.dtb\s*$", arm.group(1), re.M)
@@ -452,12 +452,12 @@ def kr260(root, pkg):
         disagree("%s: REVISION=13 on kria-kr260 stages %s.dtb, whose %s does not include %s"
                  % (MKSD, t[0], dts, os.path.basename(KR260_DTSI13)))
     else:
-        print("mem_map: %-16s %-26s %s.dtb, from %s" % (NAMES[fam], "revision 13's card tree",
+        print("mem_map: %-16s %-26s %s.dtb, from %s" % (NAMES[fam], "QUUX's card tree",
                                                         t[0], os.path.basename(dts)))
     layout(fam, pm)
     # The faces' windows: where the programs look and where the fabric answers.
     for k, param in (("PACK", "PACK_BASE"), ("CHAOS", "CHAOS_BASE"), ("SERIAL", "SER_BASE"),
-                     ("INPUT", "INPUT_BASE"), ("FD", "FD_BASE")):
+                     ("INPUT", "INPUT_BASE")):
         same("the %s face" % k.lower(), fam, [
             ("cadr_board.h " + k, h[k]), (KR260_TOP + " " + param, top_value(param))])
     same("the console", fam, [
@@ -535,7 +535,7 @@ def main():
         # The layout inside the reservation.
         layout(fam, pm)
 
-    # QUUX revision 13's own reservation, from its main memory to the end of
+    # QUUX's own reservation, from its main memory to the end of
     # the records, and nothing in its main memory but main memory.
     feeder = re.findall(r"^#define FEEDER_MAP_BYTES\s+0x([0-9A-Fa-f]+)u\s*$", read(root, FEEDER_H), re.M)
     if len(feeder) != 1:
@@ -543,11 +543,11 @@ def main():
     for fam in ("zynq", "de25"):
         pm, h, c = maps[fam], header[fam], card[fam]
         if "QUUX13_MAIN" not in h or "QUUX13_WORDS" not in h or "RECORDS" not in h:
-            fail("%s names no revision 13 main memory, room or records for %s" % (BOARD_H, NAMES[fam]))
-        same("revision 13's main memory", fam, [
+            fail("%s names no QUUX main memory, room or records for %s" % (BOARD_H, NAMES[fam]))
+        same("QUUX's main memory", fam, [
             (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
             ("cadr_board.h QUUX13_MAIN", h["QUUX13_MAIN"])])
-        same("revision 13's room, words", fam, [
+        same("QUUX's room, words", fam, [
             (DDR_MAP + " QUUX13_MAIN_WORDS_MAX", pm["QUUX13_MAIN_WORDS_MAX"]),
             ("cadr_board.h QUUX13_MAIN_WORDS_MAX", h["QUUX13_WORDS"])])
         same("the records' size", fam, [
@@ -558,22 +558,22 @@ def main():
         m = re.fullmatch(r"quux13@([0-9a-fA-F]+)", c.get("RESERVED13", ""))
         if not m:
             fail("%s names no REVISION=13 RESERVED=quux13@... node for %s" % (MKSD, NAMES[fam]))
-        same("revision 13's reservation", fam, [
+        same("QUUX's reservation", fam, [
             (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
             (QUUX13_DTSI[fam] + " reg", base),
             (QUUX13_DTSI[fam] + " unit address", unit),
             (MKSD + " REVISION=13 RESERVED", int(m.group(1), 16))])
-        same("revision 13's reservation's end", fam, [
+        same("QUUX's reservation's end", fam, [
             (DDR_MAP + " QUUX13_RESERVED_END", pm["QUUX13_RESERVED_END"]),
             ("the spare's base + RECORDS_BYTES", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4
              + pm["RECORDS_BYTES"]),
             (QUUX13_DTSI[fam] + " reg", base + size)])
         end13 = pm["QUUX13_MAIN_BASE"] + 5 * pm["QUUX13_MAIN_WORDS_MAX"]
         if end13 != pm["DISPLAY_BASE"]:
-            disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
+            disagree("%s: QUUX's main memory, 5 bytes a word, ends at 0x%08X and the "
                      "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
         if pm["QUUX13_MAIN_BASE"] % 4096:
-            disagree("%s: revision 13's main memory at 0x%08X is not on a 4 KB boundary "
+            disagree("%s: QUUX's main memory at 0x%08X is not on a 4 KB boundary "
                      "(G1 4.1)" % (NAMES[fam], pm["QUUX13_MAIN_BASE"]))
 
     gpo = env_value(read(root, UBOOT_ENV), "cadr_gpo")

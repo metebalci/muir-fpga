@@ -343,7 +343,7 @@ per master, a master waiting for its answer is not asking, so reversing the
 priority moved not one number of the check. The measured worst is 27 ticks of
 growth with both other ports streaming.
 
-**QUUX revision 15 sets the share's three parameters**
+**QUUX sets the share's three parameters**
 (`rtl/plumbing/quux15_f2sdram_port.sv`). Its master posts up to sixteen word
 writes with one AXI ID and has no memory timeout, so the CADR's two premises
 do not hold for it. The share lets port 0 have sixteen writes in flight, all
@@ -354,7 +354,7 @@ write, and after eight clocks of another master waiting the machine yields
 one grant. Against the testbench's model of the bridge, a stream of writes
 back to back takes 3.0 clocks a write instead of 14, and no read of the
 display waits more than 183 clocks against a raster line's 579. The
-CADR's hold, kept for revision 15, granted the pack side and the display
+CADR's hold, kept for QUUX, granted the pack side and the display
 nothing at all once the writes were posted back to back. The latency probe on
 the console face's page 3 (`docs/console.md`) times the machine's reads and
 writes at the bridge.
@@ -377,7 +377,7 @@ the marker that says the fabric and not an undriven register wrote it.
 | what | where |
 |---|---|
 | main memory | `0xB300_0000`, 16 MB reserved, 15 MB reachable |
-| QUUX revision 13's main memory | `0xA000_0000`, room for 64M words packed; its own tree reserves `0xA000_0000`-`0xB411_FFFF` |
+| QUUX's main memory | `0xA000_0000`, room for 64M words packed; its own tree reserves `0xA000_0000`-`0xB411_FFFF` |
 | the display's buffer | `0xB400_0000`, 1 MB reserved |
 | the disk pack records | `0xB410_0000`, 128 KB, the end of the reservation |
 | the gate | `h2f_gp_out[0]`, the system manager's GPO at `0x10D1_20E4` |

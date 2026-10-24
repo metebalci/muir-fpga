@@ -120,8 +120,9 @@ def tick_pkg(work):
     """The grid's package, if this copy of the tree has one."""
     return [TICK_PKG] if os.path.exists(os.path.join(work, TICK_PKG)) else []
 
-# `machine`'s entry, named once because QUUX's checks are the same build
-# with another PROM, another trace and, for QUUX, another `MACHINE`.
+# `machine`'s entry, named once because the checks of `golden/src/quux.rs`'s
+# programs on the CADR are the same build with another PROM and another
+# trace.
 MACHINE_CHECK = {
     "sources": [
         "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
@@ -139,15 +140,6 @@ MACHINE_CHECK = {
     "golden": "rtl.golden",
     "gprom": True,
 }
-
-# The files only a QUUX build compiles: `cadr_machine` names each under
-# `MACHINE == "quux"`, and a CADR build finds none of them.
-QUUX_SOURCES = ["rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
-                "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_video.sv",
-                "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
-                "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
-                "rtl/machine/quux_block_disk.sv", "rtl/machine/quux_cache.sv",
-                "rtl/machine/quux_mem_port.sv", "rtl/machine/quux_tlb.sv", "rtl/machine/quux_mmu.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -561,30 +553,9 @@ CHECKS = {
     }),
     # **QUUX'S PROGRAMS ON THE CADR**: each `quux_<program>` is the whole
     # machine built with a program of `golden/src/quux.rs` as its PROM image,
-    # where it holds the CADR's side of the difference; QUUX's side is
-    # `quux13_<program>_quux`, below, revision 12 being retired.  `prom`
-    # names the PROM image among the goldens, and `machine` says which
-    # machine a check holds, which is what `--machine` selects by.
-    # QUUX's decode, revision 13's 28-bit space, every address
-    # (`golden/src/xbus_decode.rs --revision-13`).
-    "xbus_decode_quux13": {
-        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
-        "top": "cadr_xbus_decode",
-        "tb": "tb/cadr_xbus_decode_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"', "-GWORD_BITS=40"],
-        "golden": "xbus_decode.quux13.golden",
-        "machine": "quux",
-    },
-    # And the decode block-disk's channel takes there, main memory alone
-    # (`CHANNEL`).
-    "xbus_decode_quux13ch": {
-        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
-        "top": "cadr_xbus_decode",
-        "tb": "tb/cadr_xbus_decode_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"', "-GWORD_BITS=40", "-GCHANNEL=1"],
-        "golden": "xbus_decode.quux13ch.golden",
-        "machine": "quux",
-    },
+    # where it holds the CADR's side of the difference.  `prom` names the
+    # PROM image among the goldens, and `machine` says which machine a check
+    # holds, which is what `--machine` selects by.
     "quux_map": dict(MACHINE_CHECK, **{
         "golden": "quux_map.golden",
         "prom": "quux_map_prom.hex",
@@ -654,15 +625,6 @@ CHECKS = {
         "golden": "quux_tickwait.golden",
         "prom": "quux_tickwait_prom.hex",
     }),
-    # QUUX's keyboard and mouse on their own, against `QuuxInput`.
-    "quux_input_quux": {
-        "sources": ["rtl/machine/quux_input.sv"],
-        "top": "quux_input",
-        "tb": "tb/quux_input_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2"],
-        "golden": "quux_input.quux.golden",
-        "machine": "quux",
-    },
     # Revision 15's keyboard and mouse on their own, against the same script
     # (the Makefile's `quux15_input_module.quux.pass`).
     "quux15_input_module_quux": {
@@ -673,52 +635,7 @@ CHECKS = {
         "golden": "quux_input.quux.golden",
         "machine": "quux",
     },
-    # Revision 15's Chaosnet interface on its own, against muir's
-    # `chaos::board::Interface` (the Makefile's `quux15_chaos_module.quux.pass`).
-    "quux15_chaos_module_quux": {
-        "sources": ["rtl/machine/quux15_chaos.sv"],
-        "top": "quux15_chaos",
-        "tb": "tb/quux15_chaos_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2"],
-        "golden": "quux15_chaos.quux.golden",
-        "machine": "quux",
-    },
-    # QUUX's memory port and its cache on their own at revision 13
-    # (`WORD_BITS` 40), against muir's `MemoryPort` tick for tick: packed
-    # storage, 8-word lines and the prefetch's page reach
-    # (`tb/quux13_mem_port_tb.cpp`), at the Makefile's base.
-    "quux13_port_quux": {
-        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux_cache.sv",
-                    "rtl/machine/quux_mem_port.sv"],
-        "top": "quux_mem_port",
-        "tb": "tb/quux13_mem_port_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-GWORD_BITS=40", "-GMAIN13_BASE=101855232"],
-        "golden": "quux13_port.quux.k4.golden",
-        "machine": "quux",
-    },
-    # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
-    # memory: revision 13's five-beat lines, five-byte writes and 4 KiB split
-    # (`tb/quux13_axi_master_tb.cpp`).
-    "quux13_axi_master_quux": {
-        "sources": ["rtl/plumbing/quux_axi_master.sv"],
-        "top": "quux_axi_master",
-        "tb": "tb/quux13_axi_master_tb.cpp",
-        "flags": ["-O2", "-GWORD_BITS=40"],
-        "golden": None,
-        "machine": "quux",
-    },
-    # The same master behind the Kria KR260's 128-bit port, the pair as the
-    # board builds it (`tb/quux_axi_narrow128_tb.cpp`).
-    "quux_axi_narrow128_quux": {
-        "sources": ["rtl/plumbing/quux_axi_narrow128.sv"],
-        "extra": ["rtl/plumbing/quux_axi_master.sv", "tb/quux_axi_narrow128_harness.sv"],
-        "top": "quux_axi_narrow128_harness",
-        "tb": "tb/quux_axi_narrow128_tb.cpp",
-        "flags": ["-O2"],
-        "golden": None,
-        "machine": "quux",
-    },
-    # Revision 15's master behind the same narrowing, each channel of the
+    # Revision 15's master behind the 128-bit narrowing, each channel of the
     # port ready on its own (`tb/quux15_axi_narrow128_tb.cpp`).
     "quux15_axi_narrow128_quux": {
         "sources": ["rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv"],
@@ -739,20 +656,6 @@ CHECKS = {
         "tb": "tb/quux15_axi3_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
-        "machine": "quux",
-    },
-    # QUUX's block-disk on its own at revision 13 (`WORD_BITS` 40), against
-    # muir's `BlockDisk`:
-    # pages, the packed and the 4-byte transfers, the GPT fixture's 8-bit
-    # view, NXM, a page past the pack's end, and on a pack of all 2^28
-    # blocks a block past the disk address's 28 bits
-    # (`tb/quux13_block_disk_tb.cpp`).
-    "quux13_block_disk_quux": {
-        "sources": ["rtl/machine/quux_block_disk.sv"],
-        "top": "quux_block_disk",
-        "tb": "tb/quux13_block_disk_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-GWORD_BITS=40"],
-        "golden": ["quux13_block_disk.quux.golden", "quux13_block_disk_whole.quux.golden"],
         "machine": "quux",
     },
     # Revision 15's walk and block store on their own, against the same
@@ -1343,38 +1246,8 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
-    # QUUX's state through the readout window: what a checkpoint of a QUUX
-    # board reads, each field against the register that holds it, at
-    # revision 13's widths and sizes and K = 4, `tb/quux_readout_window_tb.cpp`
-    # under `QUUX13_TB` (`build/quux13_readout_window.quux.k4.pass`); and the
-    # CADR, where none of it answers (`build/quux_readout_window.pass`).
-    "quux13_readout_window_quux": {
-        # The board's map first: QUUX's memory port imports it.
-        "sources": ["rtl/plumbing/cadr_ddr_map.sv",
-                    "rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_memory_path.sv",
-                    "rtl/machine/cadr_machine.sv"] + QUUX_SOURCES,
-        "extra": [
-            "rtl/machine/cadr_phase_gen.sv",
-            "rtl/machine/cadr_xbus_decode.sv",
-            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
-            "rtl/machine/cadr_spy_registers.sv",
-            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
-            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
-            "rtl/machine/cadr_console_bus.sv",
-            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
-            "rtl/plumbing/cadr_bus_audit.sv",
-        ],
-        "top": "cadr_machine",
-        "tb": "tb/quux_readout_window_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
-                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-                  "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "-GSYNC_K=4", "-GSYNC_L=0",
-                  "-GQUUX13_MAIN_BASE=170156032",
-                  "-CFLAGS", "-DQUUX_TB=1 -DQUUX13_TB=1 -DSYNC_K_TB=4 -DSYNC_L_TB=0"],
-        "golden": None,
-        "prom": "boot_prom.quux13.hex",
-        "machine": "quux",
-    },
+    # The readout window on the CADR, where none of QUUX's state answers
+    # (`build/quux_readout_window.pass`).
     "quux_readout_window": {
         # The DDR map's package first: `cadr_machine.sv` names it in a
         # parameter's default.
@@ -1391,7 +1264,7 @@ CHECKS = {
             "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
             "rtl/machine/cadr_memory_path.sv",
             "rtl/plumbing/cadr_bus_audit.sv",
-        ] + QUUX_SOURCES,
+        ],
         "top": "cadr_machine",
         "tb": "tb/quux_readout_window_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
@@ -1626,7 +1499,7 @@ CHECKS = {
         "sources": ["boards/kria-kr260/cadr_kr260.sv"],
         "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
                   "tb/cadr_kr260_stubs.sv"],
-        "extra": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/quux_phase_gen.sv",
+        "extra": ["rtl/machine/cadr_phase_gen.sv",
                   "rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv",
                   "rtl/machine/cadr_xbus_decode.sv", "rtl/machine/cadr_busint_xbus.sv",
                   "rtl/plumbing/cadr_xbus_ddr.sv", "rtl/machine/cadr_spy_registers.sv",
@@ -1634,11 +1507,6 @@ CHECKS = {
                   "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
                   "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
                   "rtl/machine/cadr_dbgin.sv", "rtl/plumbing/cadr_bus_audit.sv",
-                  "rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
-                  "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_video.sv",
-                  "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_clocks.sv",
-                  "rtl/machine/quux_input.sv", "rtl/machine/quux_block_disk.sv",
-                  "rtl/machine/quux_cache.sv", "rtl/machine/quux_mem_port.sv",
                   "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
                   "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
                   "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
@@ -1754,8 +1622,6 @@ CHECKS = {
         "golden_tree": True,
         "sources": ["rtl/plumbing/xilinx7/cadr_machine.xdc",
                     "boards/de25-nano/quartus/cadr_de25.sdc",
-                    "rtl/plumbing/xilinx7/quux_machine.xdc",
-                    "boards/de25-nano/quartus/quux_de25.sdc",
                     "rtl/plumbing/xilinx7/cadr_ddr.xdc",
                     "boards/de25-nano/quartus/cadr_ddr.sdc",
                     "boards/arty-z7-20/cadr_arty.sv",
@@ -1766,14 +1632,10 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
-    # WHICH MACHINE A BOARD IS BUILT AS, "cadr" or "quux": the machine's QUUX
-    # checks build `cadr_machine` with the value directly, so a top level that
-    # dropped the parameter would build the CADR under the other name with
-    # every other check green.
-    # `tools/machine_param_check.py` reads the value back at `u_machine` out
-    # of Verilator's elaborated tree for each board and each value, requires
-    # the refusal of a name that is not a machine, and runs the flows' own
-    # refusals.  Its header is the argument.
+    # WHICH MACHINE EACH BOARD'S TOP LEVEL AND FLOW BUILDS:
+    # `tools/machine_param_check.py` counts the debug cable's cells and reads
+    # the console's parameters in each CADR top level's elaborated tree, and
+    # runs the flows' own refusals.  Its header is the argument.
     # Refusing is being caught.
     "machine_param": {
         "kind": "script",
@@ -1788,22 +1650,6 @@ CHECKS = {
                     "boards/de25-nano/quartus/build.sh",
                     "boards/de25-nano/quartus/program.sh"],
         "cmd": ["tools/machine_param_check.py", "."],
-        "top": None,
-        "tb": None,
-        "flags": [],
-        "golden": None,
-    },
-    # THE WORD'S WIDTH, `WORD_BITS`: every other check builds the machine at
-    # 32, where a word that dropped the parameter is the same design.
-    # `tools/word_width_check.py` lints `cadr_machine` at 32 and 40, reads
-    # each word's width back out of Verilator's elaborated tree, and requires
-    # the refusal of a width the machine does not have.  Its header is the
-    # argument.  Refusing is being caught.
-    "word_width": {
-        "kind": "script",
-        "sources": ["rtl/machine/cadr_microcycle.sv",
-                    "rtl/machine/cadr_machine.sv"],
-        "cmd": ["tools/word_width_check.py", "."],
         "top": None,
         "tb": None,
         "flags": [],
@@ -1840,8 +1686,8 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
-    # Each machine's reserved-memory node COMPILED --- the CADR's and QUUX
-    # revision 13's, through cpp and dtc in a skeleton of the board's root ---
+    # Each machine's reserved-memory node COMPILED --- the CADR's and QUUX's,
+    # through cpp and dtc in a skeleton of the board's root ---
     # against the package; each machine's trees reaching its kernel, its
     # U-Boot and its card; and U-Boot's fixed loads and relocation clear of
     # each machine's region.  `tools/reserved_check.py`.  Refusing is being
@@ -2247,32 +2093,6 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
-    # QUUX's revision 9 from Linux's side: the face with the machine's
-    # register page behind it, every rule of the host's side held by name
-    # (`tb/quux_fd_face_tb.cpp`).
-    "quux_fd_face_quux": {
-        "sources": ["rtl/plumbing/quux_fd_face.sv", "rtl/machine/quux_file_device.sv",
-                    "rtl/machine/quux_rtc.sv", "rtl/machine/quux_feature_page.sv"],
-        "extra": ["tb/quux_fd_face_harness.sv", "rtl/machine/quux_input.sv",
-                  "rtl/plumbing/cadr_gp_regs.sv"],
-        "top": "quux_fd_face_harness",
-        "tb": "tb/quux_fd_face_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],
-        "golden": None,
-        "machine": "quux",
-    },
-    # QUUX's wall clocks against wall time at a tick of 15 ns, the Arty Z7-20's
-    # at revision 14, and at 12.5 ns, a tick of no whole nanoseconds
-    # (`tb/quux_wall_time_tb.cpp`; `build/wall_time.pass` adds 10 and 13).
-    **{"wall_time_%d" % ps: {
-        "sources": ["rtl/machine/quux_clocks.sv", "rtl/machine/quux_rtc.sv"],
-        "extra": ["tb/quux_wall_time_harness.sv"],
-        "top": "quux_wall_time_harness",
-        "tb": "tb/quux_wall_time_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-GTICK_PS=%d" % ps],
-        "golden": None,
-        "machine": "quux",
-    } for ps in (15000, 12500)},
     # `M_AXI_GP1` split three ways: the decode that lets the console and the
     # debug cable's carrier share the port, with the property `gp0_split`
     # holds on the other one --- every address answered, in both directions,
@@ -2578,38 +2398,6 @@ CHECKS = {
     },
 }
 
-# The console at revision 13's memory boards (`console13.pass`): word 37 from
-# 512 and up to 1,024, word 38 saying so; and word 39 a video controller of
-# 1920 by 1080.  The harness takes the two as
-# parameters and the testbench as defines, as the Makefile builds it.
-CHECKS["console13"] = dict(CHECKS["console"], **{
-    "flags": CHECKS["console"]["flags"] + [
-        "-GMEM_BOARDS_DEFAULT=512", "-GMEM_BOARDS_MAX=1024",
-        "-CFLAGS", "-DCONSOLE_BOARDS_DEFAULT=512u", "-CFLAGS", "-DCONSOLE_BOARDS_MAX=1024u",
-        "-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1080",
-        "-CFLAGS", "-DCONSOLE_VIDEO_WIDTH=1920u", "-CFLAGS", "-DCONSOLE_VIDEO_HEIGHT=1080u"],
-    "machine": "quux",
-})
-
-
-# **QUUX'S TIMINGS (H1a).**  Every check that holds QUUX to a trace of muir's
-# `rtl` holds it at a microcycle of K ticks, and the trace and the build name
-# K (`QUUX_TIMED` in the Makefile): `<check>.quux.k4.golden`, built with
-# `-GSYNC_K=4`.  The keys above are K = 4, the least QUUX takes
-# (`quux_phase_gen.sv` says why).  `quux13_<program>_quux_l1` are the machine
-# checks at an L of one, and `phase_gen_quux` holds the
-# generator alone at K and K + 1.  A key missing here selects zero records
-# and reports success, which is why the keys are made by rule and not by hand.
-def _timed(key, k, l):
-    spec = CHECKS[key]
-    tag = "k%d" % k + ("l%d" % l if l else "")
-    golden = spec["golden"].replace(".quux.golden", ".quux.%s.golden" % tag)
-    assert golden != spec["golden"], key
-    return dict(spec, **{
-        "flags": spec["flags"] + ["-GSYNC_K=%d" % k, "-GSYNC_L=%d" % l],
-        "golden": golden,
-    })
-
 # **CHECKS PENDING A RULING**, the Makefile's `QUUX_PENDING` in this file's
 # names: left out of `make check MACHINE=quux` until muir rules.  Their
 # records are kept and are not run: a baseline that fails for a ruling not
@@ -2617,113 +2405,8 @@ def _timed(key, k, l):
 # None is pending now.
 PENDING = {}
 
-# **REVISION 13'S PROCESSOR** (contract G2, appendix A1): the whole machine
-# at `WORD_BITS` 40 on the programs of `golden/src/quux13.rs`, the
-# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX`,
-# with its main memory at the Makefile's `QUUX13_TB_BASE`.
-# And the read-during-write window on revision 13's dispatch memory and map,
-# 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
-# on the `map` program, which writes all three; and on the cache's RAMs,
-# under `CADR_RDW_POISON_CACHE` as well, on the `lines` program.
-# And the board's own words (contract HD): the Makefile's `QUUX13_G_<program>`
-# for the three programs on another board's size and name.
-QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "space512", "lines", "fused", "devices", "disk",
-                   "devices_hd", "devices_name", "space_hd")
-QUUX13_TB_BASE = "170156032"
-_HD = ["-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1080", '-GBOARD_NAME="Full HD test, 20 ch."',
-       "-CFLAGS", "-DCADR_TB_VIDEO_WORDS=64800u"]
-QUUX13_BOARD_FLAGS = {"devices_hd": _HD, "space_hd": _HD, "devices_name": ['-GBOARD_NAME="DE25-Nano"']}
-for _p in QUUX13_PROGRAMS:
-    CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"', "-GWORD_BITS=40",
-                                           "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
-                                           "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE]
-                 + QUUX13_BOARD_FLAGS.get(_p, []),
-        "golden": "quux13_%s.quux.golden" % _p,
-        "prom": "quux13_%s_prom.hex" % _p,
-        "machine": "quux",
-    })
-CHECKS["rdw_poison_quux13_quux"] = dict(CHECKS["quux13_map_quux"], **{
-    "flags": CHECKS["quux13_map_quux"]["flags"] + ["+define+CADR_RDW_POISON"],
-})
-CHECKS["rdw_poison_quux13_mem_quux"] = dict(CHECKS["quux13_lines_quux"], **{
-    "flags": CHECKS["quux13_lines_quux"]["flags"] + ["+define+CADR_RDW_POISON",
-                                                     "+define+CADR_RDW_POISON_CACHE"],
-})
-CHECKS["rdw_poison_quux13_pf_quux"] = dict(CHECKS["quux13_fused_quux"], **{
-    "flags": CHECKS["quux13_fused_quux"]["flags"] + ["+define+CADR_RDW_POISON",
-                                                     "+define+CADR_RDW_POISON_CACHE"],
-})
-
-# **AND `golden/src/quux.rs`'S PROGRAMS ON QUUX** (G2's retirement of
-# revision 12): the programs written for revision 12, assembled with
-# `--revision 13`, the Makefile's `QUUX13_PORTED` and `QUUX13_PORTED_L1`,
-# held against the same machine at `WORD_BITS` 40 as `quux13_<program>`.
-# `divmdsync` is at an L of one alone: its `ILONG` fillers are what moves
-# a read's word into the ticks between a `DIV`'s edge and its load.
-QUUX13_PORTED = ("rtc", "clocks", "tickwin", "clockwait", "divmd", "muldiv", "files", "prefetch",
-                 "pdlsync", "imemsync", "memedge", "startstart", "returns", "operand", "busreset",
-                 "registers", "page", "tv", "features")
-QUUX13_PORTED_L1 = ("tickwin", "clockwait", "divmd", "divmdsync")
-for _p in sorted(set(QUUX13_PORTED + QUUX13_PORTED_L1)):
-    CHECKS["quux13_%s_quux" % _p] = dict(CHECKS["quux13_alu_quux"], **{
-        "golden": "quux13_%s.quux.golden" % _p,
-        "prom": "quux13_%s_prom.hex" % _p,
-    })
-for _p in QUUX13_PORTED_L1:
-    CHECKS["quux13_%s_quux_l1" % _p] = _timed("quux13_%s_quux" % _p, 4, 1)
-for _p in set(QUUX13_PORTED_L1) - set(QUUX13_PORTED):
-    del CHECKS["quux13_%s_quux" % _p]
-
-assert "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE in CHECKS["quux13_readout_window_quux"]["flags"]
-
-# The same programs, and muir's own of QUUX, on the machine built as QUUX
-# at revision 13: `golden/src/dispatch_write_order.rs --machine quux
-# --revision 13`.  QUUX's wait for MD, its old word in a RAM's own write
-# cycle and its one rate are held here.
-CHECKS["dispatch_write_order13_quux"] = dict(CHECKS["dispatch_write_order"], **{
-    "sources": CHECKS["dispatch_write_order"]["sources"] + ["rtl/machine/quux_phase_gen.sv"],
-    "extra": CHECKS["dispatch_write_order"]["extra"] + [
-        f for f in QUUX_SOURCES if f != "rtl/machine/quux_phase_gen.sv"],
-    "flags": CHECKS["dispatch_write_order"]["flags"] + [
-        '-GMACHINE="quux"', "-GWORD_BITS=40", "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
-        "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE],
-    "golden": "dispatch_write_order13.quux.golden",
-    "machine": "quux",
-})
-
-# **REVISION 14** (contract G3 revision 14, appendix A14): the whole machine
-# at `REVISION` 14 on the programs of `golden/src/quux14.rs`, the Makefile's
-# `QUUX14_PROGRAMS`, each traced on muir's `Geometry::QUUX_14`; and the TLB's
-# read-during-write window, the same machine under `CADR_RDW_POISON` on the
-# programs the Makefile's `QUUX14_POISON` names.
-QUUX14_PROGRAMS = ("windows", "space", "walk", "noentry", "empty", "empty8k", "mapmd", "lc", "fetch",
-                   "words", "writeback", "setter", "setter0", "wbhold", "redirect", "redirectam", "fiddle", "fiddleam",
-                   "double", "inflight", "inflightfb", "inflight0", "forward", "mdmove")
-QUUX14_POISON = ("double", "mapmd", "empty", "inflight", "inflightfb", "inflight0", "forward", "mdmove")
-QUUX14_FLAGS = {"empty8k": ["-GTLB_ENTRIES=8192"]}
-for _p in QUUX14_PROGRAMS:
-    CHECKS["quux14_%s_quux" % _p] = dict(CHECKS["quux13_alu_quux"], **{
-        "flags": CHECKS["quux13_alu_quux"]["flags"] + ["-GREVISION=14"] + QUUX14_FLAGS.get(_p, []),
-        "golden": "quux14_%s.quux.golden" % _p,
-        "prom": "quux14_%s_prom.hex" % _p,
-    })
-for _p in QUUX14_POISON:
-    CHECKS["rdw_poison_quux14_%s_quux" % _p] = dict(CHECKS["quux14_%s_quux" % _p], **{
-        "flags": CHECKS["quux14_%s_quux" % _p]["flags"] + ["+define+CADR_RDW_POISON",
-                                                          "+define+CADR_RDW_POISON_CACHE"],
-    })
-# Some at K = 5 as well, for the bounds K = 4 cannot see: the reset's sweep
-# a tick short, a queued walk's hold, a walk's fill pending across the edge
-# (`forward`), and a walk of two hits whose entry is in a tick before the
-# edge (`inflight0`); and `MD` moving in a walk's hold (`mdmove`).
-for _p in ("windows", "double", "forward", "inflight0", "mdmove"):
-    CHECKS["quux14_%s_quux_k5" % _p] = _timed("quux14_%s_quux" % _p, 5, 0)
-CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_quux", 5, 0)
-
-# **REVISION 15'S CORE** (contract G3 revision 15, appendix A15b):
-# `rtl/machine/quux15_core.sv` on its own, held clock for clock by
+# **QUUX'S CORE** (contract G3 revision 15, appendix A15b; QUUX's Ethernet
+# contract, §10), revision 16: `rtl/machine/quux15_core.sv` on its own, held clock for clock by
 # `tb/quux15_core_tb.cpp` to the traces of a program of
 # `golden/src/quux15.rs` or `quux15_preset.rs` at its periods, each run's
 # memories loaded from its trace, the Makefile's `quux15_<program>.quux.pass`
@@ -2737,6 +2420,7 @@ QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlf
 QUUX15_CORE += ("input", "network", "regread")
 QUUX15_CORE += ("haltcons",)
 QUUX15_CORE += ("resetback",)
+QUUX15_CORE += ("ethernet", "lineclear")
 QUUX15_PERIODS = (20, 17)
 # The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
 # reader and `cadr-checkpoint`'s writer, which the testbench holds a
@@ -2754,6 +2438,8 @@ QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "rand
 QUUX15_PERIODS_OF["input"] = (20, 17, 36)
 QUUX15_PERIODS_OF["network"] = (20, 17, 36)
 QUUX15_PERIODS_OF["regread"] = (20, 36)
+QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
+QUUX15_PERIODS_OF["lineclear"] = (20, 17, 36)
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_mdmem.sv", "rtl/machine/quux15_dmem.sv", "rtl/machine/quux15_exec.sv",
@@ -2762,7 +2448,7 @@ for _p in QUUX15_CORE:
                     "rtl/machine/quux15_validmap.sv", "rtl/machine/quux15_recency.sv",
                     "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv",
                     "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv",
-                    "rtl/machine/quux15_chaos.sv"],
+                    "rtl/machine/quux16_ethernet.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",
         "tb": "tb/quux15_core_tb.cpp",
@@ -2784,21 +2470,6 @@ for _p in QUUX15_CORE:
         golden=["quux15_%s.quux.p%d.b2.golden" % (_p, _q)
                 for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
 
-# **AND AT REVISION 16** (the Makefile's `QUUX16_GROUPS`,
-# `quux15_<group>.quux.r16.pass`): the core built with revision 16's
-# MACHINE-ID, and so with the Ethernet device, its testbench refusing a
-# trace of another revision.
-QUUX16_GROUPS = ("ethernet", "lineclear", "filedev", "network", "checkpoints", "haltcons")
-QUUX15_PERIODS_OF["ethernet"] = (20, 17, 36)
-QUUX15_PERIODS_OF["lineclear"] = (20, 17, 36)
-for _p in QUUX16_GROUPS:
-    CHECKS["quux15_%s_quux_r16" % _p] = dict(
-        CHECKS["quux15_alu_quux"],
-        sources=CHECKS["quux15_alu_quux"]["sources"] + ["rtl/machine/quux16_ethernet.sv"],
-        flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GMACHINE_ID=1364525316", "-CFLAGS", "-DQUUX15_REVISION=16"],
-        golden=["quux15_%s.quux.p%d.r16.golden" % (_p, _q)
-                for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
-
 # **REVISION 16's ETHERNET DEVICE FROM BOTH OF ITS SIDES** (the Makefile's
 # `quux16_ethernet_module.quux.pass`): the register page's devices with the
 # device in them and the face before them, against muir's `EthernetDevice`
@@ -2807,7 +2478,7 @@ for _p in QUUX16_GROUPS:
 _QED_PKG = _Q15CHK_PKG + "quux-ethernet-device/src"
 CHECKS["quux16_ethernet_module_quux"] = {
     "sources": ["rtl/machine/quux16_ethernet.sv", "rtl/machine/quux15_devices.sv", "rtl/plumbing/quux_ed_face.sv"],
-    "extra": ["rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv", "rtl/plumbing/cadr_gp_regs.sv",
+    "extra": ["rtl/machine/quux15_input.sv", "rtl/plumbing/cadr_gp_regs.sv",
               "tb/quux16_ethernet_harness.sv"],
     "top": "quux16_ethernet_harness",
     "tb": "tb/quux16_ethernet_tb.cpp",
@@ -2886,8 +2557,8 @@ CHECKS["quux15_kr260"] = {
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
-              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
-              "rtl/plumbing/cadr_input_cables.sv",
+              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux16_ethernet.sv",
+              "rtl/plumbing/quux_ed_face.sv", "rtl/plumbing/cadr_input_cables.sv",
               "rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv",
               "rtl/plumbing/cadr_axi_lanes128.sv", "rtl/plumbing/cadr_gp0_default.sv",
               "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_disk_pack.sv",
@@ -2936,8 +2607,8 @@ CHECKS["quux15_arty"] = {
               "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
               "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
               "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
-              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
-              "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/quux15_axi_master.sv",
+              "rtl/machine/quux15_block_walk.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux16_ethernet.sv",
+              "rtl/plumbing/quux_ed_face.sv", "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/quux15_axi_master.sv",
               "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_gp0_split.sv",
               "rtl/plumbing/cadr_disk_pack.sv",
               "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
@@ -3073,11 +2744,6 @@ for _board, _top, _ps, _define, _map in (
         "golden": None,
         "machine": "quux",
     }
-    # And at revision 16 (the Makefile's `quux15_reset_<board>.r16.pass`):
-    # the Ethernet device's page where its program maps it.
-    CHECKS["quux15_reset_%s_r16" % _board] = dict(
-        CHECKS["quux15_reset_%s" % _board],
-        flags=CHECKS["quux15_reset_%s" % _board]["flags"] + ["-GREVISION=16", "-CFLAGS", "-DQUUX15_REVISION=16"])
 
 # **AND THE KRIA KR260'S LATENCY PROBE** (the Makefile's
 # `quux15_kr260_probe.pass`, `tb/quux15_kr260_probe_tb.cpp`): the same top
@@ -3137,7 +2803,7 @@ CHECKS["quux15_face"] = {
 # behind it, every rule of the host's side held by name.
 CHECKS["quux15_fd_face"] = {
     "sources": ["rtl/machine/quux15_devices.sv", "rtl/plumbing/quux_fd_face.sv"],
-    "extra": ["tb/quux15_fd_face_harness.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux15_chaos.sv",
+    "extra": ["tb/quux15_fd_face_harness.sv", "rtl/machine/quux15_input.sv", "rtl/machine/quux16_ethernet.sv",
               "rtl/plumbing/cadr_gp_regs.sv"],
     "top": "quux15_fd_face_harness",
     "tb": "tb/quux15_fd_face_tb.cpp",
@@ -3146,46 +2812,15 @@ CHECKS["quux15_fd_face"] = {
     "machine": "quux",
 }
 
-# **THE WHOLE MACHINE BOOTING PROM 2001** (the Makefile's
-# `machine13.quux.<K>.pass`): revision 13's machine on its boot PROM,
-# `boot_prom.quux13.hex`, against `golden/src/rtl.rs --machine quux
-# --revision 13`, the boot to `DISK-AWAIT-PACK` with no pack.
-CHECKS["machine13_quux"] = dict(CHECKS["quux13_alu_quux"], **{
-    "golden": "rtl13.quux.golden",
-    "prom": "boot_prom.quux13.hex",
-})
-
-QUUX_TIMED_KEYS = ["machine13_quux", "dispatch_write_order13_quux"] + \
-    ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
-    ["rdw_poison_quux14_%s_quux" % p for p in QUUX14_POISON] + \
-    ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS + QUUX13_PORTED] + \
-    ["rdw_poison_quux13_quux", "rdw_poison_quux13_mem_quux", "rdw_poison_quux13_pf_quux"]
-for _key in QUUX_TIMED_KEYS:
-    CHECKS[_key] = _timed(_key, 4, 0)
-# Revision 14's programs at the boards' main-memory latency (the Makefile's
-# `quux14_%.quux.lat.pass`, its `QUUX14_LAT_SEEDS`): the K = 4 machine and
-# trace, sixteen seeds.
+# The CADR's goldens at the boards' main-memory latency (the Makefile's
+# `CADR_LAT`, `machine.lat.pass` and `quux_%.lat.pass`, its
+# `QUUX14_LAT_SEEDS`): the machine's binaries and traces, sixteen seeds.
 QUUX14_LAT_SEEDS = tuple(range(1, 17))
-for _p in QUUX14_PROGRAMS:
-    CHECKS["quux14_%s_quux_lat" % _p] = dict(CHECKS["quux14_%s_quux" % _p], lat_seeds=QUUX14_LAT_SEEDS)
-# And the CADR's goldens at the same latency (the Makefile's `CADR_LAT`,
-# `machine.lat.pass` and `quux_%.lat.pass`): the same binaries and traces,
-# the same sixteen seeds.
+
 CADR_LAT_PROGRAMS = ("map", "tv", "muldiv", "tick", "divmd", "tickwait", "clocks", "busreset", "startstart",
                      "unibus", "fused", "operand", "prefetch")
 for _key in ["machine"] + ["quux_%s" % _p for _p in CADR_LAT_PROGRAMS]:
     CHECKS[_key + "_lat"] = dict(CHECKS[_key], lat_seeds=QUUX14_LAT_SEEDS)
-for _key, (_k, _l) in (("phase_gen_quux", (4, 1)),):
-    CHECKS[_key] = {
-        "sources": ["rtl/machine/quux_phase_gen.sv"],
-        "top": "quux_phase_gen",
-        "tb": "tb/quux_phase_gen_tb.cpp",
-        "flags": ["-GSYNC_K=%d" % _k, "-GSYNC_L=%d" % _l,
-                  "-CFLAGS", "-DSYNC_K_TB=%d -DSYNC_L_TB=%d" % (_k, _l)],
-        "golden": "phase_gen.quux.k%dl%d.golden" % (_k, _l),
-        "machine": "quux",
-    }
-
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
 GENERATED = [
@@ -3684,7 +3319,7 @@ def build_and_run(args, work, check, build_fails=False):
         cmd.append(os.path.join(work, spec["gprom_path"]))
         cmd.append(os.path.join(args.goldens, "boot_prom.hex"))
     # **AND AT THE BOARDS' MAIN-MEMORY LATENCY**, the Makefile's
-    # `quux14_%.quux.lat.pass`: the same binary once a seed, its main memory
+    # `machine.lat.pass` and `quux_%.lat.pass`: the same binary once a seed, its main memory
     # answering 33 to 228 ticks after each request.  Caught at the first
     # seed that fails.
     if spec.get("lat_seeds"):
@@ -4260,18 +3895,6 @@ def check_makefile():
     programs = re.search(r"^QUUX_PROGRAMS := (.*)$", text, re.M)
     for prog in (programs.group(1).split() if programs else []):
         names |= {"quux_" + prog}
-    # QUUX's, revision 13's: `golden/src/quux13.rs`'s programs, and
-    # `golden/src/quux.rs`'s on QUUX, at an L of zero and of one.
-    for var, suffix in (("QUUX13_PROGRAMS", "_quux"), ("QUUX13_PORTED", "_quux"),
-                        ("QUUX13_PORTED_L1", "_quux_l1")):
-        programs = re.search(r"^%s := (.*)$" % var, text, re.M)
-        for prog in (programs.group(1).split() if programs else []):
-            names |= {"quux13_" + prog + suffix}
-    # Revision 14's, `golden/src/quux14.rs`'s, and the TLB's poison on some.
-    for var, prefix in (("QUUX14_PROGRAMS", "quux14_"), ("QUUX14_POISON", "rdw_poison_quux14_")):
-        programs = re.search(r"^%s := (.*)$" % var, text, re.M)
-        for prog in (programs.group(1).split() if programs else []):
-            names |= {prefix + prog + "_quux"}
     # Revision 15's core, on `golden/src/quux15.rs`'s programs it runs and
     # its groups of runs.
     programs = re.search(r"^QUUX15_CORE := (.*)$", text, re.M)

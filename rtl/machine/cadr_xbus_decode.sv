@@ -18,88 +18,19 @@
 // the memory board's address switch has six bits, so the space is 64 slots of
 // 64K words, and the top four are taken by the display, the disk controller
 // and the Unibus.
-//
-// **QUUX DECODES ITS OWN SPACE FROM `17000000` UP**, muir's
-// `busint::decode_quux` (contracts Q5, Q7 and Q13), which `Rtl::start_bus_cycle`
-// and `Machine::bus_read` both take on QUUX.  With `MACHINE` "quux":
-//
-//   the register page, physical `17777400`-`17777777` (page 37777), the
-//   last page of the physical space, is a device, whatever else the address
-//   is: it sits where the CADR's Unibus window ends, and it is decided
-//   first.  Block-disk's four words at 200-203 and the video controller's
-//   mode at 210 are among its words, each answered by its own slave;
-//   the video controller's buffer, `VIDEO_WORDS` from `17000000`
-//   (`Tv::buffer_words`), 40,960 words at the bitstreams' 1280 by 1024, where
-//   the CADR's two boards have 32,768, is on the memory bus with main memory
-//   and is a device here only as the memory path's seam takes it;
-//   main memory is below `17000000`, as on the CADR;
-//   and nothing else answers: not the old register page at `17377000`, not
-//   the CADR's display and disk registers after it, not the rest of the old
-//   Unibus window below the page, and not the color TV's ranges, QUUX having
-//   no color board.  An access there fails at once with the Xbus NXM bit.
-//
-// **REVISION 13 DECODES A 28-BIT SPACE** (contract G1 §3.2, G2 §4.1;
-// `WORD_BITS` 40 on QUUX), muir's `busint::decode_quux_13`:
-//
-//   the register page, `1777777400`-`1777777777`, the space's last page, is a
-//   device, with revision 12's word offsets;
-//   the frame buffer window, `VIDEO_WORDS` from `1760000000`, is on the memory
-//   bus with main memory, and is `memory` here: the port tells the two apart
-//   by the address (`quux_mem_port.sv`), and no slave needs the cycle;
-//   main memory is below main memory's end, the boards' count times 64K
-//   words, and below the window;
-//   and nothing else answers: not revision 12's register page at
-//   `17777400` or its frame buffer at `17000000`, which are main memory when
-//   there is that much of it and nothing when there is not, and not the rest
-//   of the space.
-//
-// `build/xbus_decode.quux13.pass` holds it at every one of the 268,435,456
-// addresses, for seven board counts.
-//
-// **AND BLOCK-DISK'S CHANNEL SEES MAIN MEMORY ALONE** (`CHANNEL`, revision
-// 13): muir's transfer takes a command list word or a page only from main
-// memory, `main.get` and `page + PAGE > main.len()` (`BlockDisk::write`),
-// so for the channel the window and the register page are nothing, and
-// `memory` is main memory.  `build/xbus_decode.quux13ch.pass` holds that
-// decode at every address too.  Below revision 13 `CHANNEL` changes
-// nothing: revision 12's channel has its own decode of the Xbus space.
-//
-// The CADR's decode is the text below `g_cadr`, unchanged; on the CADR the
-// register page's addresses are the Unibus window's last page, where
-// nothing answers.  What holds each: `build/xbus_decode.pass` the CADR's
-// over all 4,194,304 addresses, and `build/xbus_decode.quux13.pass` QUUX's,
-// against a golden that asks muir the same question on QUUX.
 
 `default_nettype none
 
-module cadr_xbus_decode #(
-    // "cadr" or "quux"; `cadr_machine.sv` refuses anything else.
-    parameter string MACHINE = "cadr",
-    // The video controller's buffer, in words, on QUUX: `cadr_machine.sv`
-    // decides it.
-    parameter int unsigned VIDEO_WORDS = 40960,
-    // 32; or 40 on QUUX, revision 13's 28-bit space.
-    parameter int unsigned WORD_BITS = 32,
-    // The decode block-disk's channel takes on revision 13: main memory
-    // alone.
-    parameter int unsigned CHANNEL   = 0,
-    // 13, or 14: revision 14's 29-bit bus address (A14.1).
-    parameter int unsigned REVISION  = 13,
-    localparam bit          REV13     = MACHINE == "quux" && WORD_BITS > 32,
-    localparam bit          PAGED     = REV13 && REVISION >= 14,
-    localparam bit          MAIN_ONLY = CHANNEL != 0,
-    localparam int unsigned PHYS_BITS = PAGED ? 29 : REV13 ? 28 : 22
-) (
+module cadr_xbus_decode (
     // The bottom two bits pick a register *inside* a device rather than which
     // device: every region in Xbus I/O space is aligned to at least four
     // words, and the display's eight control registers to eight. So the decode
     // does not read them, and Verilator is right to say so.
     /* verilator lint_off UNUSEDSIGNAL */
-    input  var logic [PHYS_BITS-1:0] phys,    // physical word address
+    input  var logic [21:0] phys,    // physical word address
     /* verilator lint_on UNUSEDSIGNAL */
-    // 64K-word memory boards fitted: 1 to 60 on the CADR and revision 12, and
-    // on revision 13 1 to what the board's reservation holds, at most 1,024
-    // (muir's `--main-memory-boards` on revision 13); the console holds each.
+    // 64K-word memory boards fitted, 1 to 60, muir's `--main-memory-boards`;
+    // the console holds it.
     input  var logic [10:0] boards,
 
     // Whether the second display board --- the color TV, `tv::COLOR_TV` ---
@@ -127,17 +58,9 @@ module cadr_xbus_decode #(
 
   // "the diagnostic bus's sixteen registers ... and the I/O board with its
   // Chaosnet interface" --- the Unibus half, which is its own slice.
-  //
-  // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`): the window,
-  // physical page 37000 and up, answers nothing on QUUX but its last page,
-  // the register page (contract Q13), a read or a write failing at once
-  // and setting the Xbus NXM bit (`busint::decode_quux`'s
-  // `Responder::NoXbus`).  So on QUUX the window is `nxm` and never
-  // `unibus`, and no cycle of the processor's reaches the Unibus side of the
-  // bus interface at all.
   logic in_window;
   assign in_window = page >= 14'o37000;
-  assign unibus    = (MACHINE != "quux") && in_window;
+  assign unibus    = in_window;
 
   // Xbus I/O space, the two slots below the Unibus.
   logic xbus_io;
@@ -168,70 +91,14 @@ module cadr_xbus_decode #(
   assign color_buffer  = phys[21:15] == 7'd122;      // 0o17200000, 32768 words
   assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
 
-  if (PAGED) begin : g_quux14
-    // **REVISION 14'S BUS ADDRESS** (A14.1; muir's `busint::decode_quux_14`):
-    // with `<28>` clear, main memory up to the boards' end and nothing past
-    // it; with `<28>` set, the device window at `<27:0>`: the register page
-    // at `1777777400`, frame buffer 0 from the window's base for the video
-    // controller's words, on the memory bus with main memory, and nothing
-    // else, the reserved slices and pages among it.
-    logic register_page, window, main;
-    assign register_page = phys[28] && (&phys[27:8]);
-    assign window        = phys[28] && (phys[27:0] < 28'(VIDEO_WORDS));
-    assign main          = !phys[28] && phys[27:16] < 12'(boards);
-    assign device = register_page && !MAIN_ONLY;
-    assign memory = (window && !MAIN_ONLY) || main;
-    assign nxm    = !memory && !device;
-    logic unused_rev12;
-    assign unused_rev12 = ^{tv_buffer, tv_control, disk_regs, color_buffer, color_control, color_tv,
-                            in_window, xbus_io};
-  end else if (REV13) begin : g_quux13
-    // Revision 13's 28-bit space (see the header), in as few levels as it
-    // can be: this is the far end of the map, and has two ticks.  The window
-    // is the top 4M words, `phys<27:22>` all ones, so its offset is
-    // `phys<21:0>`; the register page is in that range too and is decided
-    // first.  Main memory's end is the boards' count on `phys<27:16>`, and
-    // as the count is at most 1,024 boards, 64M words, main memory never
-    // reaches the window, which needs no term of its own here.
-    logic register_page, window, main;
-    assign register_page = &phys[27:8];
-    assign window        = (&phys[27:22]) && (phys[21:0] < 22'(VIDEO_WORDS));
-    assign main          = phys[27:16] < 12'(boards);
-    // Block-disk's channel takes main memory alone (see the header).
-    assign device = register_page && !MAIN_ONLY;
-    assign memory = (window && !MAIN_ONLY) || main;
-    assign nxm    = !memory && !device;
-    // The CADR's and revision 12's ranges, the Unibus window's and the color
-    // board's have no reader on revision 13.
-    logic unused_rev12;
-    assign unused_rev12 = ^{tv_buffer, tv_control, disk_regs, color_buffer, color_control, color_tv,
-                            in_window, xbus_io};
-  end else if (MACHINE == "quux") begin : g_quux
-    // The register page, `Geometry::FEATURE_PAGE`, 256 words at the last
-    // page of the space, not gated by `xbus_io` (contract Q13); and the
-    // video controller's buffer in place of the CADR boards' 32K words,
-    // which stays inside Xbus I/O space at the bitstreams' size (contract
-    // Q13's O7: the DDR map gives it a 16-bit offset).
-    logic feature_page, video_buffer;
-    assign feature_page = page == 14'o37777;
-    assign video_buffer = (phys - 22'o17000000) < 22'(VIDEO_WORDS);
-    assign device = feature_page || (xbus_io && video_buffer);
-    // The CADR's display and disk registers, the CADR boards' window and the
-    // color TV's ranges have no reader here: nothing answers them on QUUX.
-    logic unused_cadr;
-    assign unused_cadr = ^{tv_buffer, tv_control, disk_regs, color_buffer, color_control, color_tv};
-  end else begin : g_cadr
   assign device = xbus_io && (tv_buffer || tv_control || disk_regs
                               || (color_tv && (color_buffer || color_control)));
-  end
 
   // A board is 64K words and they start at zero, so the whole comparison is on
   // the slot number.
-  if (!REV13) begin : g_xbus_memory
   assign memory = !unibus && !xbus_io && (11'(phys[21:16]) < boards);
 
   assign nxm = !unibus && !memory && !device;
-  end
 
 endmodule
 

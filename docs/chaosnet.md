@@ -61,52 +61,15 @@ muir for the first time now, because the trace plugs a Chaosnet interface in
 and uses Loop Back as the far end, which no trace against this model could do
 before.
 
-## Revision 15 of QUUX
+## QUUX
 
-QUUX's revision 15 has no I/O board. Its Chaosnet interface is
-`rtl/machine/quux15_chaos.sv`, cut from the card's and put on the register
-page's words 140 to 147 as muir's page decodes them. Word 140 is the CSR, read
-and written. Word 141 reads MY ADDRESS and takes a word into the outgoing
-buffer. Words 142, 143 and 145 read the incoming buffer, the bit count and
-START. Words 144, 146 and 147 read 0, and no word but 140 and 141 takes a
-write. The CADR's board aliases three of those addresses, and QUUX's page
-does not.
-
-The registers keep revision 15's timing. A read is taken, and has its effect,
-the clock after its grant. A write is taken after whatever the cable did
-before it. The interrupt is word 100's bit 6, as the clock's write leaves it.
-Nothing in the interface keeps time: the turn timer, the frame and the cable
-are the far end's, behind the same seam the card has, so `cadr-chaosnet` and
-`cadr_chaos_cable.sv` serve it unchanged. A START after a START sends an empty
-buffer, as muir's does.
-
-muir keeps revision 15's network on the machine's own time, in units of
-0.5 ns, and on its clock grid. The turn timer acts at the first clock at or
-after each edge. A delay the interface starts, such as START's 4,150 ns until
-the frame is ready, ends at the first clock at or after its exact end. A
-frame from another station lands at the first clock at or after its exact
-landing. The goldens put a far end's frame on muir's cable at a clock's exact
-instant, and the trace names the first clock whose registers show each thing
-the cable did. The testbench gives it to the core's seam in the clock before.
-So the fabric needs no clock of its own for the network: it follows the clocks
-the trace names.
-
-Two checks hold it. `quux15_network` runs the core clock for clock against
-muir's pipeline, with frames put on muir's cable and the testbench playing the
-far end as muir's interface saw it. `quux15_chaos_module` runs the module
-alone against muir's interface over a script. The Kria's revision 15 design
-builds the interface with its cable tied off, as a cable with nothing on it.
-
-## Revision 16 of QUUX
-
-Revision 16 has no Chaosnet interface (QUUX's Ethernet contract, section 8
-R4). Its network is the Ethernet device (`docs/ethernet-device.md`). The
-register page's words 140 to 157 are reserved and are never reused: each reads
-0 and takes no write, as the page's other reserved words do. Word 100's bit 6
-is never set. The core builds no `quux15_chaos.sv` at revision 16, and the
-cable's seam is quiet, every output 0. `quux15_network` at revision 16 holds
-it clock for clock against muir: every word of 140 to 157 is read, then
-written as revision 15's interface acts on them with interrupts enabled, and
+QUUX has no I/O board and no Chaosnet interface (QUUX's Ethernet contract,
+section 8 R4). Its network is the Ethernet device (`docs/ethernet-device.md`).
+The register page's words 140 to 157 are reserved and are never reused: each
+reads 0 and takes no write, as the page's other reserved words do. Word 100's
+bit 6 is never set, and the core has no Chaosnet cable seam. `quux15_network`
+holds it clock for clock against muir: every word of 140 to 157 is read, then
+written as an interface would act on them with interrupts enabled, and
 condition 5 never calls its handler.
 
 ## An empty START takes Transmit Done down
@@ -116,9 +79,8 @@ sends a frame, the source and its check word. On MIT's board the read raises
 TRESET (the 74S00s at LMTBFC 0C15, while TDONE is up), which clears TDONE (the
 74S74 at LMMODU 0D08). So Transmit Done falls at the read and rises 500 ns
 before the empty frame's nominal end, as every frame's does. muir does the
-same, held to the netlist board. Both the CADR's card and revision 15's
-interface take Transmit Done down at START, and the far end's `chaos_tx_done`
-raises it again. After a word was written, Transmit Done is already down and
+same, held to the netlist board. The CADR's card takes Transmit Done down at
+START, and the far end's `chaos_tx_done` raises it again. After a word was written, Transmit Done is already down and
 the read changes nothing. MIT's microcode and Lisp write at least one word
 before every START, so no system run sees the difference.
 
@@ -165,18 +127,15 @@ and a word behind a START. With the earlier sections, 370 of the program's
 answers are held, and 338 of them fall 5 ns short of a tick, because
 `TSREMPTY` is an `FCLK` edge and every second edge is off the 10 ns grid.
 
-On the CADR and on revisions 13 and 14, the same register also says when a
+On the CADR, the same register also says when a
 frame is ready for its turn: at `TSREMPTY` after START, 4,101 to 4,225 ns
 after the answer by the clock's phase, where muir used a fixed 4,150 ns. The
 turn timer is the far end's, and the fabric keeps no such instant: Transmit
 Done rises at the far end's `chaos_tx_done`, which the checks play from
 muir's instants (the `iob` trace's `CTD` rows, and the `# chaos-txdone` lines
-of the machine traces on the CADR and on revisions 13 and 14). So no check of
-the fabric can tell this rule from the fixed delay, and none is meant to. On a
+of the machine traces on the CADR). So no check of the fabric can tell this rule from the fixed delay, and none is meant to. On a
 board Transmit Done comes back when `cadr-chaosnet` takes the frame off
-`cadr_chaos_cable.sv`, on no turn timer. Revision 15's interface is QUUX's own
-and keeps its rule, START ready 4,150 ns after the read on the machine's clock
-grid.
+`cadr_chaos_cable.sv`, on no turn timer.
 
 ## The interface takes its own frame when it is for it
 
@@ -190,16 +149,11 @@ back as Transmit Abort. muir measures the cases on the netlist board and does
 the same, on every revision.
 
 In the fabric that is the cable's, and the cable is the far end. The CADR's
-card and revision 15's interface take their own frame through the seam as
-they take any other: its words on `chaos_rx_*`, the count on
+card takes its own frame through the seam as it takes any other: its words on `chaos_rx_*`, the count on
 `chaos_rx_lost`, and the abort on `chaos_tx_done` with `chaos_tx_abort`. A
 frame looped back into a full buffer is aborted as its destination word goes
 by, 125 ns before Transmit Done (muir's `busy_looped`), so the far end can
-also give the abort with the count, ahead of the done.
-`quux15_chaos_module` holds it: its script now has the interface take its own
-frame to its address, to zero and under Spy, and abort its own frame into a
-full buffer, with the testbench playing the far end as muir's interface saw
-it. Frames of any length are started, the next section says what becomes of
+also give the abort with the count, ahead of the done. Frames of any length are started, the next section says what becomes of
 one written past the buffer's end.
 
 ## Both buffers go round
@@ -208,7 +162,7 @@ Each packet buffer is a 2147, 4K by 1: the outgoing one at LMTBUF 0C10 on
 the twelve bits of `TBCT`, the incoming one at LMRBUF 0C04 on `RBCT`.
 Neither count stops at the end. muir measured what follows on the netlist
 board and holds its model to it on every revision (`tests/chaos_rtl.rs`),
-and the CADR's card and revision 15's interface do the same.
+and the CADR's card does the same.
 
 **Transmit.** Each word written goes in at `TBCT`, so a word past the 256th
 goes over the first. START puts the source and the check word in at the
@@ -270,9 +224,7 @@ only from the checks.
 Loop Back, the runs that do not land handed back to it anyway, and frames
 from another station on a cable of 256 to 258 words and two of wreckage, one
 over an earlier frame of ones and one past 4,096 bits, each read round the
-buffer with the bit count and the CSR at every read. `quux15_chaos_module`
-holds revision 15's interface to the same cases and to frames of 253 to 258
-words written on the cable to its own address. `chaos_cable` holds the
+buffer with the bit count and the CSR at every read. `chaos_cable` holds the
 cable's offer, and `gp0_split` the frame the machine sends coming out of the
 cable's window with the check word muir makes.
 
@@ -313,7 +265,7 @@ them.
 ## The receiver's own gate, and what a frame leaves
 
 muir's `b338042`, `4647f6b` and `40b86d1` follow the netlist board inside a
-frame, and the card and revision 15's interface follow muir. **`RACT` is the
+frame, and the card follows muir. **`RACT` is the
 card's own**, the 74S74 at LMRCLK 0C06: it takes Receive Done, inverted, at
 the frame's `START^`, 60 ns after its first edge, and only `RRESET` takes it
 down inside the frame, which Clear Receiver, Reset and `-UB INIT` make
@@ -327,8 +279,7 @@ going idle (`chaos_cbl_busy`), its `START^` (`chaos_rx_start`), the bits the
 receiver would have stored of it so far and whether the 9401 is non-zero over
 them (`chaos_rx_stored`, `chaos_rx_check_nz`), all before any gate. While the
 receiver takes a frame, CRC Error is the running check register on the CADR
-and the line taken on revision 15, which keeps no such register, and the bit
-count is the bits stored so far. The busy line is not ORed into bit 14 on the
+and the bit count is the bits stored so far. The busy line is not ORed into bit 14 on the
 CADR: `CBLBSY` reaches no readback buffer.
 
 **A read of the buffer with Receive Done down shifts the read register**, the
@@ -364,8 +315,7 @@ refused at its `START^` and cleared inside; Reset and `-UB INIT` inside a
 frame looped back; and a Reset inside a frame off a cable, the reads counting
 down through the rest of it. The trace's generator asserts the levels it hands
 the card equal to muir's CSR and bit count wherever muir takes the frame, and
-that it never reads the buffer there. `quux15_chaos_module` holds revision
-15's interface the same way, and `quux15_network` the core's.
+that it never reads the buffer there.
 
 ## What Linux sees
 

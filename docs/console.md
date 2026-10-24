@@ -214,15 +214,14 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  most in bits 10 to 0 and bits 15 to 11 clear, is a new count;
                  it must strobe all four lanes, and any other count, 0 and one
                  past the most among them, is refused and the count stands.
-                 The most is 60 on the CADR, and on QUUX revision 13 what
-                 the board keeps for its main memory,
-                 512 boards on the Arty Z7-20 and 1,024 on the DE25-Nano.  It
+                 The most is 60 on the CADR, and on QUUX the bitstream's
+                 main memory, the board's whole reservation.  It
                  reads back a marker of `BD` in the top half and the count in
                  bits 10 to 0.  The count goes to the machine's address
                  decode, which answers main memory below the count's last
                  board and gives the NXM above it, and to QUUX's file device,
                  whose MEM_WORDS is the count times 64K.  The fabric comes up
-                 with 32, or 512 on revision 13, and the fabric's reset brings
+                 with 32 on the CADR, and the fabric's reset brings
                  it back.  `cadr-console main-memory-boards [N]` reads and sets
                  it on the CADR, and `cadr-console main-memory-size [<n>MW]` on
                  QUUX, in whole megawords; each refuses the other machine's
@@ -244,7 +243,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  here, and so does a QUUX bitstream older than the word, whose
                  video controller is 1280 by 1024; `cadr-terminal --machine
                  cadr` refuses a bitstream whose word carries the marker
-    40-41        read UNMAPPED here; revision 15's face gives them the
+    40-41        read UNMAPPED here; QUUX's face gives them the
                  period and the real-time clock's start (below)
     42 ERRORS   **the display output's two sticky faults**, wherever a
                  console has the word: a bank the raster reached before its
@@ -253,7 +252,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  in the top half.  A write of `DISP_CLEAR_KEY`, "CLRD", with
                  all four lanes strobed, clears both; any other write is
                  dropped.  A board with no display output reads UNMAPPED.
-                 Revision 15's face has the word; this console leaves it
+                 QUUX's face has the word; this console leaves it
                  UNMAPPED today, and its boards' displays tie the clear low
     43-47        read UNMAPPED; writes dropped
 
@@ -365,8 +364,8 @@ at the 10 ns grid, as it had to be more than 44 at the 5.
 write channel through the countdown, so `BVALID` is offered after the machine
 has left reset. A program's store therefore returns with the machine running
 again and the next read of `FLAG-1` means something. It costs one Arm store
-640 ns. That is the CADR's console. Revision 15's answers when its core has
-been through a reset, or at a bound (Revision 15's console face, below).
+640 ns. That is the CADR's console. QUUX's answers when its core has
+been through a reset, or at a bound (QUUX's console face, below).
 
 **`RESET_KEY` is `"RSET"`, `0x5253_4554`, and an arbitrary value must not
 reset the machine.** Chosen the way `cadr_arty.sv` chooses `PROVE_WORD`: four
@@ -1456,7 +1455,7 @@ PROM is running from word 0 again with `PROMDISABLE` clear. The button is what
 starts a halted machine. That is why muir's `continue` and `step` send you here
 when `RUN` is clear.
 
-**QUUX revision 15 has no button.** Its face has no word 13, so `boot` there
+**QUUX has no button.** Its face has no word 13, so `boot` there
 writes the keyboard's cold boot word, `0xF9FC26`, to the input page's `KEY`
 instead. The machine takes that word as the keyboard's boot: it clears `RUN`,
 as the console does, and presses `-BOOT` the clock after. The PC is then at the
@@ -1716,15 +1715,15 @@ software opens the bridge, and the boot PROM's one pass over main memory would
 otherwise always meet a shut port. `boards/de25-nano/README.md` has the
 measurement.
 
-## Revision 15's console face
+## QUUX's console face
 
-QUUX revision 15 has no diagnostic bus, so its console is its own module,
+QUUX has no diagnostic bus, so its console is its own module,
 `rtl/plumbing/quux15_face.sv`, on the same page at the same address. It keeps
 this console's words where it can, with the same keys and markers, so that
 `cadr-console`, `cadr-readout`, `cadr-checkpoint` and `cadr-displayport` drive
 it unchanged. Its page 2:
 
-| Word | What it is on revision 15 |
+| Word | What it is on QUUX |
 |---|---|
 | 6 RESET | a write of `RESET_KEY` asks for the machine's reset (below). Read: the key's top half in `<31:16>`, the resets in `<15:8>`, and `<3:0>` as below |
 | 32 BUILD | the build stamp, as here |
@@ -1732,7 +1731,7 @@ it unchanged. Its page 2:
 | 34 HDMI | what the display output shows and which way up, out to the display output. The video controller fills the raster, so the picture stays upright whatever the turn says |
 | 35 LAMPS | the Kria KR260's UF1, the microcycle lamp: blinking with the committed microcycles, or steady |
 | 36 SLEEP | the display output's sleep setting and wake, read back as here |
-| 37, 38 | main memory, read only: revision 15's is the bitstream's |
+| 37, 38 | main memory, read only: the bitstream's |
 | 39 VIDEO | the video controller's size, 1920 by 1080 on the Kria KR260 |
 | 40 PERIOD | the clock's period, in units of 0.5 ns |
 | 41 RTC | the real-time clock's seconds at the machine's reset |
@@ -1742,7 +1741,7 @@ Word 42's `underrun` is the pixel clock's, brought into the machine's clock
 through two flops, and the clear reaches it as a toggle through three more.
 So a read in the few clocks after a clear may still show the bit.
 
-**Word 6 is a request on revision 15.** The key's write raises the core's
+**Word 6 is a request on QUUX.** The key's write raises the core's
 request for 64 clocks. The core latches it, drains its memory port and then
 resets (`docs/board.md`, The buttons). The write's response is held until the
 core has been through its reset, or until 131,072 clocks have passed,
@@ -1889,27 +1888,28 @@ the other, as a QUUX card's files can be served beside the CADR's bitstream,
 so a run that took the machine from the card can report a revision the board
 never ran. Every board run prints this line beside each result.
 
-The machine and its microcycle come from the readout window, the register
-table's entry 21. QUUX answers it with its signature `0x5155`, K and L, and
-MACHINE-ID's low half on revision 13, and the CADR answers with the window's
-"no memory" word. Revision 12's bitstreams answered 0 in that half; that
-revision is retired, and the program names such an entry a QUUX of no
-revision it knows. The entry is a constant of the bitstream, so it reads true
-while the machine runs. The word's width follows the revision: 32 bits on the
-CADR, 40 bits on revision 13 and later. The build is page 2's word 32, as in
-`status`. The line reads like one of these:
+The machine and its clock come from the readout window, the register table's
+entry 21. QUUX answers it with its signature `0x5155`, its clock's period and
+MACHINE-ID's low half, and the CADR answers with the window's "no memory"
+word. The entry is a constant of the bitstream, so it reads true while the
+machine runs. The line names MACHINE-ID's revision as the fabric gives it, so
+that a card carrying an older QUUX bitstream says so; the programs read and
+write revision 16 alone and name an older one as a revision they do not know.
+The word is 32 bits on the CADR and 40 on QUUX. The build is page 2's word 32,
+as in `status`. The line reads like one of these:
 
     machine: CADR, 32-bit words; build e7aaa180 (commit e7aaa18, tree clean)
-    machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), 40-bit words, microcycle K=5 L=0; build 78f0f670 (commit 78f0f67, tree clean)
+    machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), 40-bit words, period 20 ns; build 78f0f670 (commit 78f0f67, tree clean)
 
 On the DE25-Nano the build reads `no build stamp`, for the reason the section
 above gives. An entry that is neither machine's answer reads `NOT KNOWN`, and
 so does a readout window whose echo names another entry twice running, which
 is another program reading the window at the same instant.
 
-With a machine named, `machine quux 13`, `machine quux` or `machine cadr`,
+With a machine named, `machine quux 16`, `machine quux` or `machine cadr`,
 the line is printed the same way and the program exits 0 only when the
-fabric is that machine and, if one was named, that revision of QUUX. A
+fabric is that machine: `machine quux` asks for the QUUX these programs
+drive, revision 16, and `machine quux N` for revision N. A
 script asserts the machine it believes it is testing this way, and a fabric
 that is not it says `NOT THE MACHINE ASKED FOR` and exits 1.
 
@@ -1924,12 +1924,11 @@ with `--list` it says what the window reaches. It compares the echo on every
 word and refuses any word whose echo is not the address it asked for.
 
 **The memories' depths and widths are the machine's.** The program asks the
-register table's entry 21 which machine the bitstream is: the CADR, or QUUX
-revision 13, 14 or 15, whose entry carries MACHINE-ID's `<15:0>`; a
-bitstream of the retired revision 12 is refused by name. On revision 13 A, M
-and the pushdown buffer are 40 bits. The dispatch memory has 4,096 entries,
-level 1 of the map 8,192 of 7 bits and level 2 4,096 of 28. `--list` gives
-every machine's shape.
+register table's entry 21 which machine the bitstream is: the CADR, or QUUX,
+whose entry carries MACHINE-ID's `<15:0>`; a QUUX of another revision than
+16 is refused, named by its revision. On QUUX A, M and the pushdown buffer
+are 40 bits, read through the core's own window. `--list` gives every
+machine's shape.
 
 **It is not the debugger and is not meant to become one.** The debugger for
 this machine is CC over the debug cable, which reads the scratchpads and the

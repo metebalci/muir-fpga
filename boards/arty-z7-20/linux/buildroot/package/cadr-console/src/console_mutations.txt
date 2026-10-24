@@ -917,33 +917,24 @@
 	m->revision = low & 0xFFu;
 @end
 
-@mutation machine-width-guessed-past-13
+@mutation machine-width-guessed-for-another-revision
 @file console_face.c
-@why a revision this program has not met has a width it does not know, and the line
-@why must say so rather than call it 40 bits
+@why a revision this program is not built for has a width it does not know, and the
+@why decode must say so rather than call it 40 bits
 @old
-	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
+	m->word_bits = m->revision == CONS_QUUX_REVISION ? 40 : 0;
 @new
-	m->word_bits = m->revision >= 13 ? 40 : 0;
+	m->word_bits = m->revision ? 40 : 0;
 @end
 
-@mutation machine-width-of-14-not-known
+@mutation machine-older-revision-read-as-this-one
 @file console_face.c
-@why revision 14's words are revision 13's, 40 bits, and the line must say so
+@why an older fabric's entry 21 is not this program's QUUX's, and the line must name
+@why its revision and read no width or period into it
 @old
-	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
+	if (m->revision == CONS_QUUX_REVISION)
 @new
-	m->word_bits = m->revision == 13 || m->revision == 15 || m->revision == 16 ? 40 : 0;
-@end
-
-@mutation machine-period-said-as-k
-@file console_face.c
-@why revision 15's entry carries its clock's period where K stood, and the line must
-@why say a period, in nanoseconds, and not a K
-@old
-	if (m->revision >= 15)
-@new
-	if (m->revision >= 16)
+	if (m->revision >= 13)
 @end
 
 @mutation machine-stale-echo-believed
@@ -987,11 +978,23 @@
 
 @mutation machine-revision-not-compared
 @file console_face.c
-@why revision 12's fabric is not revision 13's, which is the report this exists to stop
+@why one revision's fabric is not another's, which is the report this exists to stop
 @old
-			 (m.quux == want_quux && (!want_rev || m.revision == want_rev));
+			 (m.quux == want_quux &&
+			  (!want_quux || m.revision == (want_rev ? want_rev : CONS_QUUX_REVISION)));
 @new
 			 (m.quux == want_quux);
+@end
+
+@mutation machine-quux-alone-takes-any-revision
+@file console_face.c
+@why quux alone asks for the QUUX these programs are built for, and an older fabric
+@why on the card is not it
+@old
+			 (m.quux == want_quux &&
+			  (!want_quux || m.revision == (want_rev ? want_rev : CONS_QUUX_REVISION)));
+@new
+			 (m.quux == want_quux && (!want_quux || !want_rev || m.revision == want_rev));
 @end
 
 @mutation machine-unknown-answers-0
@@ -1145,14 +1148,16 @@
 # cold boot word to the input page's KEY, and a refusal, with nothing written,
 # on a machine this program has no boot for.
 
-@mutation revision-15-boots-by-word-13
+@mutation an-older-revision-boots-by-word-13
 @file console_face.c
-@why revision 15's face has no word 13: a store there is dropped and boots nothing,
-@why so its boot must be the keyboard's boot word
+@why an older QUUX's face is not the one this program drives: its boot is refused,
+@why named, with nothing written, never given word 13
 @old
-	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
+	if (!id.quux) {
+		r->how = CONS_BOOT_BY_BUTTON;
 @new
-	if (!id.quux || (id.revision >= 13 && id.revision <= 15)) {
+	if (!id.quux || id.revision < CONS_QUUX_REVISION) {
+		r->how = CONS_BOOT_BY_BUTTON;
 @end
 
 @mutation a-revision-not-met-boots-by-word-13
@@ -1160,9 +1165,11 @@
 @why a revision this program has no boot for is refused with nothing written, never
 @why given word 13, which it may not have
 @old
-	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
+	if (!id.quux) {
+		r->how = CONS_BOOT_BY_BUTTON;
 @new
-	if (!id.quux || id.revision != 15) {
+	if (!id.quux || id.revision != CONS_QUUX_REVISION) {
+		r->how = CONS_BOOT_BY_BUTTON;
 @end
 
 @mutation a-machine-id-0-taken-for-revision-12
@@ -1274,18 +1281,20 @@
 
 @mutation machine-width-of-16-not-known
 @file console_face.c
-@why revision 16's words are revision 15's, 40 bits, and the line must say so
+@why QUUX's words are 40 bits, and the line must say so
 @old
-	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
+	m->word_bits = m->revision == CONS_QUUX_REVISION ? 40 : 0;
 @new
-	m->word_bits = m->revision >= 13 && m->revision <= 15 ? 40 : 0;
+	m->word_bits = m->revision == 15 ? 40 : 0;
 @end
 
 @mutation revision-16-has-no-boot
 @file console_face.c
-@why revision 16 is revision 15's machine and boots by the keyboard's boot word, as it does
+@why QUUX boots by the keyboard's boot word, and an older revision's keyboard boot is
+@why not the one this program drives
 @old
-	if (id.revision == 15 || id.revision == 16) {
+	if (id.revision == CONS_QUUX_REVISION) {
 @new
 	if (id.revision == 15) {
 @end
+

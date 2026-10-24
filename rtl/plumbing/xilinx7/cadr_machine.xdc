@@ -368,54 +368,6 @@
 # `report_exceptions`, or `get_timing_paths -through [get_cells */audit/*]`,
 # which of its paths carry the relaxed set's requirement, and expect only the
 # record, the microcycle counter and the readout word to.
-#
-# **AND QUUX'S REGISTERS THAT RUN EVERY TICK, WHICH MATCH NOTHING ON THE
-# CADR.**  QUUX's clocks, `quux_clocks.sv`, out whole but for the
-# microsecond clock a microcycle reads (`usec_s`), which is loaded at the
-# master clock edge and stands through the microcycle: the countdowns, the
-# flags they raise, the microsecond clock and the write taken a tick after
-# its edge all move on ticks of their own.  The flags a register page read
-# takes (`flag_s`) are out as well, because the page reads them at the
-# tick.  (Until revision 10 they were source 17's status, with `en_s`, and
-# `quux_machine.xdc` gave them K - 1; until destination 3 wrote only M they
-# were also loaded from `L`.)  The register page's `taken` and
-# `held`, taken at the first tick of -XBUS.RQ, and its keyboard and mouse,
-# `quux_input.sv`, whose FIFO, flags and counts move on the tick a key word
-# arrives or a read is answered, out whole but for the page's held match;
-# block-disk is `disk`, below.  The divider's `div_t` and `div_start`, which count the
-# ticks since `IR` was loaded, and its steps, `dv_*`, a step a tick; and the
-# video controller but for its two held matches, as
-# the CADR's display board is, its `taken` and `bow` taken at the first tick
-# of -XBUS.RQ.  And QUUX's wait for MD: `hold_mclk_q`, the master clock edge a
-# tick on, `rip_tail`, a countdown, and `hold_rip`, which takes READ IN
-# PROGRESS on one tick and must see that tick's value; and the divider's
-# `div_md`, `div_strobed` and `div_have`, which say a strobe has brought
-# the word the divider loads a tick after it; and QUUX's control
-# store's write, `iwe_q`, `iwa_q` and `iwd_q`, taken a tick after the edge
-# and written on the next.  The divider's held decode stays in the set.
-# And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
-# grant, its countdowns and the cache's order and valid bits move on every
-# tick, the port being answered at instants of its own.  What the cache holds
-# of the microcycle --- its RAMs and the address they were read at --- is
-# given back its time in `quux_machine.xdc`.
-# **AND REVISION 14'S MEMORY SYSTEM**, `quux_mmu.sv`, out whole but for what
-# it holds of the microcycle: the generator's ticks it counts, the hold, the
-# walk's, the write-back's and the sweep's countdowns and machines, the
-# walk's results, the TLB's pending writes and the guard's count all move on
-# whatever tick the cache's side seam answers on.  What stays in the set is
-# the register page's words 220-223, written at the page's answer from a
-# word the bus has held for eight ticks, the redirect's copies of A 430 and
-# 431, written by A memory's own pulse from `L` as A memory is, the TLB
-# itself, read at the edge from `VMA`'s and `MD`'s next values, and the
-# edge's registers (`e_*`), loaded at an edge alone: the TLB's forwards and
-# the walk's entries for the datapath, the writes landing at the edge, and
-# the write-back's grant.  And the redirect's word in `cadr_microcycle.sv`,
-# `redir_word`, taken a tick after the PDL buffer's read on the strobe
-# `redir_rd_q`.  `tools/grid_check.py` classes every register of the memory
-# system, and fails when one that moves on a tick of its own is in this
-# set.
-# What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
-# QUUX build.
 
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
@@ -436,37 +388,6 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/mw_early_q*    && \
                                   NAME !~ *processor/mw_k1_q_reg*   && \
                                   NAME !~ *processor/mw_late2_q_reg* && \
-                                  (NAME !~ *g_quux_tick.clocks/* || \
-                                       NAME =~ *g_quux_tick.clocks/usec_s_reg*) && \
-                                  (NAME !~ *feature_page/* || \
-                                       NAME =~ *feature_page/mine_reg* || \
-                                       NAME =~ *feature_page/which_reg*) && \
-                                  NAME !~ *div_t_reg*        && \
-                                  NAME !~ *div_start_reg*    && \
-                                  NAME !~ *g_quux_hold.hold_mclk_q_reg* && \
-                                  NAME !~ *g_quux_hold.hold_rip_reg* && \
-                                  NAME !~ *g_quux_hold.rip_tail_reg* && \
-                                  NAME !~ *div_md_reg*       && \
-                                  NAME !~ *div_strobed_reg*  && \
-                                  NAME !~ *div_have_reg*     && \
-                                  NAME !~ *processor/iwe_q_reg*  && \
-                                  NAME !~ *processor/iwa_q_reg*  && \
-                                  NAME !~ *processor/iwd_q_reg*  && \
-                                  NAME !~ *muldiv/dv_*       && \
-                                  NAME !~ *memory/g_quux_port.port/* && \
-                                  (NAME !~ *processor/g_rev14_mmu.mmu/* || \
-                                       NAME =~ *g_rev14_mmu.mmu/directory_reg* || \
-                                       NAME =~ *g_rev14_mmu.mmu/ephemeral_reg* || \
-                                       NAME =~ *g_rev14_mmu.mmu/pointer_types_reg* || \
-                                       NAME =~ *g_rev14_mmu.mmu/pdl_base_reg* || \
-                                       NAME =~ *g_rev14_mmu.mmu/pdl_head_reg* || \
-                                       NAME =~ *g_rev14_mmu.mmu/e_* || \
-                                       NAME =~ *g_rev14_mmu.mmu/tlb/*) && \
-                                  NAME !~ *processor/g_quux_pdl.redir_rd_q_reg* && \
-                                  NAME !~ *processor/g_quux_pdl.redir_word_reg* && \
-                                  (NAME !~ *g_quux_video.video/* || \
-                                       NAME =~ *g_quux_video.video/ctl_reg* || \
-                                       NAME =~ *g_quux_video.video/fb_reg*) && \
                                   (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
                                                       NAME =~ *disk/which_reg*) && \
                                   (NAME !~ *audit/* || NAME =~ *audit/first_* || \
@@ -600,26 +521,20 @@ set split_latch_addr [filter [all_registers] {NAME =~ *processor/ir_reg*      ||
                                               NAME =~ *processor/pdl_ptr_reg* || \
                                               NAME =~ *processor/pdl_idx_reg* || \
                                               NAME =~ *processor/spcptr_reg*}]
-# Revision 14's `rw_fwd` (`cadr_microcycle.sv`), which gives the redirect's
-# held PDL word in place of the buffer's, is loaded every tick from the
-# latch's address and read as the latch is, so it is one of them.
 set split_latch [filter [all_registers] {NAME =~ *processor/amem_reg*   || \
                                          NAME =~ *processor/mmem_reg*   || \
-                                         NAME =~ *processor/g_*_pdl.pdl_reg* || \
-                                         NAME =~ *processor/g_quux_pdl.rw_fwd_reg* || \
+                                         NAME =~ *processor/pdl_reg*    || \
                                          NAME =~ *processor/amem_q_reg* || \
                                          NAME =~ *processor/mmem_q_reg* || \
-                                         NAME =~ *processor/g_cadr_pdl.pdl_q_reg* || \
+                                         NAME =~ *processor/pdl_q_reg* || \
                                          NAME =~ *processor/spc_q_reg*}]
 set split_dmem [filter [all_registers] {NAME =~ *processor/dmem_reg*}]
 # The control store's split takes every block RAM of the processor but the
-# three scratchpads' and revision 14's TLB, whose read is a tick after the
-# edge and whose clauses are `quux14_machine.xdc`'s.
+# three scratchpads'.
 set split_cstore [filter [all_registers] {(REF_NAME =~ RAMB* && NAME =~ *processor/* && \
                                            NAME !~ *processor/amem_reg* && \
-                                           NAME !~ *processor/g_rev14_mmu.mmu/tlb/* && \
                                            NAME !~ *processor/mmem_reg* && \
-                                           NAME !~ *processor/g_*_pdl.pdl_reg*) || \
+                                           NAME !~ *processor/pdl_reg*) || \
                                           NAME =~ *processor/imem_q_reg* || \
                                           NAME =~ *processor/prom_q_reg*}]
 set split_maps [filter [all_registers] {NAME =~ *processor/l1_map_reg* || \
@@ -728,15 +643,13 @@ set_multicycle_path -setup 1 -from $ro_address -to $ro_ram_pins
 set_multicycle_path -hold  0 -from $ro_address -to $ro_ram_pins
 
 # **AND THE CONTROL STORE'S PINS ON THE CADR, AT THE TICK FROM EVERY
-# REGISTER.**  The CADR reads its control store on every tick (`cs_read` is
-# a constant one, `cadr_microcycle.sv`), so its port is enabled always, and
+# REGISTER.**  The CADR reads its control store on every tick
+# (`cadr_microcycle.sv`), so its port is enabled always, and
 # a write enable or an address that arrives late at any edge is the UG473
 # fault the readout clause above names.  The relaxed set gave the write
 # enable the microcycle: on one board's routed CADR it came from the bus
 # interface's state through MACHRUN in 9.4 ns, 0.05 ns over a tick with
-# the exceptions dropped.  `quux_machine.xdc` does NOT re-issue this clause,
-# on purpose: QUUX's control store is enabled at the edge alone, and that
-# file's later clauses give its address back the microcycle.
+# the exceptions dropped.
 set cstore_ram_pins [get_pins -quiet -of [filter [all_registers] {REF_NAME =~ RAMB* && \
                                                  NAME =~ *processor/imem_reg*}] \
                          -filter {REF_PIN_NAME =~ ADDR* || REF_PIN_NAME =~ WE* || REF_PIN_NAME =~ EN*}]

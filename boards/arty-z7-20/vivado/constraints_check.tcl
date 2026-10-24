@@ -340,23 +340,6 @@ proc assert_cable_beat {rtl xdc} {
           given $beat ($hold on hold): $rtl and $xdc agree"
 }
 
-# **QUUX HAS NO DEBUG CABLE** (contract Q5): no connector, no join of its
-# two debuggers and no register window.  The top level leaves all three out of
-# a QUUX build, and this asks the design for them by name, so that a build
-# which carried any of them stops here rather than reading as QUUX.  A name
-# rather than a module, because synthesis flattens the hierarchy and keeps
-# the instance's name in each cell's.
-proc assert_no_debug_cable {} {
-    set found [get_cells -quiet -hier -filter \
-                   {NAME =~ *u_dbg_cable/* || NAME =~ *u_dbg_join/* || NAME =~ *u_debug_window/*}]
-    if {[llength $found] > 0} {
-        puts "XDC: FAILED --- [llength $found] cell(s) of the debug cable in a QUUX"
-        puts "XDC: build, which has none (contract Q5). First: [lindex $found 0]"
-        exit 1
-    }
-    puts "XDC: no cell of the debug cable's connector, join or window: QUUX has none"
-}
-
 # Fails the run when no path carries the relaxed requirement.
 proc assert_multicycle_applied {period cycles {limit 400000}} {
     set want [format %.3f [expr {$period * $cycles}]]
@@ -430,7 +413,7 @@ proc assert_multicycle_applied {period cycles {limit 400000}} {
 # a whole, so a pattern that matched nothing hid behind the others that did:
 # `*processor/pdl_reg*` named no cell on either machine, Vivado naming a
 # register by the generate block of the process that writes it
-# (`g_quux_pdl.pdl_reg_*`, `g_cadr_pdl.pdl_reg_*`), and QUUX's PDL buffer
+# (`g_quux_pdl.pdl_reg_*`, `pdl_reg_*`), and QUUX's PDL buffer
 # was timed by the control store's clause and not the latches'.
 proc clause_cells {what side pats} {
     set out {}
@@ -495,44 +478,3 @@ proc assert_clause_timing {period cycles what from {to {}}} {
           [format %.3f $want] ns and none above it: the clause took"
 }
 
-# A CLAUSE WRITTEN TO A RAM'S PINS TOOK: every path into the pins `pins`
-# (a `REF_PIN_NAME` pattern) of the cells matching `cells` asks for at most
-# `cycles` ticks, and at least one for exactly that.  `assert_clause_timing`
-# asks of whole cells, which for a RAM is its address, its data and its
-# enables at once, where a clause on its address alone says nothing of the
-# others (`rtl/plumbing/xilinx7/quux14_machine.xdc`).
-proc assert_pin_timing {period cycles what cells pins} {
-    set want [expr {$period * $cycles}]
-    set rams [get_cells -quiet -hier -filter "NAME =~ $cells && IS_SEQUENTIAL"]
-    set to [get_pins -quiet -of $rams -filter "REF_PIN_NAME =~ $pins"]
-    if {[llength $to] == 0} {
-        puts "XDC: FAILED --- $what: no pin $pins of a cell matching $cells, so the"
-        puts "XDC: clause that names them is empty and its paths keep the relaxed"
-        puts "XDC: set's count in silence."
-        exit 1
-    }
-    set hist {}
-    set over 0
-    set worst ""
-    foreach p [get_timing_paths -quiet -setup -to $to -max_paths 400000 -nworst 1] {
-        set req [get_property REQUIREMENT $p]
-        dict incr hist [format %.3f $req]
-        if {$req > $want + 0.001} {
-            incr over
-            if {$worst eq ""} { set worst "[get_property STARTPOINT_PIN $p] -> [get_property ENDPOINT_PIN $p] asks for $req ns" }
-        }
-    }
-    set n [expr {[dict exists $hist [format %.3f $want]] ? [dict get $hist [format %.3f $want]] : 0}]
-    if {$over > 0} {
-        puts "XDC: FAILED --- $what: $over paths into [llength $to] pins ask for more"
-        puts "XDC: than [format %.3f $want] ns. First: $worst"
-        exit 1
-    }
-    if {$n == 0} {
-        puts "XDC: FAILED --- $what: no path into [llength $to] pins asks for"
-        puts "XDC: [format %.3f $want] ns, so the clause reached nothing."
-        exit 1
-    }
-    puts "XDC: $what --- $n paths into [llength $to] pins of [llength $rams] cells at\
-          [format %.3f $want] ns and none above it: the clause took"
-}

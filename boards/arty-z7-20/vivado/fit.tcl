@@ -134,15 +134,15 @@ assert_instance_timing $tick 8 *audit/* \
 # grid: 75 ns - 1 tick
 assert_clause_timing $tick 7 "IR into the scratchpad latches" \
     {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
      *processor/spc_q_reg*}
 # grid: 60 ns + 1 tick
 assert_clause_timing $tick 7 "out of the scratchpad latches" \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
      *processor/spc_q_reg*}
 # grid: 60 ns - 1 tick
 assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg*
      *processor/spc_q_reg*} {*processor/dmem_reg*}
 # grid: 60 ns - 1 tick
 assert_clause_timing $tick 5 "the control store's word" \

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Whether revision 15's Kria KR260 top level hands its modules the board's
+"""Whether QUUX's Kria KR260 top level hands its modules the board's
 figures, read at the instances.
 
     python3 tools/quux15_kr260_param_check.py <the top's sources>
@@ -97,10 +97,10 @@ def check(want, got, why, what):
         say(True, "%s: %s" % (what, ", ".join("%s=%d" % kv for kv in sorted(got.items()))))
 
 
-def at_period(period, sources, scratch, revision=15):
+def at_period(period, sources, scratch):
     base = [VERILATOR, "-DCADR_DDR_MAP_KR260", "-Irtl/machine", "-Irtl/plumbing",
             "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260", "--top-module", TOP,
-            "-GPERIOD_NS=%d" % period, "-GREVISION=%d" % revision]
+            "-GPERIOD_NS=%d" % period]
     rc, out = run(base[:1] + ["--lint-only", "-Wall"] + base[1:] + sources)
     if rc != 0:
         say(False, "PERIOD_NS=%d: the lint failed:\n%s" % (period, out.strip()))
@@ -114,8 +114,8 @@ def at_period(period, sources, scratch, revision=15):
         tree = json.load(f)
     shutil.rmtree(mdir, True)
     w, h = VIDEO
-    at = "REVISION=%d, PERIOD_NS=%d" % (revision, period)
-    ethernet_page_check.figures(tree, TOP, "u_gp0_split", revision, at, say)
+    at = "PERIOD_NS=%d" % period
+    ethernet_page_check.figures(tree, TOP, "u_gp0_split", at, say)
 
     # The times, from the period here.
     second = (10 ** 9 + period // 2) // period
@@ -176,9 +176,11 @@ def main():
     os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_kr260_param.", dir="build")
     try:
-        for r in (15, 16):
-            for p in PERIODS:
-                at_period(p, sources, scratch, r)
+        for p in PERIODS:
+            at_period(p, sources, scratch)
+        ethernet_page_check.refuses_another(run, [VERILATOR, "-DCADR_DDR_MAP_KR260", "-Irtl/machine",
+                                                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                                                  "-Iboards/kria-kr260", "--top-module", TOP], sources, say)
     finally:
         shutil.rmtree(scratch, True)
     if failures:

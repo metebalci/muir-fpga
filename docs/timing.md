@@ -116,21 +116,6 @@ tens are still two numbers. One is a divisor in the package and one is a
 clock period in the board file, so a board can change its tick without
 touching the grid.
 
-**QUUX revision 14 on the Arty Z7-20 takes a 15 ns tick.** Its memory
-system has paths of one tick that do not close at 10 ns on that part, so
-`cadr_arty.sv` divides the same 1,000 MHz by 15 for that build alone, and
-`boards/arty-z7-20/vivado/tick.tcl` gives the flow that period. Every count is
-unchanged, so the machine does exactly what it does at 10 ns, tick for tick,
-and the traces are the same. Only real time moves: a microcycle of K = 4 ticks
-is 60 ns. The clocks that keep wall time are handed the tick's length in
-picoseconds (`cadr_machine.sv`'s `TICK_PS`, from the board's top), so they
-still keep it. At 15 ns a microsecond is 66 or 67 ticks, two in three of them
-67, in the microsecond clock and in each interval timer (`quux_clocks.sv`).
-The real-time clock adds 15 ns a tick, with any picoseconds over whole
-nanoseconds counted apart (`quux_rtc.sv`). `build/wall_time.pass` holds both
-against wall time at 10, 12.5, 13 and 15 ns. The other boards and builds keep
-10 ns.
-
 **Rounding is always up.** `ticks(ns)` is `(ns + TICK_NS - 1) / TICK_NS` and
 never a plain division. Truncation collapses MIT's 5 ns instant to zero ticks
 and puts SELECT on top of a read tap. It also makes the fabric sample
@@ -577,214 +562,30 @@ number dangerous, and they are the reason this document exists.
 | 29 | **The display's sync program keeps its phase from the write that restarts it.** | `Tv::restart` puts the origin at that write. The accumulator starts again at zero there and drops the old program's remainder. Held by `tv-sync-phase-survives-a-restart`. |
 | 30 | **A path split by a register that loads every tick, or launched by a write inside the cycle, has less than the relaxed set's eight ticks, and its constraint says how much less.** IR to the scratchpad latches has the read tap less one tick, seven at fast speed. The latches to the next boundary have the restart plus one tick, seven at every speed, and to the dispatch memory's write they have the restart less one tick, five. The control store's word has five after a `WRITE-I-MEM`. A write of either map level or of the dispatch memory reaches a boundary three ticks later at the least, and MD reaches those writes' address two ticks later at the least. MD_HELD into MD and the stack's write into its latch have one tick, and so do the three memories' writes into the readout's copies. The second hop out of `memgo_q`, the held halves of -WAIT and the memory path's held decode has `ticks(60)`, so that both hops together fit the fast microcycle. | The processor's registers move one tick after the generator's boundary, the latches last load at the read tap, and the write pulse ends on the boundary's own tick. In a microcycle `-HANG` holds, the pulse ends on the park's first tick and the boundary that ends the hang can be the next edge, and MD takes the bus's strobe at once. There the maps' and the dispatch memory's write is placed two ticks early, a tick late, or two ticks late when the read's strobe falls on the pulse's end, with the address and word the pulse's end would take, so that it is two ticks from MD and three from the boundary. Nothing but the boundary reads those memories in between, and `cadr_microcycle.sv`'s `mw` says why. `CADR_GAP_MONITOR` measures both counts on every tick of the checks that define it, and `dispatch_write_order` brings a write to each bound. A count one tick either side of an instant is tagged `# grid: 75 ns - 1 tick` or `# grid: 60 ns + 1 tick`, a count of the fabric's own ticks `# grid: 0 ns + 3 ticks`, and `tools/grid_check.py` holds it. The clauses are in `cadr_machine.xdc` and `cadr_de25.sdc`, the flows assert that each took and that nothing wider reaches its paths, and each has a `grid` mutation record one tick outside it. The DE25-Nano has no clause for the maps' or the dispatch memory's write, because Quartus times no path out of an MLAB's write. There the three ticks leave the tick in which an MLAB gives no defined word unread. |
 
-## QUUX's synchronous microcycle
+## QUUX's clock
 
-QUUX does not replay the CADR's delay line. Its microcycle is a fixed number
-of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
-`TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
---sync-cycle-ticks K`. K and L belong to a board, and L is 0 on both. The
-DE25-Nano and the Kria KR260 run at K = 4, which is 40 ns a microcycle, and
-the Arty Z7-20 at K = 5, 50 ns a microcycle.
+QUUX is pipelined (contract G3 revision 15's pipeline, at revision 16) and
+has no microcycle of K ticks. Each board runs its clock at its own period:
+20 ns on the Kria KR260, 25 ns on the DE25-Nano and 60 ns on the Arty Z7-20.
+A board tick is then one clock of that period, so every time the board's top
+level hands a module is turned into clocks there (What is not MIT's timing at
+all, below). A board may be slower than another, and the design is the same on
+all three.
 
-This section is revisions 13 and 14. Revisions 15 and 16 are pipelined and
-have no K. Each board runs its clock at its own period: 20 ns on the Kria
-KR260 and 25 ns on the DE25-Nano at both revisions, and on the Arty Z7-20 50
-ns at revision 15 and 60 ns at revision 16. A board tick is
-then one clock of that period, so every time the board's top level hands a
-module is turned into clocks there (What is not MIT's timing at all, below).
-A board may be slower than another, and the design is the same on all three.
+## QUUX's memory port
 
-**The Arty's revision 13 takes a longer microcycle, not a slower clock.** Its
-map, two levels through the memory path's decode, misses four ticks on that
-part by about a nanosecond and meets five. The tick stays at 10 ns, so the
-microsecond clock, the timers, the sixty-cycle clock and the real-time
-clock, which all count ticks, keep true time. A slower clock would have kept
-K at four and made each of them run slow by the same ratio. The fabric stays
-tick for tick with muir run at `--sync-cycle-ticks 5`. On muir's profile of
-revision 12 with the Arty's memory timings, the twelve workloads take 23%
-longer at five than at four.
+QUUX has no bus interface and no device bus. Main memory is packed storage,
+word w the five bytes at the board's QUUX base + 5w, behind the core's port
+(`rtl/machine/quux15_port.sv`) and its cache.
 
-Four is the least K QUUX takes. It was set when a `DIV` whose M source is MD could
-run in the microcycle after its word landed, 14 ticks after the strobe,
-with the divider needing the word 17 ticks before that microcycle's end.
-Since the `DIV` rule below, a `DIV` is held nine microcycles after its
-operands are ready, so that argument no longer sets the floor. The floor is
-unchanged until a fit at a smaller K says otherwise. The DE25-Nano's top level
-states K as `SYNC_K`, and the Arty's and the Kria KR260's state each revision's,
-`SYNC_K13` and `SYNC_K14`. The
-DE25-Nano's QUUX constraint file, `quux_de25.sdc`, writes its counts as
-numbers, and `tools/grid_check.py` holds every `# sync:` count there to that
-board's `SYNC_K`. The Arty's, `quux_machine.xdc`, serves both revisions, so it
-writes every count of K from the variable `sync_k`, which the flow reads from
-the top level for the revision it builds (`boards/arty-z7-20/vivado/tick.tcl`).
-`tools/grid_check.py` holds each such count to its tag, and
-`build/machine_param.pass` holds each revision's K at the processor and in
-the flow.
-
-Inside a microcycle:
-
-- `rtl/machine/quux_phase_gen.sv` counts K ticks, or K + L, and raises TPCLK
-  on the boundary's tick. It has no read tap, no TSE, no SELECT and no
-  `-TPR60`, and it ignores `-HANG`, because QUUX has no hung microcycle.
-- Every write lands on the edge that ends the microcycle. That covers the
-  scratchpads, the stack, both map levels, the dispatch memory and the
-  control store. A read of a RAM in the same microcycle as its write gets
-  the old word.
-- The control store is read at the edge from NPC, and its word stands for
-  the whole microcycle. A `WRITE-I-MEM`'s word is bypassed onto the I bus,
-  as muir's `Rtl::read_phase` does.
-- The scratchpad latches load on every tick. Each holds its word from the
-  tick after the edge until the next edge.
-- `-WAIT`, the wait for MD and the divider's hold stop a microcycle in whole
-  K-tick cycles, with the master clock running and no write. Each is tested
-  at the cycle's start.
-- A `DIV` takes ten microcycles, its own and nine held, counted from when its
-  operands are ready. A register is ready at once, so a `DIV` of a register
-  takes 400 ns at K = 4. For MD the count starts at the end of the last cycle
-  the wait for MD held, so a `DIV` of MD is held nine microcycles after its
-  word has landed. A `MUL` runs one microcycle after the same wait. This is
-  muir's `muldiv::DIV_CYCLES`, and `build/quux13_divmd.quux.*` and
-  `build/quux13_muldiv.quux.*` hold it.
-- A memory start in the microcycle right after a start is held, a `-WAIT`
-  term of QUUX's own, `MEMSTART AND MEMOP`. The first cycle goes out at the
-  next master clock edge with its own address, direction and word, the
-  second start then waits for it to end, and both land. The CADR has no
-  such term: on the board the cycle that goes out takes the second start's
-  direction and `VMA<7:0>`, and the first is lost.
-  `build/quux13_startstart.quux.*` holds the hold, with reads and writes to
-  lines missing and cached, and `dispatch-held-by-wait-0` holds it for a
-  fetch.
-- A write carries `MD` as it stands at the edge the cycle goes out on, the
-  edge ending the microcycle after the start, so an `MD` loaded in that
-  microcycle is the word written. This holds on both machines
-  (`build/quux_startstart.pass` and `build/quux13_startstart.quux.*`).
-- A console write lands at the master clock edge, and nowhere else.
-- There are no speed bits and no speed synchronizer. The mode register's
-  bits 1 and 0 go nowhere.
-- `SINTR` is registered at the edge that ends each microcycle that runs,
-  waiting or not, from the interrupt as it stands on that edge's own tick
-  (muir's `Machine::interrupt_at`). A clock flag that rises inside a
-  microcycle, or on the edge that ends it, is in it.
-  `build/quux13_tickwin.quux.k4l1.pass` puts rises at every tick of a
-  microcycle and inside a wait for MD.
-
-Each program named here also runs at revision 13, the same program
-assembled with revision 13's fields, map and register page, as
-`build/quux13_<program>.quux.*` (`fused` is `quux13_returns` there, and
-`map` is `quux13_features`).
-
-What stays in nanoseconds is everything on the bus side: the setup, strobe
-and acknowledgment times, `-MFINISHD` and `-RDFINISH`, the Unibus figures,
-the I/O board's clocks and the disk's spans. They are on the grid as they
-are for the CADR. Only the master clock that samples them comes every K
-ticks.
-
-## QUUX's memory port and device registers
-
-QUUX has no bus interface and no device bus. The processor's cycle goes one
-of three ways, by its address, through `rtl/machine/quux_mem_port.sv`:
-
-- **The memory bus**: main memory and the video controller's frame buffer,
-  through a cache, `rtl/machine/quux_cache.sv`. The cache holds 4,096 words
-  in two ways. On revisions 13 and 14 a line is eight 40-bit words, in 256
-  sets of two lines; revision 12's lines were four 32-bit words, in 512 sets.
-  It is write-through, allocates a line on a read miss and never on a write,
-  and holds the memory bus's words only. On revision 14 it is keyed by the
-  29-bit bus address, the frame buffer's with `<28>` set, and the walk's and
-  the write-back's reads go through it too, one lookup at a time. A walk's
-  read past main memory's end reads zero and fills its line with zeros, in
-  a line fill's time, asking main memory nothing.
-- **A device register**: a word of the register page at `17777400`, the
-  video controller's and block-disk's among them, reached by the processor's
-  register decode and never cached. A register access takes two microcycles: the register is taken at
-  the grant and the cycle is acknowledged a microcycle, K ticks, later.
-- **Nothing**: past main memory's end, past the frame buffer's, between the
-  registers, and in the old Unibus window. The cycle fails at once, in the
-  tick that takes it, with word 101's NXM bit set and a read giving zero.
-  There is no timer.
-
-This is muir's `memory_port::MemoryPort`, and `build/quux13_port.quux.k4.pass`
-holds the module to it tick for tick.
-
-- A read that hits is answered two ticks, 20 ns, after its grant. The RAMs
-  are read at the grant's edge from the map's output, which has had the
-  whole microcycle, and the tags are compared over the tick after it.
-- A read that misses is a line fill, and a write takes 290 ns. A line fill
-  is 380 ns and a tick for each 64-bit beat past two, muir's
-  `MemoryPort::fill_ns`: 410 ns from main memory, five beats, and 400 ns
-  from the frame buffer, four. Revision 12's line of two beats took 380 ns.
-  Main memory does one operation at a time. A write is answered after the
-  hit time by a write buffer of one word, or when the buffer's last write is
-  done. A miss behind a write waits for it.
-- These figures are a floor. Main memory answers when it answers: the Arty's
-  port in about 21 ticks, the DE25's bridge in about 35 with a tail to
-  about 230. The port answers the processor at the nominal instant or, when
-  main memory is slower, as soon as the words are there. Two countdowns
-  carry the arithmetic: when main memory is next free, and when the write
-  buffer is. In simulation a memory faster than the figures makes every
-  acknowledgment muir's own. On a board QUUX is never faster than muir.
-- **Simulation runs the slower memory too.** `build/quux14_*.quux.lat.pass`
-  answers each of revision 14's programs' main-memory requests 33 to 228
-  ticks after they are made, drawn from sixteen seeds (`tb/cadr_machine_tb.cpp`,
-  `LAT_HI`). There the microcycle lengths and the acknowledgment instants
-  differ from muir's and are counted; everything else is compared, and every
-  write a cycle makes must reach main memory. With slow memory a revision 14
-  write-back's table word, waiting for a full write buffer, took it on the
-  tick it emptied: between the tick a processor's write was acknowledged and
-  the tick its word entered the buffer. The processor's word was lost. A
-  processor's write is now not acknowledged while a side write waits
-  (`ready` in `quux_mem_port.sv`).
-- A cycle of the memory bus is released on its acknowledgment: `MBUSY` and
-  `READ IN PROGRESS` fall with it, where a register's cycle and an empty
-  address keep the 30 ns and 140 ns delays.
-- A device register is asked in the one tick after the grant, the first in
-  which its own held match has the grant's address, and its word is taken
-  in that tick and held for the strobe. muir takes it at the grant's
-  instant. The tick between them falls inside the microcycle the grant
-  starts, and the machine's traces agree on every register read and write
-  they make.
-- An empty address is acknowledged in the tick that takes the request,
-  from the held decode, which has had the address since two ticks into the
-  microcycle before the grant. Its zero reaches MD at the next master clock
-  edge and not at the grant's own, because muir finds the cycle acknowledged
-  only after the edge that grants it.
-- Main memory is packed storage on revisions 13 and 14: word w is the five
-  bytes at `MAIN13_BASE + 5w`, `<7:0>` first and the tag last. A line of
-  eight words is 40 bytes, five 64-bit beats, and a write is five bytes at
-  any byte. The frame buffer keeps four bytes a word, so its line is four
-  beats, and a write there drops the tag. `rtl/plumbing/quux_axi_master.sv`
-  puts them on the Arty's `S_AXI_HP0` and on the DE25-Nano's FPGA-to-SDRAM
-  bridge, with strobes, a word across two beats and a burst split at a
-  4 KiB boundary. Revision 12's line was two beats at a 16-byte boundary.
-
-The video controller's frame buffer is in DDR at the display's base, where the scanout
-reads it on its own port. The cache writes it through, so the scanout sees
-each word once the write buffer has drained, one write at the most behind
-the processor. `tb/cadr_machine_tb.cpp` holds that every write a cycle
-makes reaches DDR, in order, with at most the buffer's one still owed at
-the end. `cadr-terminal` reads the same words from DDR, not from the cache,
-so it needs nothing more. `cadr-checkpoint` reads them after a halt, which
-drains the write buffer first.
-
-Block-disk's transfers reach main memory word by word through the same
-port, as its uncached requester. The port serves one operation at a time, in order: a
-buffered write first, then a line fill, then the uncached requester. That
-order is the first coherence rule, so a transfer reads every word the
-processor wrote before START. The whole cache is invalidated at the grant
-after any write of a block-disk register, which is muir's rule. A transfer's
-word written to main memory also clears its set in the cache, so that no
-processor read hits a word from before the transfer after DONE, which is the
-second rule. The coherence run of `build/quux13_port.quux.k4.pass` holds both
-rules with the processor and a transfer running together.
-
-**Revision 15's cache** keeps the two ways and the lines of eight words, 40
-bytes, write-through and allocated on a read miss only. Its size is a board's
+**The cache** has two ways and lines of eight words, 40 bytes; it is
+write-through and allocated on a read miss only. Its size is a board's
 parameter, outside `rtl/machine/`: the core's `CACHE_WORDS`, 64K words by
 default, which the Kria KR260 keeps, and 16K on the DE25-Nano and 4K on the
 Arty Z7-20, which their top levels set. A smaller cache has fewer sets, and
 its lines, ways and rules are the same.
 
-**Revision 15's block-disk transfer** is a requester on revision 15's port
+**Block-disk's transfer** is a requester on the port
 (`rtl/machine/quux15_port.sv`'s D), below the processor, a word at a time,
 for the walk in `rtl/machine/quux15_block_walk.sv` (A15b.5, A15b.6):
 
@@ -810,42 +611,6 @@ transfer is in flight, with the processor off the port in that window, at
 `build/quux15_bdmix.quux.pass` holds the results of runs where the processor
 uses the port while the walk runs, its fills held, its writes answered late
 and its queue slow.
-
-QUUX's memory adapter has no timing exception. Nothing of the processor's
-reaches it: the frame buffer is the cache's and the registers are the
-register decode's, and the bridge's processor arm is a constant on QUUX.
-The port's own cache operations are registers of the port, loaded a tick
-before the adapter takes them. A block-disk transfer word passes through the
-bridge three ticks after the channel loads it, and the arbiter hands it the
-bus one and two ticks before that. The flows assert that no register of the
-adapter asks for the bus's 80 ns and that each of these paths asks for one
-tick.
-
-The traces QUUX is held to are taken at a K and an L named in their files:
-`quux13_alu.quux.k4.golden`, `quux13_divmd.quux.k4l1.golden` and so on. `make check
-MACHINE=quux` runs them at every board's K, 4 and 5 (the Makefile's
-`QUUX_KS`), at an L of 0. It also runs the programs with `ILONG`
-instructions at an L of one. The memory port is built at each K, since it
-answers a device register K - 1 ticks after the grant.
-
-## QUUX's fused return and its prefetch
-
-Revision 12 (contract H8a) adds no instant of its own; everything it does is
-at the processor's edges. A fused return's choice of the handler is made in
-its microcycle and taken at the edge that ends it, where the MACRO-DISPATCH
-register and the MACRO DISPATCH MEMORY's index and entry are written too. The
-operand address and the prefetched M 31 word it arms are loaded at the edge
-that ends the microcycle after it, after that microcycle's write pulse, whose
-write of `A-LOCALP` or `M-AP` the address already takes. The base copies are
-written with the write pulse. The cache-only prefetch's buffer is the memory
-port's and changes on the port's own ticks: a fetch answered fills it, and a
-transfer or the processor's write of LC or of the map drops it. The processor
-takes it at every master clock edge, a store granted at that edge to the
-buffered word dropping it there, and a microcycle fuses on the buffer as that
-edge left it, which is muir's rule that a change on an edge counts as before
-it. The port drops its own copy a tick after the store's grant, against the
-address the cache holds for the cycle, because the grant's address is the far
-end of the map and has the microcycle and not a tick.
 
 ## What is not MIT's timing at all
 
@@ -873,21 +638,21 @@ the CADR's, and it derives from the grid even in
 `rtl/plumbing/cadr_prove.sv`, where a witness built to honor the bus rule
 would otherwise stop honoring it silently when the grid moved.
 
-**On revision 15 a board tick is a clock of the period, so each of these
-that is a time is turned into clocks by the board's top.** The modules state
-them at the 10 ns tick, and revision 15 runs at its board's period. Each
-board's revision 15 top level computes each from its period,
+**On QUUX a board tick is a clock of the period, so each of these that is a
+time is turned into clocks by the board's top.** The modules state them at
+the 10 ns tick, and QUUX runs at its board's period. Each board's QUUX top
+level computes each from its period,
 the one place the period is decided on that board:
 `boards/kria-kr260/quux15_kr260.sv` and `boards/arty-z7-20/quux15_arty.sv`
 from `PERIOD_NS`, in nanoseconds, and `boards/de25-nano/quux15_de25.sv` from
 `PERIOD`, in units of 0.5 ns:
 
-| Constant | The time | Kria KR260, 20 ns | DE25-Nano, 25 ns | Arty Z7-20 at revision 15, 50 ns | Arty Z7-20 at revision 16, 60 ns |
-|---|---|---|---|---|---|
-| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 50,000,000 | 40,000,000 | 20,000,000 | 16,666,667 |
-| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,097,152 | 1,677,722 | 838,861 | 699,051 |
-| `DISK_LIT_T`, the disk lamp's stretch | the same 41,943,040 ns, rounded up | --- | 1,677,722 | 838,861 | 699,051 |
-| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 800 | 640 | 320 | 267 |
+| Constant | The time | Kria KR260, 20 ns | DE25-Nano, 25 ns | Arty Z7-20, 60 ns |
+|---|---|---|---|---|
+| `SECOND_T`, the display's second | 10^9 ns, to the nearest clock | 50,000,000 | 40,000,000 | 16,666,667 |
+| `HOLD_T`, the steady lamp's hold | 2^22 ticks of 10 ns, 41,943,040 ns, rounded up | 2,097,152 | 1,677,722 | 699,051 |
+| `DISK_LIT_T`, the disk lamp's stretch | the same 41,943,040 ns, rounded up | --- | 1,677,722 | 699,051 |
+| `MOUSE_STEP_T`, the mouse's step in `cadr_input_cables.sv` | muir's 16,000 ns, rounded up | 800 | 640 | 267 |
 
 The Kria KR260 has no disk lamp.
 
@@ -899,8 +664,7 @@ pixel clock's. `build/quux15_kr260_param.pass` reads the three back at the
 top's instances at 10, 13, 18, 19 and 20 ns and holds each to the figure
 computed from the period apart from the top. `build/quux15_arty_param.pass`
 does the same for the Arty Z7-20's four at 10, 44, 47, 48, 50 and 60 ns,
-and holds the top's own period and the bitstream flow's to 50 ns at revision
-15 and 60 ns at revision 16; `build/quux15_de25_param.pass` for the DE25-Nano's four at 10, 22.5, 24, 25
+and holds the top's own period and the bitstream flow's to 60 ns; `build/quux15_de25_param.pass` for the DE25-Nano's four at 10, 22.5, 24, 25
 and 26 ns and at the top's own period.
 
 ## If you are about to change an instant

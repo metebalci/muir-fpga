@@ -47,25 +47,12 @@ static void fail(const char *what, unsigned long long got, unsigned long long wa
 
 // --- the model -------------------------------------------------------------
 
-// One of QUUX's interval timers as the fabric runs it: when its flag first
-// rose (or will), and its period, in ticks of muir's clock since power-on;
-// its mode and interrupt enable, and its period as the word holds it.
-struct qtimer {
-	int en, live;
-	uint64_t first_rise, period;
-	int one_shot, ie;
-	uint32_t period_us;
-};
-
 struct model {
 	uint64_t imem[IMG_IMEM_WORDS], prom[IMG_PROM_WORDS];
-	// Words: 32 bits, and 40 on revision 13.
 	uint64_t amem[IMG_AMEM_WORDS], mmem[IMG_MMEM_WORDS];
-	// The largest machine's sizes, QUUX's PDL buffer and revision 13's
-	// dispatch memory and maps, of which the others use the first part.
-	uint64_t pdl[IMG_QUUX_PDL_WORDS];
+	uint64_t pdl[IMG_PDL_WORDS];
 	uint32_t spc[IMG_SPC_WORDS];
-	uint32_t dmem[IMG_DMEM_WORDS_13], l1[IMG_L1_WORDS_13], l2[IMG_L2_WORDS_13];
+	uint32_t dmem[IMG_DMEM_WORDS], l1[IMG_L1_WORDS], l2[IMG_L2_WORDS];
 	uint16_t opcs[IMG_OPCS];
 	uint64_t regs[21];
 	uint32_t ro_addr;
@@ -78,64 +65,7 @@ struct model {
 	// before the one it asked for and never know; this is how the check
 	// asks whether it does.
 	int stale_for;
-
-	// --- QUUX: the bitstream says it is one, at K and L, and answers the
-	// --- register table's entries 21 to 25 and selector 12.  **ITS CLOCK
-	// --- MOVES**: `qm` is muir's, ticks since power-on, and every access
-	// --- to the window advances it by `step`, as the board's does between
-	// --- a reader's accesses.  TICKS is two ahead of it, the reset being
-	// --- two edges before power-on.
-	int quux, rev13, rev14;
-	unsigned k, l;
-	uint64_t qm, step;
-	struct qtimer timer[IMG_QUUX_TIMERS];
-	uint64_t input;			/* selector 12 word 0, as the fabric packs it */
-	uint32_t fifo[IMG_QUUX_FIFO_WORDS];
-	uint32_t disk[4];		/* command, pointer, disk address, last address */
-	uint64_t disk_flags;		/* word 5 */
-	uint64_t page;			/* word 6 */
-	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
-	uint64_t fd_resp_13;		/* word 10, revision 13's response ring's base */
-	uint64_t ms[5];			/* entries 41 to 45, revision 14's memory system */
-	// Revision 12's fused return: the register table's entries 29 to 40 and
-	// selector 13, the MACRO DISPATCH MEMORY.
-	uint64_t macro[12];
-	uint32_t entries[IMG_QUUX_MACRO_ENTRIES];
 };
-
-// A timer's count word at muir's tick `m`: the fabric's counts to its next
-// rise, and the microsecond clock's low bits of the same tick.  A one-shot
-// that has risen has stopped there, `live` down, its prescaler reloaded and
-// its count at one (`quux_clocks.sv`).
-static uint64_t qtimer_word(const struct qtimer *t, uint64_t m)
-{
-	int sticky = 0, live = t->live;
-	uint64_t pre = 0x55u, us = 0x5A5A5Au;	/* stopped: whatever it held */
-	if (t->en && t->live && t->one_shot && m > t->first_rise) {
-		sticky = 1;
-		live = 0;
-		pre = 99u;
-		us = 1u;
-	} else if (t->en && t->live) {
-		uint64_t next = t->first_rise;
-		if (m > t->first_rise) {
-			sticky = 1;
-			next = t->first_rise +
-			       ((m - t->first_rise) / t->period + 1u) * t->period;
-		}
-		pre = (next - m) % 100u;
-		us = (next - m) / 100u + 1u;
-	}
-	const uint64_t usec = m / 100u, usec_t = 99u - m % 100u;
-	return ((usec & 0x7Fu) << 41) | (usec_t << 34) | ((uint64_t)t->en << 33) |
-	       ((uint64_t)sticky << 32) | ((uint64_t)live << 31) | (pre << 24) | us;
-}
-
-// A timer's other word: its interrupt enable, its mode and its period.
-static uint64_t qtimer_conf(const struct qtimer *t)
-{
-	return ((uint64_t)t->ie << 25) | ((uint64_t)t->one_shot << 24) | t->period_us;
-}
 
 static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 {
@@ -144,66 +74,13 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 	case IMG_SEL_PROM: return a < IMG_PROM_WORDS ? m->prom[a] : 0;
 	case IMG_SEL_AMEM: return a < IMG_AMEM_WORDS ? m->amem[a] : 0;
 	case IMG_SEL_MMEM: return a < IMG_MMEM_WORDS ? m->mmem[a] : 0;
-	case IMG_SEL_PDL:  return a < (m->quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS) ? m->pdl[a] : 0;
+	case IMG_SEL_PDL:  return a < IMG_PDL_WORDS ? m->pdl[a] : 0;
 	case IMG_SEL_SPC:  return a < IMG_SPC_WORDS ? m->spc[a] : 0;
-	case IMG_SEL_DMEM: return a < (m->rev13 ? IMG_DMEM_WORDS_13 : IMG_DMEM_WORDS) ? m->dmem[a] : 0;
-	// Revision 14 has no map levels: the selectors answer as one this
-	// machine has not got (`cadr_microcycle.sv`).
-	case IMG_SEL_MAP1:
-		if (m->rev14)
-			return RO_NO_MEMORY;
-		return a < (m->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS) ? m->l1[a] : 0;
-	case IMG_SEL_MAP2:
-		if (m->rev14)
-			return RO_NO_MEMORY;
-		return a < (m->rev13 ? IMG_L2_WORDS_13 : m->quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS)
-			       ? m->l2[a] : 0;
+	case IMG_SEL_DMEM: return a < IMG_DMEM_WORDS ? m->dmem[a] : 0;
+	case IMG_SEL_MAP1: return a < IMG_L1_WORDS ? m->l1[a] : 0;
+	case IMG_SEL_MAP2: return a < IMG_L2_WORDS ? m->l2[a] : 0;
 	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : 0;
-	case IMG_SEL_REGS:
-		if (a < 21)
-			return m->regs[a];
-		if (!m->quux)
-			return RO_NO_MEMORY;
-		switch (a) {
-		case IMG_RG_QUUX_ID:
-			return ((uint64_t)IMG_QUUX_MARK << 32) | ((uint64_t)m->k << 24) |
-			       ((uint64_t)m->l << 16) |
-			       (m->rev14 ? IMG_QUUX_ID_14 : m->rev13 ? IMG_QUUX_ID_13 : 0u);
-		case IMG_RG_QUUX_TIME:
-			return ((uint64_t)(99u - m->qm % 100u) << 32) |
-			       ((m->qm / 100u) & 0xFFFFFFFFull);
-		default:
-			if (a >= IMG_RG_QUUX_COUNT && a < IMG_RG_QUUX_COUNT + IMG_QUUX_TIMERS)
-				return qtimer_word(&m->timer[a - IMG_RG_QUUX_COUNT], m->qm);
-			if (a >= IMG_RG_QUUX_CONF && a < IMG_RG_QUUX_CONF + IMG_QUUX_TIMERS)
-				return qtimer_conf(&m->timer[a - IMG_RG_QUUX_CONF]);
-			if (a >= IMG_RG_QUUX_MACRO && a <= IMG_RG_QUUX_PF_FETCH)
-				return m->macro[a - IMG_RG_QUUX_MACRO];
-			if (m->rev14 && a >= IMG_RG_QUUX_MS && a <= IMG_RG_QUUX_COPIES)
-				return m->ms[a - IMG_RG_QUUX_MS];
-			return RO_NO_MEMORY;
-		}
-	case IMG_SEL_MACRO:
-		if (!m->quux)
-			return RO_NO_MEMORY;
-		return a < IMG_QUUX_MACRO_ENTRIES ? m->entries[a] : RO_NO_MEMORY;
-	case IMG_SEL_QUUX_PAGE:
-		if (!m->quux)
-			return RO_NO_MEMORY;
-		if (a >= IMG_QP_FIFO && a < IMG_QP_FIFO + IMG_QUUX_FIFO_WORDS)
-			return m->fifo[a - IMG_QP_FIFO];
-		switch (a) {
-		case IMG_QP_INPUT: return m->input;
-		case IMG_QP_CMD: case IMG_QP_CLP: case IMG_QP_DA: case IMG_QP_LMA:
-			return m->disk[a - IMG_QP_CMD];
-		case IMG_QP_DISK: return m->disk_flags;
-		case IMG_QP_PAGE: return m->page;
-		case IMG_QP_FD_BASES: case IMG_QP_FD_INDEXES: case IMG_QP_FD_FLAGS:
-			return m->fd[a - IMG_QP_FD_BASES];
-		case IMG_QP_FD_RESP_BASE_13:
-			return m->rev13 ? m->fd_resp_13 : RO_NO_MEMORY;
-		default: return RO_NO_MEMORY;
-		}
+	case IMG_SEL_REGS: return a < 21 ? m->regs[a] : RO_NO_MEMORY;
 	default: return RO_NO_MEMORY;
 	}
 }
@@ -213,10 +90,6 @@ static uint32_t model_read(struct readout *r, unsigned word)
 	struct model *m = r->ctx;
 	const unsigned sel = (m->ro_addr >> 14) & 0xFu;
 	const unsigned a = m->ro_addr & 0x3FFFu;
-	if (m->quux) {
-		m->qm += m->step;
-		m->ticks = m->qm + 2u;
-	}
 	switch (word) {
 	case RO_IDENT: return RO_IDENT_WORD;
 	case RO_STAT: return 0;
@@ -247,10 +120,6 @@ static uint32_t model_read(struct readout *r, unsigned word)
 static void model_write(struct readout *r, unsigned word, uint32_t v)
 {
 	struct model *m = r->ctx;
-	if (m->quux) {
-		m->qm += m->step;
-		m->ticks = m->qm + 2u;
-	}
 	if (word == RO_ADDR)
 		m->ro_addr = v & 0x3FFFFu;
 	else if (word == RO_SPY(RO_SPY_CLK_W))
@@ -306,211 +175,237 @@ static void fill(struct model *m)
 
 // --- QUUX's machine ----------------------------------------------------------
 //
-// **THE SAME MACHINE `golden/src/quux_checkpoint.rs` BUILDS IN muir'S TERMS,
-// HERE IN THE FABRIC'S**, and `build/checkpoint.quux.pass` compares the two
-// files byte for byte.  There the timers are turned on and periods written,
-// keys pressed and read, the mouse moved and block-disk started through
-// muir's own calls; here is what the fabric's counters and registers hold
-// after the same history.  Every constant is the generator's, by the same
-// name.  The `Rtl` engine's own registers are a fresh engine's on both sides,
-// muir keeping them private: IR, PC and the flags are zero, LVMO its
-// power-on value.
-#define Q_M0        0x9876543210ull
-#define Q_ENABLED   (Q_M0 - 1000037u)
-#define Q_PERIOD_US 6000u
-#define Q_ONE_SHOT_US 16667u
-#define Q_SHOT_AT_M0_US 3000u
-#define Q_CYCLES    0x1234567890ull
-#define Q_DISK_CMD  0x12345805u
-#define Q_DISK_CLP  0x00ABCDEFu
-#define Q_DISK_DA   0x3FEDCBA9u
-#define Q_KEYS      70u
-#define Q_KEYS_READ 59u
-#define Q_MOUSE_X   0x5a3u
-#define Q_MOUSE_Y   0x2c7u
-#define Q_BUTTONS   5u
-// Block-disk's disk, declared as a pack of this geometry on unit 0: 256
-// blocks, `DISK_BLOCKS` in `golden/src/quux_checkpoint.rs`.
-#define Q_DISK_CYLINDERS 16u
-#define Q_DISK_HEADS     1u
-#define Q_DISK_BPT       16u
-// The file device (revision 9): the rings configured and enabled with the
-// interrupt enable, one command answered and its response consumed, and an
-// index fault left standing.
-#define Q_FD_CMD_BASE  0x001000u
+// **QUUX'S WINDOW, `quux15_core.sv`'s readout, MODELED**: the memories at
+// their 64 or 40 bits, the register table of `img_rg15`, the devices of
+// `img_dv15` with the Ethernet device's words after them and the keyboard's
+// FIFO at 64, and the halted pipeline's words of `img_tl15`; the face's word
+// 12 carries a word's `<63:32>` whole, and a write of selector 15 takes the
+// snapshot.  The machine behind it is a poison at every field's width,
+// with the few values a resume holds to the flags given it set as those
+// flags say: the clock's period, the video controller's size, the host's
+// words of the Ethernet device and block-disk's pack.  `build/checkpoint
+// .quux.pass` has muir's `quux` resume the file this writes and save it
+// back, and holds it to the digest recorded there; the package's own check
+// holds the transport and the refusals here.
+//
+// The constants are the resume line's: the Kria KR260's 1920 by 1080 and a
+// period of 10 ns; the host's words of `ethernet_host_check`; and muir's
+// own QUUX disk of 8,192 blocks, which the Makefile gives as the pack.
+#define Q_PERIOD     20u		/* entry 21's <31:24>, units of 0.5 ns */
+#define Q_VIDEO_W    1920u
+#define Q_VIDEO_H    1080u
+#define Q_UNITS      16u		/* 1MW of main memory */
+#define Q_DISK_BLOCKS 8192u
+#define Q_CYCLES     0x1234567890ull
+#define Q_NS         0x9876543210ull	/* the snapshot's instant, units of 0.5 ns */
+#define Q_KEYS_READ  59u
+#define Q_KEYS_WAITING 5u
+#define Q_MOUSE_X    0x5a3u
+#define Q_MOUSE_Y    0x2c7u
+#define Q_BUTTONS    5u
+#define Q_FD_CMD_BASE  0x0001000u
 #define Q_FD_CMD_LOG2  2u
-#define Q_FD_RESP_BASE 0x001100u
+#define Q_FD_RESP_BASE 0x0001108u
 #define Q_FD_RESP_LOG2 1u
+#define Q_MAC_HI     0x025au		/* 02:5a:11:22:33:44 */
+#define Q_MAC_LO     0x11223344u
+#define Q_IP_ADDRESS (169u << 24 | 254u << 16 | 101u << 8 | 2u)
+#define Q_IP_NETMASK 0xFFFFFFFCu
+#define Q_IP_GATEWAY (169u << 24 | 254u << 16 | 101u << 8 | 1u)
 
-static void fill_quux(struct model *m)
+struct qmodel {
+	uint64_t imem[IMG_IMEM_WORDS], prom[IMG_PROM_WORDS];
+	uint64_t amem[IMG_AMEM_WORDS], mmem[IMG_MMEM_WORDS];
+	uint64_t pdl[IMG_QUUX_PDL_WORDS];
+	uint32_t spc[IMG_SPC_WORDS], dmem[IMG_DMEM_WORDS_13];
+	uint16_t opcs[IMG_OPCS];
+	uint32_t macro[IMG_QUUX_MACRO_ENTRIES];
+	uint64_t regs[IMG_RG15_COUNT];
+	uint64_t dv[IMG_DV15_ETH + IMG_DV15_ETH_COUNT];
+	uint32_t fifo[IMG_QUUX_FIFO_WORDS];
+	uint64_t tail[IMG_TL15_COUNT];
+	uint32_t ro_addr;
+	uint64_t latched;
+	uint32_t hi_latch_cycles, hi_latch_ticks;
+	uint64_t cycles, ticks;
+	int snaps;
+};
+
+static uint64_t qmodel_word(struct qmodel *m, unsigned sel, unsigned a)
 {
-	memset(m, 0, sizeof *m);
-	m->quux = 1;
-	m->k = 4;
-	m->l = 0;
-	for (unsigned i = 0; i < IMG_IMEM_WORDS; ++i)
-		m->imem[i] = poison(IMG_SEL_IMEM, i, 48);	/* under the PROM too */
-	for (unsigned i = 0; i < IMG_PROM_WORDS; ++i)
-		m->prom[i] = poison(IMG_SEL_PROM, i, 48);
-	for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
-		m->amem[i] = (uint32_t)poison(IMG_SEL_AMEM, i, 32);
-	for (unsigned i = 0; i < IMG_MMEM_WORDS; ++i)
-		m->mmem[i] = (uint32_t)poison(IMG_SEL_MMEM, i, 32);
-	for (unsigned i = 0; i < IMG_QUUX_PDL_WORDS; ++i)
-		m->pdl[i] = (uint32_t)poison(IMG_SEL_PDL, i, 32);
-	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i)
-		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 19);
-	for (unsigned i = 0; i < IMG_DMEM_WORDS; ++i)
-		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
-	for (unsigned i = 0; i < IMG_L1_WORDS; ++i)
-		m->l1[i] = (uint32_t)poison(IMG_SEL_MAP1, i, 6);
-	for (unsigned i = 0; i < IMG_QUUX_L2_WORDS; ++i)
-		m->l2[i] = (uint32_t)poison(IMG_SEL_MAP2, i, 24);
-	// A fresh `Rtl`'s OPC shift register, and its register table but for
-	// the entries that are `Machine`'s, which are poisoned at their widths.
-	for (unsigned i = 0; i < 21; ++i)
-		m->regs[i] = 0;
-	m->regs[IMG_RG_Q] = poison(IMG_SEL_REGS, IMG_RG_Q, 32);
-	m->regs[IMG_RG_VMA] = poison(IMG_SEL_REGS, IMG_RG_VMA, 32);
-	m->regs[IMG_RG_MD] = poison(IMG_SEL_REGS, IMG_RG_MD, 32);
-	m->regs[IMG_RG_PDLPTR] = poison(IMG_SEL_REGS, IMG_RG_PDLPTR, 14);
-	m->regs[IMG_RG_PDLIDX] = poison(IMG_SEL_REGS, IMG_RG_PDLIDX, 14);
-	m->regs[IMG_RG_SPCPTR] = poison(IMG_SEL_REGS, IMG_RG_SPCPTR, 5);
-	m->regs[IMG_RG_DC] = poison(IMG_SEL_REGS, IMG_RG_DC, 10);
-	m->regs[IMG_RG_LVMO] = 0x00C03FFFu;
-	m->regs[IMG_RG_MDHELD] = poison(IMG_SEL_REGS, IMG_RG_MDHELD, 32);
-	m->regs[IMG_RG_PHYS] = poison(IMG_SEL_REGS, IMG_RG_PHYS, 22);
-	// A halted QUUX's memory port idle, its write buffer drained.
-	m->regs[IMG_RG_FLAGS] = (1ull << IMG_F_VMAOK) | (1ull << IMG_F_RUN) |
-				(1ull << IMG_F_ERRSTOP) | (1ull << IMG_F_STATHENB) |
-				(1ull << IMG_F_MEM_DRAINED);
-	m->cycles = Q_CYCLES;
-	m->qm = Q_M0;
-	m->ticks = Q_M0 + 2u;
-
-	// The interval timers: timers 0 and 1 turned on at `Q_ENABLED`, a write
-	// landing a tick after its edge and the count one tick shorter, so each
-	// flag first rises a period after the edge (`quux_clocks.sv`); timer 0
-	// one-shot with its interrupt enable, not yet risen, timer 1 periodic
-	// with its, risen once; and timer 2 one-shot without it, turned on so
-	// that it rose at the tick before `Q_M0`.
-	m->timer[0] = (struct qtimer){ 1, 1, Q_ENABLED + Q_ONE_SHOT_US * 100u, Q_ONE_SHOT_US * 100u,
-				       1, 1, Q_ONE_SHOT_US };
-	m->timer[1] = (struct qtimer){ 1, 1, Q_ENABLED + Q_PERIOD_US * 100u, Q_PERIOD_US * 100u,
-				       0, 1, Q_PERIOD_US };
-	m->timer[2] = (struct qtimer){ 1, 1, Q_M0 - 1u, Q_SHOT_AT_M0_US * 100u, 1, 0, Q_SHOT_AT_M0_US };
-
-	// Seventy key words pressed into sixty-four slots, the last six dropped
-	// and the overflow set, and fifty-nine read: five waiting from slot 59.
-	for (unsigned i = 0; i < IMG_QUUX_FIFO_WORDS; ++i)
-		m->fifo[i] = (uint32_t)poison(20, i, 24);
-	const uint64_t head = Q_KEYS_READ, count = IMG_QUUX_FIFO_WORDS - Q_KEYS_READ;
-	m->input = (head << 38) | (count << 31) | (1ull << 30) /* overflowed */ |
-		   (1ull << 29) /* keyboard enable */ | (1ull << 28) /* mouse moved */ |
-		   (1ull << 27) /* mouse enable */ | ((uint64_t)Q_BUTTONS << 24) |
-		   ((uint64_t)Q_MOUSE_Y << 12) | Q_MOUSE_X;
-
-	// Block-disk: a command it does not do, started, and nothing moved.
-	m->disk[0] = Q_DISK_CMD;
-	m->disk[1] = Q_DISK_CLP;
-	m->disk[2] = Q_DISK_DA & 0x0FFFFFFFu;
-	m->disk[3] = 0;
-	m->disk_flags = (1ull << 36) /* not active */ | (1ull << 33) /* bad command */ |
-			0x5A5A5Au;	/* the ticks since, which a disk that never walked has no use for */
-	// The page: Xbus NXM and the map error, and black-on-white.
-	m->page = (1u << 8) | 041u;
-	// The file device: words 7 to 9 as `cadr_machine.sv` packs them, no
-	// handle open and nothing queued, so a checkpoint may be taken.
-	m->fd[0] = ((uint64_t)Q_FD_CMD_BASE << 24) | Q_FD_RESP_BASE;
-	m->fd[1] = (1ull << 32) | (1ull << 16) | 1u;
-	m->fd[2] = ((uint64_t)Q_FD_CMD_LOG2 << 24) | ((uint64_t)Q_FD_RESP_LOG2 << 20) |
-		   (1u << 3) /* index fault */ | (1u << 1) /* interrupt enable */ | 1u;
-	// Revision 12's fused return, as `golden/src/quux_checkpoint.rs` sets
-	// it: the register (its <30:29> 0), the index, the base copies, an
-	// operand address armed for ARG and M 31's word armed; the counts,
-	// which no checkpoint carries; and no prefetched word and no fetch.
-	m->macro[IMG_RG_QUUX_MACRO - IMG_RG_QUUX_MACRO] = poison(10, 29, 32) & ~(3ull << 29);
-	m->macro[IMG_RG_QUUX_MACRO_IX - IMG_RG_QUUX_MACRO] = poison(10, 30, 10);
-	m->macro[IMG_RG_QUUX_BASES - IMG_RG_QUUX_MACRO] =
-		(poison(10, 131, 14) << 14) | poison(10, 31, 14);
-	m->macro[IMG_RG_QUUX_ARMED - IMG_RG_QUUX_MACRO] =
-		(1u << 9) | (1u << 8) | (1u << 7) | poison(10, 32, 6);
-	m->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO] = poison(10, 33, 32);
-	m->macro[IMG_RG_QUUX_FUSED_N - IMG_RG_QUUX_MACRO] = 0x12345u;
-	m->macro[IMG_RG_QUUX_OPR_N - IMG_RG_QUUX_MACRO] = 0x2345u;
-	m->macro[IMG_RG_QUUX_PF_N - IMG_RG_QUUX_MACRO] = 0x345u;
-	for (unsigned i = 0; i < IMG_QUUX_MACRO_ENTRIES; ++i)
-		m->entries[i] = (uint32_t)poison(13, i, 18);
+	switch (sel) {
+	case IMG_SEL_IMEM: return a < IMG_IMEM_WORDS ? m->imem[a] : RO_NO_MEMORY;
+	case IMG_SEL_PROM: return a < IMG_PROM_WORDS ? m->prom[a] : RO_NO_MEMORY;
+	case IMG_SEL_AMEM: return a < IMG_AMEM_WORDS ? m->amem[a] : RO_NO_MEMORY;
+	case IMG_SEL_MMEM: return a < IMG_MMEM_WORDS ? m->mmem[a] : RO_NO_MEMORY;
+	case IMG_SEL_PDL:  return a < IMG_QUUX_PDL_WORDS ? m->pdl[a] : RO_NO_MEMORY;
+	case IMG_SEL_SPC:  return a < IMG_SPC_WORDS ? m->spc[a] : RO_NO_MEMORY;
+	case IMG_SEL_DMEM: return a < IMG_DMEM_WORDS_13 ? m->dmem[a] : RO_NO_MEMORY;
+	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : RO_NO_MEMORY;
+	case IMG_SEL_MACRO: return a < IMG_QUUX_MACRO_ENTRIES ? m->macro[a] : RO_NO_MEMORY;
+	case IMG_SEL_REGS: return a < IMG_RG15_COUNT ? m->regs[a] : RO_NO_MEMORY;
+	case IMG_SEL_QUUX_PAGE:
+		if (a >= IMG_DV15_FIFO && a < IMG_DV15_FIFO + IMG_QUUX_FIFO_WORDS)
+			return m->fifo[a - IMG_DV15_FIFO];
+		return a < IMG_DV15_ETH + IMG_DV15_ETH_COUNT ? m->dv[a] : RO_NO_MEMORY;
+	case IMG_SEL_TAIL: return a < IMG_TL15_COUNT ? m->tail[a] : RO_NO_MEMORY;
+	case IMG_SEL_SNAP: ++m->snaps; return 0;
+	default: return RO_NO_MEMORY;
+	}
 }
 
-// --- QUUX revision 13's machine ------------------------------------------------
-//
-// **THE MACHINE `golden/src/quux_checkpoint.rs --revision 13` BUILDS**, the
-// same history as revision 12's above at revision 13's widths and sizes
-// (contract G2 appendix A1.13): words of 40 bits whose tags are not zero, a
-// dispatch memory of 4,096 entries, a level-1 map of 8,192 seven-bit entries
-// and a level-2 map of 4,096 28-bit ones, the overflow flag set, block-disk's
-// pointer and the file device's response ring at revision 13's addresses,
-// and a fresh engine's LVMO, revision 13's. `build/checkpoint.quux.pass`
-// compares the file with muir's byte for byte and has muir load it and save
-// it again.  Main memory is packed storage, `main13` below.
-#define Q_DISK_CLP_13      0x0ABCDEF0u
-#define Q_FD_RESP_BASE_13  0x001108u
-// `Geometry::lvmo_at_power_on` on revision 13: the access bits at <27:26>
-// and the page's 18 bits all ones.
-#define Q_LVMO_13          ((1u << 27) | (1u << 26) | 0777777u)
-
-static void fill_quux13(struct model *m)
+static uint32_t qmodel_read(struct readout *r, unsigned word)
 {
-	fill_quux(m);
-	m->rev13 = 1;
+	struct qmodel *m = r->ctx;
+	switch (word) {
+	case RO_IDENT: return RO_IDENT_WORD;
+	case RO_CYCLES:
+		m->hi_latch_cycles = (uint32_t)(m->cycles >> 32);
+		return (uint32_t)m->cycles;
+	case RO_CYCLESH: return m->hi_latch_cycles;
+	case RO_TICKS:
+		m->hi_latch_ticks = (uint32_t)(m->ticks >> 32);
+		return (uint32_t)m->ticks;
+	case RO_TICKSH: return m->hi_latch_ticks;
+	case RO_ADDR:
+		m->latched = qmodel_word(m, (m->ro_addr >> 14) & 0xFu, m->ro_addr & 0x3FFFu);
+		return m->ro_addr;
+	case RO_DATA_LO: return (uint32_t)m->latched;
+	case RO_DATA_HI: return (uint32_t)(m->latched >> 32);
+	default: return RO_UNMAPPED;
+	}
+}
+
+static void qmodel_write(struct readout *r, unsigned word, uint32_t v)
+{
+	struct qmodel *m = r->ctx;
+	if (word == RO_ADDR)
+		m->ro_addr = v & 0x3FFFFu;
+}
+
+static void fill_quux(struct qmodel *m)
+{
+	memset(m, 0, sizeof *m);
+	for (unsigned i = 0; i < IMG_IMEM_WORDS; ++i)
+		m->imem[i] = poison(IMG_SEL_IMEM, i, 64);	/* under the PROM too */
+	for (unsigned i = 0; i < IMG_PROM_WORDS; ++i)
+		m->prom[i] = poison(IMG_SEL_PROM, i, 64);
 	for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
 		m->amem[i] = poison(IMG_SEL_AMEM, i, 40);
 	for (unsigned i = 0; i < IMG_MMEM_WORDS; ++i)
 		m->mmem[i] = poison(IMG_SEL_MMEM, i, 40);
 	for (unsigned i = 0; i < IMG_QUUX_PDL_WORDS; ++i)
 		m->pdl[i] = poison(IMG_SEL_PDL, i, 40);
+	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i)
+		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 19);
 	for (unsigned i = 0; i < IMG_DMEM_WORDS_13; ++i)
 		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
-	for (unsigned i = 0; i < IMG_L1_WORDS_13; ++i)
-		m->l1[i] = (uint32_t)poison(IMG_SEL_MAP1, i, 7);
-	for (unsigned i = 0; i < IMG_L2_WORDS_13; ++i)
-		m->l2[i] = (uint32_t)poison(IMG_SEL_MAP2, i, 28);
-	m->regs[IMG_RG_Q] = poison(IMG_SEL_REGS, IMG_RG_Q, 40);
-	m->regs[IMG_RG_VMA] = poison(IMG_SEL_REGS, IMG_RG_VMA, 40);
-	m->regs[IMG_RG_MD] = poison(IMG_SEL_REGS, IMG_RG_MD, 40);
-	m->regs[IMG_RG_MDHELD] = poison(IMG_SEL_REGS, IMG_RG_MDHELD, 40);
-	m->regs[IMG_RG_LVMO] = Q_LVMO_13;
-	m->regs[IMG_RG_FLAGS] |= 1ull << IMG_F_OVERFLOW;
-	m->disk[1] = Q_DISK_CLP_13;
-	// Words 7 and 10: the rings' bases, 28 bits each.
-	m->fd[0] = Q_FD_CMD_BASE;
-	m->fd_resp_13 = Q_FD_RESP_BASE_13;
-	m->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO] = poison(10, 33, 40);
-}
+	for (unsigned i = 0; i < IMG_OPCS; ++i)
+		m->opcs[i] = (uint16_t)poison(IMG_SEL_OPCS, i, 14);
+	for (unsigned i = 0; i < IMG_QUUX_MACRO_ENTRIES; ++i)
+		m->macro[i] = (uint32_t)poison(IMG_SEL_MACRO, i, 18);
 
-// **REVISION 14** (contract G3 revision 14, A14.14): revision 13's machine,
-// entry 21 saying 14, no map levels, and the memory system's words in
-// entries 41 to 45 as `quux_checkpoint.rs --revision 14` sets them through
-// muir's: the directory base (a multiple of 4, 18 bits) with the
-// ephemeral-reference enable at `<18>`, the pointer-type register's two
-// words, the refused count, and the redirect's copies, the head's 14 bits
-// over the base's 32.
-#define Q_DIRECTORY_14   0x1F2A4u
-#define Q_TYPES_14       0x0123456789ABCDEFull
-#define Q_REFUSED_14     0x89ABCDEFu
-#define Q_PDL_BASE_14    0xFEDCBA98u
-#define Q_PDL_HEAD_14    0x2B5Cu
+	// The register table, each entry at its field's width.
+	uint64_t *g = m->regs;
+	g[IMG_RG15_Q] = poison(IMG_SEL_REGS, IMG_RG15_Q, 40);
+	g[IMG_RG15_VMA] = poison(IMG_SEL_REGS, IMG_RG15_VMA, 40);
+	g[IMG_RG15_MD] = poison(IMG_SEL_REGS, IMG_RG15_MD, 40);
+	g[IMG_RG15_LC] = poison(IMG_SEL_REGS, IMG_RG15_LC, 34) | 1ull << 40;
+	g[IMG_RG15_PDLPTR] = poison(IMG_SEL_REGS, IMG_RG15_PDLPTR, 14);
+	g[IMG_RG15_PDLIDX] = poison(IMG_SEL_REGS, IMG_RG15_PDLIDX, 14);
+	g[IMG_RG15_SPCPTR] = poison(IMG_SEL_REGS, IMG_RG15_SPCPTR, 5);
+	g[IMG_RG15_INTCTL] = poison(IMG_SEL_REGS, IMG_RG15_INTCTL, 4) << 26;
+	g[IMG_RG15_DC] = poison(IMG_SEL_REGS, IMG_RG15_DC, 10);
+	g[IMG_RG15_FLAGS] = 7u;		/* overflow, VMAOK and word 101's NXM */
+	g[IMG_RG15_OPC] = poison(IMG_SEL_REGS, IMG_RG15_OPC, 14);
+	g[IMG_RG15_MACRO] = poison(IMG_SEL_REGS, IMG_RG15_MACRO, 32) & ~(3ull << 29);
+	g[IMG_RG15_MACRO_IX] = poison(IMG_SEL_REGS, IMG_RG15_MACRO_IX, 10);
+	g[IMG_RG15_BASES] = poison(IMG_SEL_REGS, 113, 14) << 16 | poison(IMG_SEL_REGS, IMG_RG15_BASES, 14);
+	g[IMG_RG15_ARMED] = 1u << 8 | 1u << 7 | poison(IMG_SEL_REGS, IMG_RG15_ARMED, 6);
+	g[IMG_RG15_DIRECTORY] = 1u << 18 | (poison(IMG_SEL_REGS, IMG_RG15_DIRECTORY, 18) & ~3ull);
+	g[IMG_RG15_TYPES] = poison(IMG_SEL_REGS, IMG_RG15_TYPES, 64);
+	g[IMG_RG15_REFUSED] = poison(IMG_SEL_REGS, IMG_RG15_REFUSED, 32);
+	g[IMG_RG15_COPIES] = poison(IMG_SEL_REGS, 118, 14) << 32 | poison(IMG_SEL_REGS, IMG_RG15_COPIES, 32);
+	g[IMG_RG15_POSTED] = poison(IMG_SEL_REGS, IMG_RG15_POSTED, 32);
+	g[IMG_RG15_CLOCKS] = poison(IMG_SEL_REGS, IMG_RG15_CLOCKS, 40);
+	g[IMG_RG15_ID] = (uint64_t)IMG_QUUX_MARK << 32 | (uint64_t)Q_PERIOD << 24 | IMG_QUUX_ID_16;
+	g[IMG_RG15_COMMITTED] = Q_CYCLES;
 
-static void fill_quux14(struct model *m)
-{
-	fill_quux13(m);
-	m->rev14 = 1;
-	m->ms[0] = (1ull << 18) | Q_DIRECTORY_14;
-	m->ms[1] = Q_TYPES_14 & 0xFFFFFFFFu;
-	m->ms[2] = Q_TYPES_14 >> 32;
-	m->ms[3] = Q_REFUSED_14;
-	m->ms[4] = ((uint64_t)Q_PDL_HEAD_14 << 32) | Q_PDL_BASE_14;
+	// The devices: timer 0 on and periodic with its enable, timer 1 on and
+	// one-shot, timer 2 off with no deadline; the file device on with its
+	// enable and an index fault, nothing open and nothing queued; block-disk
+	// with a pack and no transfer; black-on-white; the snapshot's instant.
+	uint64_t *v = m->dv;
+	v[IMG_DV15_TIMER + 0] = (uint64_t)6000u << 8 | 4u | 1u;
+	v[IMG_DV15_TIMER + 1] = (uint64_t)16667u << 8 | 2u | 1u;
+	v[IMG_DV15_TIMER + 2] = 0;
+	v[IMG_DV15_DEADLINE + 0] = Q_NS + 1000001u;
+	v[IMG_DV15_DEADLINE + 1] = Q_NS + 33333u;
+	v[IMG_DV15_DEADLINE + 2] = ~0ull;
+	v[IMG_DV15_FD] = 1u << 3 | 1u << 1 | 1u;
+	v[IMG_DV15_FD_CBASE] = Q_FD_CMD_BASE;
+	v[IMG_DV15_FD_RBASE] = Q_FD_RESP_BASE;
+	v[IMG_DV15_FD_LOGS] = Q_FD_RESP_LOG2 << 4 | Q_FD_CMD_LOG2;
+	v[IMG_DV15_FD_INDEXES] = 1ull << 32 | 1ull << 16 | 1u;
+	v[IMG_DV15_BD_CMD] = 0x12345805u;
+	v[IMG_DV15_BD_CLP] = 0x0ABCDEF0u;
+	v[IMG_DV15_BD_DA] = 0x0FEDCBA9u;
+	v[IMG_DV15_BD_LMA] = 0x01234567u;
+	v[IMG_DV15_BD_FLAGS] = 1u << 5 | 1u;	/* a pack on unit 0; a bad command */
+	v[IMG_DV15_BD_DONE] = Q_NS - 777u;
+	v[IMG_DV15_BD_NOW] = Q_NS - 555u;
+	v[IMG_DV15_BOW] = 1u;
+	v[IMG_DV15_NS] = Q_NS;
+	v[IMG_DV15_RTC] = 0;
+	v[IMG_DV15_US] = Q_NS / 2000u;
+	v[IMG_DV15_TV_AT] = Q_NS - 99999u;
+	// Seventy key words pressed into sixty-four slots, the overflow set,
+	// and fifty-nine read: five waiting from slot 59, the FIFO's wrap
+	// among them.
+	for (unsigned i = 0; i < IMG_QUUX_FIFO_WORDS; ++i)
+		m->fifo[i] = (uint32_t)poison(20, i, 24);
+	v[IMG_DV15_INPUT] = (uint64_t)Q_KEYS_READ << 38 | (uint64_t)Q_KEYS_WAITING << 31 |
+			    1ull << 30 | 1ull << 29 | 1ull << 28 | 1ull << 27 |
+			    (uint64_t)Q_BUTTONS << 24 | (uint64_t)Q_MOUSE_Y << 12 | Q_MOUSE_X;
+	// The Ethernet device: on, with its enable, its rings and indexes, its
+	// counters, and the host's words, 253-257.
+	uint64_t *e = &v[IMG_DV15_ETH];
+	e[0] = 2u << 8 | 3u << 4 | 1u << 1 | 1u;
+	e[1] = (uint64_t)0x0002000u << 32 | 0x0003000u;
+	e[2] = (uint64_t)7u << 48 | (uint64_t)9u << 32 | 5u << 16 | 5u;
+	e[3] = 7u;
+	e[4] = (uint64_t)Q_MAC_HI << 32 | 0x0302A050u;
+	e[5] = (uint64_t)Q_MAC_LO << 32 | Q_IP_ADDRESS;
+	e[6] = (uint64_t)Q_IP_NETMASK << 32 | Q_IP_GATEWAY;
+
+	// The halted pipeline.
+	uint64_t *t = m->tail;
+	t[IMG_TL15_NPC] = poison(IMG_SEL_TAIL, IMG_TL15_NPC, 14);
+	t[IMG_TL15_NPC_AFTER] = 1u << 14 | poison(IMG_SEL_TAIL, IMG_TL15_NPC_AFTER, 14);
+	t[IMG_TL15_NOPS] = 2u;
+	t[IMG_TL15_PDL_PENDING] = 1u << 14 | poison(IMG_SEL_TAIL, IMG_TL15_PDL_PENDING, 14);
+	t[IMG_TL15_PDL_WORD] = poison(IMG_SEL_TAIL, IMG_TL15_PDL_WORD, 40);
+	t[IMG_TL15_MD_OLD] = 1u;
+	t[IMG_TL15_MD_OLD_WORD] = poison(IMG_SEL_TAIL, IMG_TL15_MD_OLD_WORD, 40);
+	t[IMG_TL15_D_WAIT] = 2u;
+	t[IMG_TL15_OA_LOW] = poison(IMG_SEL_TAIL, IMG_TL15_OA_LOW, 64);
+	t[IMG_TL15_OA_HIGH] = poison(IMG_SEL_TAIL, IMG_TL15_OA_HIGH, 64);
+	t[IMG_TL15_NEXT_INSTRD] = 1u;
+	t[IMG_TL15_LVMO] = poison(IMG_SEL_TAIL, IMG_TL15_LVMO, 32);
+	t[IMG_TL15_WRCYC] = 0;
+	t[IMG_TL15_SPC_WRITE] = 1u << 24 | poison(IMG_SEL_TAIL, IMG_TL15_SPC_WRITE, 24);
+	t[IMG_TL15_MAP_WRITE] = 1u;
+	t[IMG_TL15_MAP_VMA] = poison(IMG_SEL_TAIL, IMG_TL15_MAP_VMA, 40);
+	t[IMG_TL15_MAP_MD] = poison(IMG_SEL_TAIL, IMG_TL15_MAP_MD, 40);
+	t[IMG_TL15_OPC_LOW] = poison(IMG_SEL_TAIL, IMG_TL15_OPC_LOW, 56);
+	t[IMG_TL15_OPC_HIGH] = poison(IMG_SEL_TAIL, IMG_TL15_OPC_HIGH, 56);
+	t[IMG_TL15_HALTED] = 1u;
+	t[IMG_TL15_COMMITTED] = Q_CYCLES;
+	t[IMG_TL15_NPC_PREV] = poison(IMG_SEL_TAIL, IMG_TL15_NPC_PREV, 14);
+	t[IMG_TL15_CONSOLE] = poison(IMG_SEL_TAIL, IMG_TL15_CONSOLE, 14) & ~(1ull << 6);
+	t[IMG_TL15_DEBUG_IR] = poison(IMG_SEL_TAIL, IMG_TL15_DEBUG_IR, 64);
+	m->cycles = Q_CYCLES;
+	m->ticks = Q_NS / 20u;
 }
 
 // --- the packer, against its own inverse -----------------------------------
@@ -650,10 +545,10 @@ static int run_state_check(const struct cadr_image *found, const struct chk_decl
 // halt, the pipeline undrained --- and the program took it as halted and
 // wrote a file of it.  This model is the console's window as `ro_found` reads
 // it: CYCLES and TICKS on page 0, FLAG-1, PC and OPC on page 1, and on
-// revision 15 the halted pipeline's word 19 through the readout, each
-// machine's halt as its fabric makes it.  The CADR's SRUN is RUN registered,
-// lowered by a write of zero whatever the machine is doing; revision 15's
-// SRUN follows RUN too, and its halted bit rises only when the drain ends
+// QUUX the halted pipeline's word 19 through the readout, each machine's
+// halt as its fabric makes it.  The CADR's SRUN is RUN registered, lowered
+// by a write of zero whatever the machine is doing; QUUX's SRUN follows RUN
+// too, and its halted bit rises only when the drain ends
 // (`quux15_core.sv`), which on a stuck pipeline it never does.
 
 struct hmodel {
@@ -662,8 +557,8 @@ struct hmodel {
 	uint32_t hi_cycles, hi_ticks;
 	int retiring;		/* CYCLES moves */
 	int srun, err, stathalt, wait;
-	int halted, x_halted;	/* revision 15's tail word 19 */
-	int drains;		/* a write of zero stops it, and on revision 15 drains it */
+	int halted, x_halted;	/* QUUX's tail word 19 */
+	int drains;		/* a write of zero stops it, and on QUUX drains it */
 	int lost;		/* the diagnostic registers do not answer */
 	uint16_t pc, opc;
 	uint32_t ro_addr;
@@ -737,7 +632,7 @@ static void hmodel_write(struct readout *r, unsigned word, uint32_t v)
 	}
 }
 
-// Revision 15 at the board's stuck instant: SRUN up, ERR down, FLAG-1
+// QUUX at the board's stuck instant: SRUN up, ERR down, FLAG-1
 // 0xe900, CYCLES standing at 2389615962 with PC 2173 and OPC 2112.
 static void hmodel_stuck15(struct hmodel *m)
 {
@@ -797,52 +692,52 @@ static void halt_check(void)
 	const long bad_before = bad;
 	int got;
 
-	// ---- the board's: revision 15 stuck with SRUN up, as found.
+	// ---- the board's: QUUX stuck with SRUN up, as found.
 	hmodel_stuck15(&m);
 	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
-		halt_fail("revision 15 stuck, SRUN up and its halted bit down", got, RO_FOUND_STUCK);
+		halt_fail("QUUX stuck, SRUN up and its halted bit down", got, RO_FOUND_STUCK);
 	if (s.flag1 != 0xe900u || !s.srun || s.err || s.drained != 0)
-		fail("the halt: revision 15 stuck: FLAG-1, SRUN, ERR and the halted bit as read",
+		fail("the halt: QUUX stuck: FLAG-1, SRUN, ERR and the halted bit as read",
 		     ((uint64_t)s.flag1 << 12) | (unsigned)s.srun << 8 | (unsigned)s.err << 4 | (unsigned)(s.drained & 0xF),
 		     (0xe900ull << 12) | 1u << 8);
-	halt_text_has(&s, 1, "revision 15 stuck", "SRUN up");
-	halt_text_has(&s, 1, "revision 15 stuck", "2389615962");
-	halt_text_has(&s, 1, "revision 15 stuck", "PC 2173");
-	halt_text_has(&s, 1, "revision 15 stuck", "OPC 2112");
-	halt_text_has(&s, 1, "revision 15 stuck", "FLAG-1 0xe900");
-	halt_text_has(&s, 1, "revision 15 stuck", "halted bit down");
+	halt_text_has(&s, 1, "QUUX stuck", "SRUN up");
+	halt_text_has(&s, 1, "QUUX stuck", "2389615962");
+	halt_text_has(&s, 1, "QUUX stuck", "PC 2173");
+	halt_text_has(&s, 1, "QUUX stuck", "OPC 2112");
+	halt_text_has(&s, 1, "QUUX stuck", "FLAG-1 0xe900");
+	halt_text_has(&s, 1, "QUUX stuck", "halted bit down");
 
 	// ---- and the same machine after a write of zero: SRUN follows RUN
 	// ---- down, and the drain never ends.
 	hmodel_stuck15(&m);
 	ro_halt(&r);
 	if ((got = halt_found(&m, &s)) != RO_FOUND_STUCK)
-		halt_fail("revision 15 stuck, RUN cleared and the drain not ended", got, RO_FOUND_STUCK);
-	halt_text_has(&s, 1, "revision 15 stuck and RUN cleared", "SRUN down");
+		halt_fail("QUUX stuck, RUN cleared and the drain not ended", got, RO_FOUND_STUCK);
+	halt_text_has(&s, 1, "QUUX stuck and RUN cleared", "SRUN down");
 
-	// ---- revision 15 running, halted by the console, drained: halted.
+	// ---- QUUX running, halted by the console, drained: halted.
 	hmodel_stuck15(&m);
 	m.retiring = 1;
 	m.drains = 1;
 	if ((got = halt_found(&m, &s)) != RO_FOUND_RUNNING)
-		halt_fail("revision 15 retiring", got, RO_FOUND_RUNNING);
+		halt_fail("QUUX retiring", got, RO_FOUND_RUNNING);
 	ro_halt(&r);
 	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
-		halt_fail("revision 15 halted by a write of zero and drained", got, RO_FOUND_HALTED);
+		halt_fail("QUUX halted by a write of zero and drained", got, RO_FOUND_HALTED);
 	// ---- and found so, which is what `--already-halted` takes.
 	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
-		halt_fail("revision 15 found halted", got, RO_FOUND_HALTED);
+		halt_fail("QUUX found halted", got, RO_FOUND_HALTED);
 
-	// ---- revision 15 halted by its own HALT word under ERROR-STOP-ENABLE:
+	// ---- QUUX halted by its own HALT word under ERROR-STOP-ENABLE:
 	// ---- drained, SRUN down, ERR up.
 	hmodel_stuck15(&m);
 	m.srun = 0;
 	m.x_halted = 1;
 	m.halted = 1;
 	if ((got = halt_found(&m, &s)) != RO_FOUND_HALTED)
-		halt_fail("revision 15 halted by a HALT word", got, RO_FOUND_HALTED);
+		halt_fail("QUUX halted by a HALT word", got, RO_FOUND_HALTED);
 
-	// ---- the CADR (and QUUX to revision 14) stuck: SRUN up, nothing in
+	// ---- the CADR stuck: SRUN up, nothing in
 	// ---- FLAG-1 naming a halt, once with -WAIT low.
 	hmodel_stuck15(&m);
 	m.rev15 = 0;
@@ -895,14 +790,14 @@ static void halt_check(void)
 	m.srun = 0;
 	m.lost = 1;
 	if ((got = halt_found(&m, &s)) != RO_FOUND_LOST)
-		halt_fail("a standing revision 15 whose diagnostic registers are not answered", got,
+		halt_fail("a standing QUUX whose diagnostic registers are not answered", got,
 			  RO_FOUND_LOST);
 
 	if (bad != bad_before)
 		return;
-	printf("checkpoint: the halt: a machine standing with SRUN up and no halt named, or on revision 15 "
+	printf("checkpoint: the halt: a machine standing with SRUN up and no halt named, or on QUUX "
 	       "undrained, is stuck and not halted; the console's, HALT-CONS's, the statistics counter's "
-	       "and revision 15's drained halt are halts\n");
+	       "and QUUX's drained halt are halts\n");
 }
 
 // ---- QUUX's main memory in its own words ----------------------------------
@@ -1004,8 +899,8 @@ static void memory_words_check(const char *side)
 			bind_init(&b);
 			b.quux = t[i].quux;
 			b.boards = t[i].units;
-			b.revision = t[i].quux ? 13u : 0u;
-			b.sync_k = t[i].quux ? 5u : 0u;
+			b.revision = t[i].quux ? 16u : 0u;
+			b.sync_k = t[i].quux ? 20u : 0u;
 			snprintf(b.checkpoint, sizeof b.checkpoint, "m.chk");
 			if (bind_write(&b, side, err, sizeof err) != 0) {
 				memory_fail("a sidecar written", err, "written");
@@ -1098,7 +993,7 @@ static unsigned chaos_resolve(uint32_t ident, uint32_t myaddr, int asked, unsign
 	return bind_chaos_address(&f, asked, asked_address, msg, n);
 }
 
-// ---- revision 16's 253-257, the host's flags ------------------------------
+// ---- QUUX's 253-257, the host's flags --------------------------------------
 //
 // **muir REFUSES A RESUME UNDER OTHER `--ethernet-mac`, `--ip-address` OR
 // `--ip-gateway` THAN THE CHECKPOINT'S** (QUUX's Ethernet contract, section
@@ -1152,12 +1047,12 @@ static void ethernet_host_check(const char *work)
 		}
 	}
 	remove(side);
-	// Below revision 16 the line names none of them.
+	// A sidecar written before the device's lines names none of them.
 	b.eth = 0;
-	b.revision = 15;
 	bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
 	if (strstr(cmd, "--ethernet-mac") || strstr(cmd, "--ip-")) {
-		fprintf(stderr, "checkpoint: FAIL: the host's flags: revision 15's resume line is [%s]\n", cmd);
+		fprintf(stderr, "checkpoint: FAIL: the host's flags: a resume line without the device's "
+			"words is [%s]\n", cmd);
 		++bad;
 	}
 }
@@ -1248,7 +1143,7 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 		remove(side);
 		// QUUX's line is as it was: QUUX has no Chaosnet.
 		b.quux = 1;
-		b.revision = 15;
+		b.revision = 16;
 		b.sync_k = 0;
 		bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
 		if (strstr(cmd, "--chaos-address")) {
@@ -1312,17 +1207,13 @@ int main(int argc, char **argv)
 	// the second argument, and the Makefile checks their digests first.
 	if (argc < 3) {
 		fprintf(stderr, "usage: checkpoint_test <scratch directory> <QUUX's disks, "
-			"muir's data/> [<CADR checkpoint to write> "
-			"[<QUUX revision 13's to write> [<revision 13's at 1920x1080> "
-			"[<QUUX revision 14's>]]]]\n");
+			"muir's data/> [<CADR checkpoint to write> [<QUUX's to write>]]\n");
 		return 2;
 	}
 	const char *work = argv[1];
 	const char *q8 = argv[2];
 	const char *out = argc > 3 ? argv[3] : NULL;
-	const char *quux13_out = argc > 4 ? argv[4] : NULL;
-	const char *quux13hd_out = argc > 5 ? argv[5] : NULL;
-	const char *quux14_out = argc > 6 ? argv[6] : NULL;
+	const char *quux_out = argc > 4 ? argv[4] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -1495,19 +1386,18 @@ int main(int argc, char **argv)
 		// **A QUUX BINDING SAYS SO, AND ITS RESUME IS QUUX'S, WHOLE.**  The
 		// line survives the file, and the command it prints is muir's
 		// `quux` with everything muir needs to take the file as the board
-		// ran it: the revision, which `quux` reads from the environment
-		// and refuses a checkpoint of the other at, and K, which muir
-		// refuses a checkpoint of another K at --- the Arty Z7-20's revision
-		// 13 runs at 5 and muir's default is 4.  No memory flag: muir
-		// builds the machine with the checkpoint's own memory.  The CADR's
+		// ran it: the clock's period, which muir refuses a checkpoint of
+		// another period at, and the video controller's size.  No memory
+		// flag: muir builds the machine with the checkpoint's own memory.
+		// The CADR's
 		// is `cadr` with its timing model and its boards.  Held whole,
 		// every word, against the line a person pastes.
 		struct binding qb;
 		bind_init(&qb);
 		qb.quux = 1;
 		qb.boards = 512;
-		qb.revision = 13;
-		qb.sync_k = 5;
+		qb.revision = 16;
+		qb.sync_k = 20;
 		qb.video_width = 1920;
 		qb.video_height = 1080;
 		qb.running = 1;
@@ -1517,12 +1407,12 @@ int main(int argc, char **argv)
 		qb.present = 1;
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
-		static const char want13[] = "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 "
+		static const char want16[] = "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 "
 			"--video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, want13) != 0) {
-			fprintf(stderr, "QUUX revision 13's resume line is [%s], wanting [%s]\n", cmd, want13);
-			fail("QUUX revision 13's resume line", 1, 0);
+		if (strcmp(cmd, want16) != 0) {
+			fprintf(stderr, "QUUX's resume line is [%s], wanting [%s]\n", cmd, want16);
+			fail("QUUX's resume line", 1, 0);
 		}
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || !rd.quux)
@@ -1530,14 +1420,14 @@ int main(int argc, char **argv)
 		else if (rd.video_width != 1920 || rd.video_height != 1080)
 			fail("the sidecar lost the video controller's size",
 			     ((uint64_t)rd.video_width << 16) | rd.video_height, (1920u << 16) | 1080u);
-		else if (rd.revision != 13 || rd.sync_k != 5 || rd.running != 1)
-			fail("the sidecar lost the revision, K or the run state",
+		else if (rd.revision != 16 || rd.sync_k != 20 || rd.running != 1)
+			fail("the sidecar lost the revision, the period or the run state",
 			     ((uint64_t)rd.revision << 16) | (rd.sync_k << 8) | (unsigned)rd.running,
-			     (13u << 16) | (5u << 8) | 1u);
+			     (16u << 16) | (20u << 8) | 1u);
 		else {
 			// `--verify` prints the line from the sidecar it read.
 			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
-			if (strcmp(cmd, want13) != 0)
+			if (strcmp(cmd, want16) != 0)
 				fail("the resume line from the sidecar read back", 1, 0);
 		}
 		// And the file says it in words a person reads.
@@ -1547,30 +1437,37 @@ int main(int argc, char **argv)
 			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0, saw_video = 0;
 			while (sf && fgets(line, sizeof line, sf)) {
 				line[strcspn(line, "\n")] = '\0';
-				saw_rev += strcmp(line, "revision: 13") == 0;
-				saw_k += strcmp(line, "sync-cycle-ticks: 5") == 0;
+				saw_rev += strcmp(line, "revision: 16") == 0;
+				saw_k += strcmp(line, "sync-cycle-ticks: 20") == 0;
 				saw_video += strcmp(line, "video-size: 1920x1080") == 0;
 				saw_run += strcmp(line, "running: yes") == 0;
 				saw_resume += strncmp(line, "resume: ", 8) == 0 &&
-					      strstr(line, "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 ");
+					      strstr(line, "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 ");
 			}
 			if (sf)
 				fclose(sf);
 			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1 || saw_video != 1)
-				fail("the sidecar's revision, K, running, resume and video size lines",
+				fail("the sidecar's revision, period, running, resume and video size lines",
 				     (uint64_t)saw_video * 10000 + saw_rev * 1000 + saw_k * 100 + saw_run * 10 +
 				     saw_resume, 11111);
 		}
-		// Revision 13 at K = 4 names its own revision and K.
-		qb.revision = 13;
-		qb.sync_k = 4;
+		// A period of 9.5 ns names its half, and 1280 by 1024 its size.
+		qb.sync_k = 19;
 		qb.video_width = 1280;
 		qb.video_height = 1024;
 		qb.running = 0;
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 4 --video-size 1280x1024 "
+		if (strcmp(cmd, "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 9.5 --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
-			fail("QUUX revision 13's resume line at K = 4", 1, 0);
+			fail("QUUX's resume line at 9.5 ns", 1, 0);
+		// A sidecar of an older revision names no period: its file is
+		// not one muir's `quux` resumes.
+		qb.revision = 15;
+		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
+		if (strstr(cmd, "--microcycle-ns") || strstr(cmd, "--sync-cycle-ticks") ||
+		    strstr(cmd, "MUIR_QUUX_REVISION"))
+			fail("an older revision's resume line names a timing or a revision", 1, 0);
+		qb.revision = 16;
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.running != 0)
 			fail("a halted machine's sidecar read back as running", (unsigned)rd.running, 0);
@@ -1620,7 +1517,7 @@ int main(int argc, char **argv)
 			bind_init(&xb);
 			xb.quux = 1;
 			xb.boards = 512;
-			xb.revision = 15;
+			xb.revision = 16;
 			xb.sync_k = 38;
 			xb.u[0].present = 1;
 			snprintf(xb.u[0].path, sizeof xb.u[0].path, "./disk-pack-0.img");
@@ -1669,30 +1566,6 @@ int main(int argc, char **argv)
 		// failure here prints one line under one prefix, which is what the
 		// Makefile's memory mutants are judged by.
 		memory_words_check(side);
-
-		// **THE REVISIONS A CHECKPOINT IS WRITTEN OF**: 13 to 15, each
-		// packed, revision 12 being retired; the board's program refuses any
-		// other by the register table's entry 21.  One line a failure, which
-		// mutant 48 is judged by.
-		{
-			const struct { unsigned rev; int known, packed; } t[] = {
-				{0, 0, 0}, {11, 0, 0}, {12, 0, 0}, {13, 1, 1}, {14, 1, 1}, {15, 1, 1},
-				{16, 1, 1}, {17, 0, 0}};
-			for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
-				if (bind_revision_known(t[i].rev) != t[i].known) {
-					fprintf(stderr, "checkpoint: FAIL: revision %u is %s, and it is %s\n", t[i].rev,
-					       t[i].known ? "refused" : "taken",
-					       t[i].known ? "one this program writes" : "none");
-					++bad;
-				}
-				if (bind_revision_packed(t[i].rev) != t[i].packed) {
-					fprintf(stderr, "checkpoint: FAIL: revision %u's main memory is %s, and it is %s\n", t[i].rev,
-					       t[i].packed ? "not packed" : "packed",
-					       t[i].packed ? "packed" : "not");
-					++bad;
-				}
-			}
-		}
 
 		// **THE HALT `--halt` MADE**, which `--already-halted` takes as the
 		// machine running before it only at the count it was made at.
@@ -1988,7 +1861,6 @@ int main(int argc, char **argv)
 				(uint8_t)(1u + (unsigned)poison(14, c * 4u + k, 8) % 250u);
 
 	struct chk body;
-	size_t machine_body_len = 0;
 	chk_init(&body);
 	chk_rtl_body(&body, &img, &decl);
 	if (body.broken) {
@@ -2094,7 +1966,6 @@ int main(int argc, char **argv)
 		// assertion --- which belongs to the real thing --- stands down.
 		if (!chk_rtl_mutation() && body.len != machine_part + rtl_part)
 			fail("the body's length", body.len, machine_part + rtl_part);
-		machine_body_len = machine_part + rtl_part;
 	}
 
 	// ---- the run state before the halt ----------------------------------
@@ -2125,146 +1996,99 @@ int main(int argc, char **argv)
 		printf("checkpoint: wrote %s --- muir opening it is the proof, and "
 		       "`make build/checkpoint.pass` is where that happens\n", out);
 	chk_free(&body);
-	const size_t cadr_body_len = machine_body_len;
 
 	// ---- QUUX -------------------------------------------------------------
 	//
-	// The machine `golden/src/quux_checkpoint.rs` builds, through a modeled
-	// window that says it is QUUX, revision 13; the file goes where the
-	// fourth argument says and `build/checkpoint.quux.pass` compares it with
-	// muir's own.
+	// The machine `fill_quux` models, through QUUX's window, written as the
+	// board writes it; the file goes where the fourth argument says, and
+	// `build/checkpoint.quux.pass` has muir's `quux` resume it, save it back
+	// byte for byte, and holds it to the digest recorded there.
 	{
 		unsigned k = 99, l = 99;
 		if (ro_machine_is_quux(&r, &k, &l) != 0)
 			fail("the CADR's window was taken for QUUX's", 1, 0);
 
-		struct model *q = malloc(sizeof *q);
+		struct qmodel *q = malloc(sizeof *q);
 		if (!q) {
 			fprintf(stderr, "out of memory\n");
 			return 1;
 		}
-		fill_quux13(q);
+		fill_quux(q);
 		struct readout qr;
 		memset(&qr, 0, sizeof qr);
-		qr.read = model_read;
-		qr.write = model_write;
+		qr.read = qmodel_read;
+		qr.write = qmodel_write;
 		qr.ctx = q;
-		if (ro_machine_is_quux(&qr, &k, &l) != 1 || k != 4 || l != 0)
-			fail("QUUX's window, K and L", ((uint64_t)k << 8) | l, 4u << 8);
-
-		// **THE CLOCK MOVES WHILE IT IS READ.**  The same machine read with
-		// its clock advancing 37 ticks at every access, some tens of
-		// milliseconds over the whole read, so both timers rise meanwhile:
-		// each timer's word must still be placed at the tick it was taken
-		// at, which is what makes its next rise the rise the schedule has
-		// after that tick.
+		if (ro_machine_is_quux(&qr, &k, &l) != 1 || k != Q_PERIOD || l != 0)
+			fail("QUUX's window, its period", ((uint64_t)k << 8) | l, Q_PERIOD << 8);
+		if (ro_quux_revision(&qr) != 16)
+			fail("QUUX's window read as another revision", (unsigned)ro_quux_revision(&qr), 16);
+		// **AN OLDER QUUX IS NOT READ**: its image is refused, and the
+		// program refuses its bitstream by the revision MACHINE-ID names.
 		{
-			struct cadr_image mv;
-			fill_quux13(q);
-			q->step = 37;
-			if (img_alloc_revision(&mv, 1, 1, 13) != 0 || ro_read_machine(&qr, &mv) != 0) {
-				fail("QUUX with a moving clock was refused", 1, 0);
-			} else {
-				if (mv.qx.m <= Q_M0)
-					fail("the checkpoint's instant did not move", mv.qx.m, Q_M0);
-				for (unsigned t = 0; t < IMG_QUUX_TIMERS; ++t) {
-					const struct quux_timer *b = &mv.qx.timer[t];
-					const struct qtimer *s = &q->timer[t];
-					const uint64_t got = b->m + b->pre + (uint64_t)(b->us - 1u) * 100u;
-					const int up = b->m > s->first_rise;
-					const uint64_t want = up ? s->first_rise +
-						((b->m - s->first_rise) / s->period + 1u) * s->period
-						: s->first_rise;
-					// A one-shot that has risen has stopped: the flag up,
-					// nothing counting.
-					if (s->one_shot && up) {
-						if (!b->sticky || b->live)
-							fail("a risen one-shot, read on a moving clock", b->live, 0);
-					} else if (got != want || b->sticky != up) {
-						fail("a timer's next rise, read on a moving clock", got, want);
-					}
-					if (b->one_shot != s->one_shot || b->ie != s->ie || b->period_us != s->period_us)
-						fail("a timer's mode, enable or period, read on a moving clock",
-						     b->period_us, s->period_us);
-					if (b->m < mv.qx.m || b->m - mv.qx.m > RO_QUUX_SPAN)
-						fail("a timer's word placed outside the read", b->m, mv.qx.m);
+			struct cadr_image old;
+			for (int rv = 13; rv <= 15; ++rv)
+				if (img_alloc_video(&old, Q_UNITS, 1, rv, Q_VIDEO_W, Q_VIDEO_H) == 0) {
+					fail("an image of QUUX at an older revision, taken", (unsigned)rv, 0);
+					img_free(&old);
 				}
-			}
-			img_free(&mv);
-			// And a reader too slow to name one tick by seven bits of
-			// microseconds is refused rather than believed.
-			fill_quux13(q);
-			q->step = 5000;
-			if (img_alloc_revision(&mv, 1, 1, 13) == 0 && ro_read_machine(&qr, &mv) == 0)
-				fail("a read of the clocks spread over milliseconds was taken", 1, 0);
-			img_free(&mv);
 		}
-
-		// ---- QUUX revision 13 ------------------------------------------
-		//
-		// The same window at revision 13, entry 21 saying so; the file goes
-		// where the fifth argument says and `build/checkpoint.quux.pass`
-		// holds it to muir's own and has muir load it and save it again.
-		fill_quux13(q);
-		if (ro_quux_revision(&qr) != 13)
-			fail("revision 13's window read as another revision", ro_quux_revision(&qr), 13);
-		struct cadr_image q13;
-		if (img_alloc_revision(&q13, 1, 1, 13) != 0) {
+		struct cadr_image qi;
+		if (img_alloc_video(&qi, Q_UNITS, 1, 16, Q_VIDEO_W, Q_VIDEO_H) != 0) {
 			fprintf(stderr, "out of memory\n");
 			return 1;
 		}
-		if (ro_read_machine(&qr, &q13) != 0) {
-			fail("the window would not give revision 13 up", qr.stale, 0);
+		if (ro_read_machine(&qr, &qi) != 0) {
+			fail("the window would not give QUUX up", qr.stale, 0);
 			return 1;
 		}
-		// The transport, at revision 13's sizes and in its 40-bit words.
-		// **Not under a mutant**, three of which are of the transport and
-		// are held by muir's own file instead (`chk_rtl.c`'s mutants 28,
-		// 29): asserting here what the mutant took out would call it
-		// broken, not caught.
-		if (!chk_rtl_mutation() && (q13.amem[IMG_AMEM_WORDS - 1] != q->amem[IMG_AMEM_WORDS - 1] ||
-		    q13.pdl[IMG_QUUX_PDL_WORDS - 1] != q->pdl[IMG_QUUX_PDL_WORDS - 1] ||
-		    q13.q != q->regs[IMG_RG_Q] || q13.qx.m31_w != q->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO]))
-			fail("a revision 13 word", q13.amem[IMG_AMEM_WORDS - 1], q->amem[IMG_AMEM_WORDS - 1]);
-		if (q13.dmem[IMG_DMEM_WORDS_13 - 1] != q->dmem[IMG_DMEM_WORDS_13 - 1] ||
-		    q13.l1_map[IMG_L1_WORDS_13 - 1] != q->l1[IMG_L1_WORDS_13 - 1] ||
-		    q13.l2_map[IMG_L2_WORDS_13 - 1] != q->l2[IMG_L2_WORDS_13 - 1])
-			fail("revision 13's dispatch memory and maps' last entries",
-			     q13.l1_map[IMG_L1_WORDS_13 - 1], q->l1[IMG_L1_WORDS_13 - 1]);
-		if (!chk_rtl_mutation() &&
-		    (q13.qx.fd_cmd_base != Q_FD_CMD_BASE || q13.qx.fd_resp_base != Q_FD_RESP_BASE_13))
-			fail("revision 13's ring bases", q13.qx.fd_resp_base, Q_FD_RESP_BASE_13);
-		if (!img_flag(&q13, IMG_F_OVERFLOW))
-			fail("the overflow flag", 0, 1);
-		// And the transport of what every revision of QUUX has: the clocks,
-		// the input, block-disk, the page and the file device's ring sizes,
-		// indexes and flags.  Not under a mutant, as above.
+		if (q->snaps != 1)
+			fail("the devices' snapshot, taken", (unsigned)q->snaps, 1);
+		// The transport, at QUUX's sizes and in its words.  **Not under a
+		// mutant**, one of which is of the image (`readout.c`'s 39):
+		// asserting here what the mutant took out would call it broken,
+		// not caught.
 		if (!chk_rtl_mutation()) {
-			if (q13.qx.m != Q_M0)
-				fail("muir's clock off the microsecond clock", q13.qx.m, Q_M0);
-			if (q13.qx.head != Q_KEYS_READ || q13.qx.count != 5)
-				fail("the FIFO's head and count", q13.qx.head, Q_KEYS_READ);
-			if (q13.qx.x != Q_MOUSE_X || q13.qx.y != Q_MOUSE_Y || q13.qx.buttons != Q_BUTTONS)
-				fail("the mouse", q13.qx.x, Q_MOUSE_X);
-			if (q13.qx.da != (Q_DISK_DA & 0x0FFFFFFFu) || !q13.qx.bad_command)
-				fail("block-disk", q13.qx.da, Q_DISK_DA & 0x0FFFFFFFu);
-			if (q13.qx.bus_error != 041u || !q13.qx.bow)
-				fail("the page", q13.qx.bus_error, 041u);
-			if (q13.qx.fd_cmd_log2 != Q_FD_CMD_LOG2 || q13.qx.fd_resp_log2 != Q_FD_RESP_LOG2)
-				fail("the file device's rings", q13.qx.fd_cmd_log2, Q_FD_CMD_LOG2);
-			if (q13.qx.fd_cmd_prod != 1 || q13.qx.fd_cmd_cons != 1 || q13.qx.fd_resp_cons != 1)
-				fail("the file device's indexes", q13.qx.fd_cmd_prod, 1);
-			if (!q13.qx.fd_enabled || !q13.qx.fd_ie || q13.qx.fd_refused || !q13.qx.fd_fault ||
-			    q13.qx.fd_busy || q13.qx.fd_handles != 0)
-				fail("the file device's flags", q13.qx.fd_enabled, 1);
+			if (qi.tv_words != Q_VIDEO_H * (Q_VIDEO_W / 32u) || qi.video_width != Q_VIDEO_W ||
+			    qi.video_height != Q_VIDEO_H)
+				fail("the image's video controller at 1920 by 1080, in words", qi.tv_words,
+				     Q_VIDEO_H * (Q_VIDEO_W / 32u));
+			if (qi.amem[IMG_AMEM_WORDS - 1] != q->amem[IMG_AMEM_WORDS - 1] ||
+			    qi.pdl[IMG_QUUX_PDL_WORDS - 1] != q->pdl[IMG_QUUX_PDL_WORDS - 1] ||
+			    qi.imem[IMG_IMEM_WORDS - 1] != q->imem[IMG_IMEM_WORDS - 1] ||
+			    qi.q != q->regs[IMG_RG15_Q] || qi.dmem[IMG_DMEM_WORDS_13 - 1] != q->dmem[IMG_DMEM_WORDS_13 - 1])
+				fail("a QUUX word", qi.amem[IMG_AMEM_WORDS - 1], q->amem[IMG_AMEM_WORDS - 1]);
+			if (qi.qx.head != Q_KEYS_READ || qi.qx.count != Q_KEYS_WAITING ||
+			    qi.qx.fifo[(Q_KEYS_READ + 4u) % IMG_QUUX_FIFO_WORDS] !=
+				    q->fifo[(Q_KEYS_READ + 4u) % IMG_QUUX_FIFO_WORDS])
+				fail("the FIFO's head, count and last word", qi.qx.head, Q_KEYS_READ);
+			if (qi.qx.x != Q_MOUSE_X || qi.qx.y != Q_MOUSE_Y || qi.qx.buttons != Q_BUTTONS)
+				fail("the mouse", qi.qx.x, Q_MOUSE_X);
+			if (!qi.qx.present || qi.qx.walking || !qi.qx.bow)
+				fail("block-disk's pack and the video controller's mode", qi.qx.present, 1);
+			if (qi.qx.fd_cmd_base != Q_FD_CMD_BASE || qi.qx.fd_resp_base != Q_FD_RESP_BASE ||
+			    qi.qx.fd_cmd_log2 != Q_FD_CMD_LOG2 || qi.qx.fd_resp_log2 != Q_FD_RESP_LOG2)
+				fail("the file device's rings", qi.qx.fd_resp_base, Q_FD_RESP_BASE);
+			if (qi.qx.fd_cmd_prod != 1 || qi.qx.fd_cmd_cons != 1 || qi.qx.fd_resp_cons != 1 ||
+			    !qi.qx.fd_enabled || !qi.qx.fd_ie || qi.qx.fd_refused || !qi.qx.fd_fault ||
+			    qi.qx.fd_handles != 0)
+				fail("the file device's indexes and flags", qi.qx.fd_cmd_prod, 1);
+			if (qi.q15.period != Q_PERIOD || qi.q15.ns != Q_NS || qi.q15.committed != Q_CYCLES ||
+			    qi.cycles != Q_CYCLES)
+				fail("the period, the instant and the microcycles", qi.q15.ns, Q_NS);
+			if (qi.q15.eth.address != Q_IP_ADDRESS || qi.q15.eth.netmask != Q_IP_NETMASK ||
+			    qi.q15.eth.gateway != Q_IP_GATEWAY || qi.q15.eth.mac[0] != 0x02u ||
+			    qi.q15.eth.mac[5] != 0x44u)
+				fail("the Ethernet device's host words", qi.q15.eth.address, Q_IP_ADDRESS);
 		}
 		// **THE REFUSAL, muir's**: none for this machine; one for a handle
-		// open, one for a command queued, and one for both.
+		// open, one for a command queued, one across the indexes' wrap, and
+		// one for block-disk's transfer in flight.
 		{
 			char why[160];
-			if (chk_rtl_refusal(&q13, why, sizeof why))
+			if (chk_rtl_refusal(&qi, why, sizeof why))
 				fail("a checkpoint refused with no handle open and nothing queued", 1, 0);
-			struct cadr_image t = q13;
+			struct cadr_image t = qi;
 			t.qx.fd_handles = 1;
 			if (!chk_rtl_refusal(&t, why, sizeof why))
 				fail("a checkpoint taken with a handle open", 0, 1);
@@ -2280,6 +2104,9 @@ int main(int argc, char **argv)
 			t.qx.fd_cmd_cons = 0x1234;
 			if (chk_rtl_refusal(&t, why, sizeof why))
 				fail("a checkpoint refused with the indexes equal", 1, 0);
+			t.qx.walking = 1;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with block-disk's transfer in flight", 0, 1);
 			struct cadr_image c = t;
 			c.quux = 0;
 			c.qx.fd_handles = 3;
@@ -2287,65 +2114,50 @@ int main(int argc, char **argv)
 				fail("a CADR's checkpoint refused on a file device it has not", 1, 0);
 		}
 		// Main memory, packed storage: word i at bytes 5i to 5i + 4.
-		uint8_t *packed = malloc((size_t)IMG_BOARD_WORDS * 5u);
+		const size_t qwords = (size_t)Q_UNITS * IMG_BOARD_WORDS;
+		uint8_t *packed = malloc(qwords * 5u);
 		if (!packed) {
 			fprintf(stderr, "out of memory\n");
 			return 1;
 		}
-		for (size_t i = 0; i < IMG_BOARD_WORDS; ++i) {
+		for (size_t i = 0; i < qwords; ++i) {
 			const uint64_t v = poison(12, (unsigned)i, 40);
 			for (unsigned b = 0; b < 5; ++b)
 				packed[5 * i + b] = (uint8_t)(v >> (8 * b));
 		}
-		q13.main13 = packed;
-		for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
-			q13.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
-		struct chk_declared q13decl = decl;
-		q13decl.present = 1u;
-		q13decl.cylinders[0] = Q_DISK_CYLINDERS;
-		q13decl.heads[0] = Q_DISK_HEADS;
-		q13decl.blocks_per_track[0] = Q_DISK_BPT;
-		struct chk qb13;
-		chk_init(&qb13);
-		chk_rtl_body(&qb13, &q13, &q13decl);
-		// **THE BODY'S LENGTH, AGAIN AN ARITHMETIC EXPRESSION**, built in
-		// two steps.  First the CADR's and what QUUX has that it has not,
-		// at 32-bit words, as the retired revision 12's body was: block-disk's
-		// forty-four bytes after its flag, the video controller's 8,192
-		// words past the CADR display's 32,768, the five key words
-		// waiting, and K and L after the timing model's tag; and in place
-		// of the bus interface's 163 bytes, the memory port's (version
-		// 40): its state, direction,
-		// address and flag, the cache's shape, counts and 512 empty sets,
-		// and the two timings and two instants; and block-disk's disk
-		// (version 41), its size in blocks and a count of none written.
-		// The file device's fields are the CADR's too (version 43), at
-		// the same widths, so they add nothing here.  And version 49's:
-		// the operand address armed, its ARG and delta, and M 31's word
-		// armed; and the prefetch's two options after the memory port's
-		// instants, both absent.
-		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
-			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
-			(4 + 8) + (1 + 1) + 4 + (1 + 1);
-		// Then revision 13's: that, and a byte more for each
-		// word --- A, M, the PDL buffer, Q, VMA, MD, M 31's armed word, L
-		// and the two idle bus words, and main memory, which is the hole
-		// --- the dispatch memory's and both maps' further entries, the
-		// width and the overflow flag after the geometry, and the cache's
-		// 256 sets in place of 512.  muir's own for the same machine is
-		// 794,267 bytes.
-		const size_t quux13_len = quux_len + IMG_AMEM_WORDS + IMG_MMEM_WORDS +
-			(IMG_DMEM_WORDS_13 - IMG_DMEM_WORDS) * 4 + IMG_QUUX_PDL_WORDS + 3 +
-			(IMG_L1_WORDS_13 - IMG_L1_WORDS) * 4 + 2 + 1 +
-			(IMG_L2_WORDS_13 - IMG_QUUX_L2_WORDS) * 4 + IMG_BOARD_WORDS + 3 - 256 * 4;
-		if (!chk_rtl_mutation() && (qb13.len + qb13.hole_len != quux13_len ||
-					    qb13.hole_len != (size_t)IMG_BOARD_WORDS * 5u))
-			fail("revision 13's body's length", qb13.len + qb13.hole_len, quux13_len);
-		// The run state again, on revision 13's body, whose slots are its own.
-		if (run_state_check(&q13, &q13decl, "QUUX revision 13") != 0)
+		qi.main13 = packed;
+		for (size_t i = 0; i < qi.tv_words; ++i)
+			qi.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
+		// The bay's pack is muir's own QUUX disk, 8,192 blocks.
+		struct chk_declared qdecl;
+		memset(&qdecl, 0, sizeof qdecl);
+		qdecl.chaos_address = BIND_CHAOS_DEFAULT;
+		qdecl.present = 1u;
+		qdecl.cylinders[0] = Q_DISK_BLOCKS;
+		qdecl.heads[0] = 1u;
+		qdecl.blocks_per_track[0] = 1u;
+		struct chk qb;
+		chk_init(&qb);
+		chk_rtl_body(&qb, &qi, &qdecl);
+		if (qb.broken) {
+			fail("QUUX's body ran out of memory", 1, 0);
 			return 1;
-		if (quux13_out && chk_write_file(quux13_out, "rtl", 1, &qb13) != 0) {
-			perror(quux13_out);
+		}
+		if (!chk_rtl_mutation() && (qb.word_bytes != 5u || qb.version != CHK_VERSION_16 ||
+					    qb.hole_len != qwords * 5u))
+			fail("QUUX's body's words, version and main memory", qb.version, CHK_VERSION_16);
+		// **THE RUN STATE**, QUUX's: RUN in the console word, set for a
+		// machine found running and as read for one found halted.
+		{
+			struct cadr_image ran = qi, stood = qi;
+			chk_rtl_run_state(&ran, 1);
+			chk_rtl_run_state(&stood, 0);
+			if (!((ran.q15.tail[IMG_TL15_CONSOLE] >> 6) & 1u) ||
+			    stood.q15.tail[IMG_TL15_CONSOLE] != qi.q15.tail[IMG_TL15_CONSOLE])
+				fail("QUUX's run state, the console word's RUN", ran.q15.tail[IMG_TL15_CONSOLE], 1u << 6);
+		}
+		if (quux_out && chk_write_file(quux_out, "rtl", Q_UNITS, &qb) != 0) {
+			perror(quux_out);
 			return 1;
 		}
 		// **AND THE HOLE IS READ WHERE IT STANDS**: the file written from
@@ -2354,18 +2166,20 @@ int main(int argc, char **argv)
 		{
 			struct chk flat;
 			chk_init(&flat);
-			flat.word_bytes = qb13.word_bytes;
-			for (size_t i = 0; i < qb13.hole_at; ++i)
-				chk_u8(&flat, qb13.p[i]);
-			for (size_t i = 0; i < qb13.hole_len; ++i)
+			flat.word_bytes = qb.word_bytes;
+			flat.version = qb.version;
+			for (size_t i = 0; i < qb.hole_at; ++i)
+				chk_u8(&flat, qb.p[i]);
+			for (size_t i = 0; i < qb.hole_len; ++i)
 				chk_u8(&flat, packed[i]);
-			for (size_t i = qb13.hole_at; i < qb13.len; ++i)
-				chk_u8(&flat, qb13.p[i]);
+			for (size_t i = qb.hole_at; i < qb.len; ++i)
+				chk_u8(&flat, qb.p[i]);
 			char a[320], b[320];
 			snprintf(a, sizeof a, "%s/hole.chk", work);
 			snprintf(b, sizeof b, "%s/flat.chk", work);
-			if (chk_write_file(a, "rtl", 1, &qb13) != 0 || chk_write_file(b, "rtl", 1, &flat) != 0)
-				fail("the two revision 13 files could not be written", 1, 0);
+			if (chk_write_file(a, "rtl", Q_UNITS, &qb) != 0 ||
+			    chk_write_file(b, "rtl", Q_UNITS, &flat) != 0)
+				fail("the two QUUX files could not be written", 1, 0);
 			else {
 				FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
 				int same = fa && fb;
@@ -2385,121 +2199,21 @@ int main(int argc, char **argv)
 			}
 			chk_free(&flat);
 		}
-		printf("checkpoint: QUUX revision 13, %zu bytes of body and %zu of main memory "
-		       "where it stands, %lu reads over a modeled window%s%s\n", qb13.len,
-		       qb13.hole_len, qr.reads, quux13_out ? ", wrote " : "",
-		       quux13_out ? quux13_out : "");
-		// **AND THE SAME MACHINE WITH THE KRIA KR260'S VIDEO CONTROLLER**,
-		// 1920 by 1080 (contract HD): the image sized by the bitstream's
-		// word 39, its 64,800 words carried and its size written where
-		// muir's `Tv::save` writes it, so that muir resumes the file under
-		// `--video-size 1920x1080` and refuses it under another.  The file
-		// goes where the sixth argument says and `build/checkpoint.quux.pass`
-		// holds it to muir's own for the same machine at that size.
+		// And a size no QUUX has is refused.
 		{
-			struct cadr_image hd;
-			if (img_alloc_video(&hd, 1, 1, 13, 1920u, 1080u) != 0) {
-				fprintf(stderr, "out of memory\n");
-				return 1;
-			}
-			if (ro_read_machine(&qr, &hd) != 0) {
-				fail("the window would not give revision 13 up at 1920 by 1080", qr.stale, 0);
-				return 1;
-			}
-			if (!chk_rtl_mutation() &&
-			    (hd.tv_words != 64800u || hd.video_width != 1920u || hd.video_height != 1080u))
-				fail("the image's video controller at 1920 by 1080, in words", hd.tv_words, 64800);
-			hd.main13 = packed;
-			for (size_t i = 0; i < hd.tv_words; ++i)
-				hd.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
-			struct chk hb;
-			chk_init(&hb);
-			chk_rtl_body(&hb, &hd, &q13decl);
-			// Revision 13's body and the 23,840 further words of the
-			// buffer, four bytes each.
-			if (!chk_rtl_mutation() && hb.len + hb.hole_len != quux13_len + (64800u - 40960u) * 4u)
-				fail("the body's length at 1920 by 1080", hb.len + hb.hole_len,
-				     quux13_len + (64800u - 40960u) * 4u);
-			if (quux13hd_out && chk_write_file(quux13hd_out, "rtl", 1, &hb) != 0) {
-				perror(quux13hd_out);
-				return 1;
-			}
-			// And a size no QUUX has is refused.
 			struct cadr_image no;
-			if (img_alloc_video(&no, 1, 1, 13, 1900u, 1080u) == 0) {
+			if (img_alloc_video(&no, 1, 1, 16, 1900u, 1080u) == 0) {
 				fail("a video controller 1900 wide, taken", 1900, 0);
 				img_free(&no);
 			}
-			printf("checkpoint: and at 1920 by 1080, %zu bytes of body%s%s\n", hb.len,
-			       quux13hd_out ? ", wrote " : "", quux13hd_out ? quux13hd_out : "");
-			chk_free(&hb);
-			img_free(&hd);
 		}
-		// ---- QUUX revision 14 ------------------------------------------
-		//
-		// The same machine at revision 14 (A14.14): no map levels, the
-		// memory system's words and the redirect's copies, the memory
-		// port's write-back's end and LC's `<33:32>`.  The file goes where
-		// the seventh argument says and `build/checkpoint.quux.pass` holds
-		// it to muir's own for the same machine.
-		{
-			fill_quux14(q);
-			if (ro_quux_revision(&qr) != 14)
-				fail("revision 14's window read as another revision", ro_quux_revision(&qr), 14);
-			struct cadr_image q14;
-			if (img_alloc_revision(&q14, 1, 1, 14) != 0) {
-				fprintf(stderr, "out of memory\n");
-				return 1;
-			}
-			if (ro_read_machine(&qr, &q14) != 0) {
-				fail("the window would not give revision 14 up", qr.stale, 0);
-				return 1;
-			}
-			if (!chk_rtl_mutation() &&
-			    (q14.qx.directory != Q_DIRECTORY_14 || !q14.qx.ephemeral ||
-			     q14.qx.pointer_types != Q_TYPES_14 || q14.qx.refused != Q_REFUSED_14 ||
-			     q14.qx.pdl_base != Q_PDL_BASE_14 || q14.qx.pdl_head != Q_PDL_HEAD_14))
-				fail("revision 14's memory system's words", q14.qx.directory, Q_DIRECTORY_14);
-			q14.main13 = packed;
-			for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
-				q14.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
-			struct chk qb14;
-			chk_init(&qb14);
-			chk_rtl_body(&qb14, &q14, &q13decl);
-			// Revision 13's body and: the write-back's end, 8 bytes; the
-			// machine's own, LC's 2, the words' 4 + 1 + 8 + 4 and the
-			// copies' 4 + 2; and the engine's LC byte.
-			const size_t quux14_len = quux13_len + 8u + 25u + 1u;
-			if (!chk_rtl_mutation() && qb14.len + qb14.hole_len != quux14_len)
-				fail("revision 14's body's length", qb14.len + qb14.hole_len, quux14_len);
-			// **LC<33:32> IS THE ENGINE'S LAST BYTE**, which muir's own
-			// file for a fresh engine cannot hold to anything but 0: so
-			// the same machine with its LC at 2^33 is written too, and it
-			// differs from the first in that byte alone.
-			{
-				struct chk hi;
-				chk_init(&hi);
-				q14.lc_hi = 2u;
-				chk_rtl_body(&hi, &q14, &q13decl);
-				q14.lc_hi = 0u;
-				if (hi.len != qb14.len || hi.p[hi.len - 1] != 2u ||
-				    memcmp(hi.p, qb14.p, hi.len - 1u) != 0)
-					fail("revision 14's LC<33:32>, as the engine's last byte",
-					     hi.len ? hi.p[hi.len - 1] : 0u, 2u);
-				chk_free(&hi);
-			}
-			if (quux14_out && chk_write_file(quux14_out, "rtl", 1, &qb14) != 0) {
-				perror(quux14_out);
-				return 1;
-			}
-			printf("checkpoint: QUUX revision 14, %zu bytes of body%s%s\n", qb14.len,
-			       quux14_out ? ", wrote " : "", quux14_out ? quux14_out : "");
-			chk_free(&qb14);
-			img_free(&q14);
-		}
+		printf("checkpoint: QUUX, %zu bytes of body and %zu of main memory where it stands, "
+		       "%lu reads over a modeled window%s%s\n", qb.len, qb.hole_len, qr.reads,
+		       quux_out ? ", wrote " : "", quux_out ? quux_out : "");
+		chk_free(&qb);
+		qi.main13 = NULL;
+		img_free(&qi);
 		free(packed);
-		chk_free(&qb13);
-		img_free(&q13);
 		free(q);
 	}
 	// ---- **AN ADDRESS IS OCTAL** ----------------------------------------

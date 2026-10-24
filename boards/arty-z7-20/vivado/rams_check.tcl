@@ -26,15 +26,12 @@
 # register in its fan-in is the machine's writing port, and that port's
 # address pins must have the second in theirs.  A RAM with no such port, or
 # a rule matching no RAM, fails as well: a check that finds nothing is not a
-# pass.  The block-disk's store has a second writer, the pack side, on the
-# other port, and the write-enable register is what keeps that port out of
-# the question rather than letting either port's address answer for both.
+# pass.
 #
 # **ON THE CADR THERE IS NO SUCH RAM** --- its PDL, control store and block
-# store each write through an address of their own --- so the three QUUX
-# rules must match NO cell, and the CADR's PDL and control store are asked
-# the same question of their own write addresses, which is what shows the
-# query finds RAMs at all on that build.
+# store each write through an address of their own --- so the CADR's PDL and
+# control store are asked the same question of their own write addresses,
+# which is what shows the query finds RAMs at all.
 #
 # **MEASURED through this flow, on the Arty's QUUX build (`DDR=1 HDMI=1`):**
 # the READ_FIRST PDL stops the build on the PDL buffer, 16 of 16 RAMs; the
@@ -144,69 +141,19 @@ proc rams_rule {what cells we wa} {
     return [llength $rams]
 }
 
-# The assertion.  `machine` is `cadr` or `quux`, and `revision` QUUX's.
-#
-# **REVISION 14'S TLB HAS THE SHAPE TOO, ON ITS WRITES**: each port's
-# address is its pending write's index while that write is written and
-# `VMA`'s or `MD`'s next value at the edge, chosen by the pending write's own
-# valid bit (`quux_mmu.sv`).  So in block RAM each writing port must have
-# its pending index, `pa_idx` or `pb_idx`, among its address pins'
-# registers, found by the register only that write's enable reads, `pa_v`
-# or `pb_v`.  UltraRAM (the Kria KR260) has other pins and is not asked;
-# its writes are what the next edge's lookup reads.
-proc assert_rams_write_where_the_rtl_says {machine {revision 13}} {
+# The assertion.
+proc assert_rams_write_where_the_rtl_says {} {
     # {what} {cells} {write-enable register} {write-address register}
-    # Block-disk's write port registers are its walk's, which each revision
-    # has in a generate block of its own, `g_walk12` or `g_walk13`: the
-    # patterns take either.
-    set quux_rules {
-        {QUUX's PDL buffer}        {*processor/g_quux_pdl.pdl_reg*}    {*processor/pdlwrited_reg*}     {*processor/pwidx_reg*}
-        {QUUX's control store}     {*processor/imem_reg*}              {*processor/iwe_q_reg*}         {*processor/iwa_q_reg*}
-        {block-disk's block store} {*g_quux_disk.disk/blk_ram_reg*}    {*g_quux_disk.disk/*chb_we_reg*} {*g_quux_disk.disk/*chb_a_reg*}
-    }
     # The CADR's two RAMs with a register only the write address reads.  Its
     # disk controller's block store has none: one address serves both, made
     # of the channel's state, with no select.  The PDL's write enable is
     # known by the write pulse's edge register: synthesis of the CADR leaves
     # `pdlwrited` out of that cone, measured.
     set cadr_rules {
-        {the CADR's PDL buffer}    {*processor/g_cadr_pdl.pdl_reg*}    {*processor/n_tpwp_q_reg*}      {*processor/pwidx_reg*}
-        {the CADR's control store} {*processor/imem_reg*}              {*processor/n_tpwpiram_q_reg*}  {*processor/pc_reg*}
+        {the CADR's PDL buffer}    {*processor/pdl_reg*}  {*processor/n_tpwp_q_reg*}      {*processor/pwidx_reg*}
+        {the CADR's control store} {*processor/imem_reg*} {*processor/n_tpwpiram_q_reg*}  {*processor/pc_reg*}
     }
-    # QUUX's cells that are named for QUUX alone, which a CADR build must not have.
-    set quux_only {*processor/g_quux_pdl.pdl_reg* *g_quux_disk.disk/blk_ram_reg*}
-    if {$machine eq "quux"} {
-        set n 0
-        if {$revision eq "14"} {
-            # The redirect's write, put into the PDL buffer from its registers
-            # at a later edge (`cadr_microcycle.sv`'s `rw_put`).
-            lappend quux_rules {revision 14's redirect's PDL write} {*processor/g_quux_pdl.pdl_reg*} \
-                {*processor/g_quux_pdl.rw_v_reg*} {*processor/g_quux_pdl.rw_ix_reg*}
-            set tlb_ramb [get_cells -quiet -hier -filter {REF_NAME =~ RAMB* && NAME =~ *g_rev14_mmu.mmu/tlb/*}]
-            if {[llength $tlb_ramb]} {
-                lappend quux_rules {revision 14's TLB, port A's writes} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
-                    {*g_rev14_mmu.mmu/pa_v_reg*} {*g_rev14_mmu.mmu/pa_idx_reg*}
-                lappend quux_rules {revision 14's TLB, port B's writes} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
-                    {*g_rev14_mmu.mmu/pb_v_reg*} {*g_rev14_mmu.mmu/pb_idx_reg*}
-            } else {
-                puts "RAMS:         revision 14's TLB is in no block RAM here, so its writes are not asked"
-            }
-        }
-        foreach {what cells we wa} $quux_rules { rams_rule $what $cells $we $wa; incr n }
-        puts "RAMS: ok      QUUX: all $n RAMs whose read and write share an address"
-        puts "RAMS:         chosen by the write enable were found, and write where the RTL says"
-        return
-    }
-    foreach cells $quux_only {
-        set n [llength [get_cells -quiet -hier -filter "REF_NAME =~ RAMB* && NAME =~ $cells"]]
-        if {$n} {
-            puts "RAMS: FAILED --- $n block RAMs match $cells, which only QUUX has,"
-            puts "RAMS: on a CADR build: the machine built is not the one named."
-            exit 1
-        }
-    }
-    puts "RAMS: the CADR: looked for QUUX's [join $quux_only { and }], and"
-    puts "RAMS: neither is here; no RAM of the CADR shares an address chosen by the"
-    puts "RAMS: write enable, so its own write addresses are asked instead:"
+    puts "RAMS: the CADR: no RAM of the CADR shares an address chosen by the write"
+    puts "RAMS: enable, so its own write addresses are asked:"
     foreach {what cells we wa} $cadr_rules { rams_rule $what $cells $we $wa }
 }

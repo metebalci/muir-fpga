@@ -250,16 +250,14 @@ _Static_assert(SCREEN_MAX_HEIGHT >= SCREEN_HEIGHT && SCREEN_MAX_HEIGHT >= SCREEN
 // below the spare 1 MB up.
 _Static_assert(SCREEN_BASE + SCREEN_MONO_MAX_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
 	       "the video controller's buffer fits below the spare");
-// **ON REVISION 13 THE WINDOW'S BASE IN DDR IS THE SAME.**  The machine
-// reaches its frame buffer at `1760000000` in a 28-bit physical space where
-// revision 12 reached it at `17000000` (contract G2 §4.3), and stores it 4
-// bytes a word, the field alone, as before (G1 §4.2), so this program reads
-// the same bytes at the same place and `--window` keeps its default.  What
-// moved is main memory, which is packed storage directly below the display
+// **ON QUUX THE WINDOW'S BASE IN DDR IS THE SAME.**  The machine stores its
+// frame buffer 4 bytes a word, the field alone, as before (G1 §4.2), so this
+// program reads the same bytes at the same place and `--window` keeps its
+// default.  What moved is main memory, which is packed storage directly below the display
 // (`cadr_board.h`); the window must not be in it.
 _Static_assert((unsigned long long)CADR_BOARD_QUUX13_MAIN_BASE
 		       + 5ull * CADR_BOARD_QUUX13_MAIN_WORDS_MAX <= SCREEN_BASE,
-	       "revision 13's main memory ends at or below the video controller's window");
+	       "QUUX's main memory ends at or below the video controller's window");
 
 // Whether the bit at `x`, `y` is set --- muir's `Tv::pixel`, whose stride is
 // the fitted screen's words a line: 24 on the CADR's board, 40 on the video controller.

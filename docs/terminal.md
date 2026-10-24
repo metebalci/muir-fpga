@@ -219,16 +219,15 @@ On QUUX the fabric hands the keyboard's words to the register page's FIFO
 (words 120 and 121) and not to the I/O board, and its mouse word (122) counts
 the same quadrature lines. The face's handshake reads the FIFO's state in the
 place of the I/O board's `KBD READY`, so this program's input half does not
-change. Revision 15 has no I/O board: its register page counts the mouse's
+change. QUUX has no I/O board: its register page counts the mouse's
 lines itself (`rtl/machine/quux15_input.sv`), and the face's mouse step is
 16 us at the board's period.
 
-**On revision 13 the window's base in DDR is the same.** The machine reaches
-its frame buffer at `1760000000` rather than `17000000`. It still stores it 4
-bytes a word, the field alone, so this program reads the same bytes at the
-same place and `--window` keeps its default. Main memory moved, into packed
-storage below the display, and a static assertion in `screen_geom.h` holds
-the window clear of it.
+**On QUUX the window's base in DDR is the same.** The machine stores its
+frame buffer 4 bytes a word, the field alone, so this program reads the same
+bytes at the same place and `--window` keeps its default. Main memory is
+packed storage below the display, and a static assertion in `screen_geom.h`
+holds the window clear of it.
 
 ## What a key is, and what the machine is told
 

@@ -347,7 +347,7 @@ and no more**: 17.125 MB of a Zynq board's 512 MB, and Linux keeps the rest.
 The other boards have the same layout at their own base: `0xB300_0000` on the
 DE25-Nano and `0x6300_0000` on the Kria KR260.
 
-QUUX revision 13 has its own device trees and loader, and its own region:
+QUUX has its own device trees and loader, and its own region:
 main memory as 32M words of packed storage from `0x1200_0000`, then the display
 and the records, ending where the CADR's region ends. Linux keeps 350.9 MB
 beside it (`docs/linux.md`).

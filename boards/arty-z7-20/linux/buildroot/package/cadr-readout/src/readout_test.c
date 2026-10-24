@@ -42,7 +42,7 @@ struct model {
 	uint32_t spc[IMG_SPC_WORDS];
 	uint32_t dmem[IMG_DMEM_WORDS], l1[IMG_L1_WORDS], l2[IMG_L2_WORDS];
 	uint16_t opcs[IMG_OPCS];
-	// The register table: 21 entries, or revision 15's 23 (`img_rg15`).
+	// The register table: 21 entries, or QUUX's 23 (`img_rg15`).
 	uint64_t regs[IMG_RG15_COUNT];
 	unsigned regs_n;
 	// The transaction audit's nine words, packed as the fabric packs them.
@@ -92,8 +92,8 @@ struct model {
 	// The register table's entry 21, QUUX's signature, when it is set: a
 	// CADR answers `RO_NO_MEMORY` there.
 	uint64_t quux_id;
-	// Word 12 as revision 15's face has it, `<63:32>` whole, when set; the
-	// others carry `<47:32>` there.
+	// Word 12 as QUUX's face has it, `<63:32>` whole, when set; the CADR's
+	// carries `<47:32>` there.
 	int wide_hi;
 };
 
@@ -419,16 +419,18 @@ int main(void)
 
 	// ---- which revision of QUUX ---------------------------------------------
 	//
-	// Entry 21 carries MACHINE-ID's <15:0> on revision 13 and 0 on revision
-	// 12; anything else under QUUX's signature is neither, and the CADR's
-	// `RO_NO_MEMORY` is the CADR.
+	// Entry 21 carries MACHINE-ID's <15:0>, the revision in <11:4> over the
+	// processor type 4, and 0 on revision 12; anything else under QUUX's
+	// signature is neither, and the CADR's `RO_NO_MEMORY` is the CADR.  An
+	// older fabric's revision is read as the identity line reads it, so that
+	// it is refused by its name.
 	{
 		const uint64_t sig = ((uint64_t)IMG_QUUX_MARK << 32) | (4ull << 24) | (1ull << 16);
 		const struct { uint64_t id; int rev; } cases[] = {
-			{ 0, 0 }, { sig, 12 }, { sig | IMG_QUUX_ID_13, 13 }, { sig | IMG_QUUX_ID_14, 14 },
-			{ sig | IMG_QUUX_ID_15, 15 }, { sig | IMG_QUUX_ID_16, 16 },
-			{ sig | 0x00C4u, -1 }, { sig | 0x00D5u, -1 }, { sig | 0x00E5u, -1 }, { sig | 0x00F5u, -1 },
-			{ sig | 0x0105u, -1 }, { sig | 0x0114u, -1 },
+			{ 0, 0 }, { sig, 12 }, { sig | 0x00D4u, 13 }, { sig | 0x00E4u, 14 },
+			{ sig | 0x00F4u, 15 }, { sig | IMG_QUUX_ID_16, 16 }, { sig | 0x0114u, 17 },
+			{ sig | 0x00D5u, -1 }, { sig | 0x00E5u, -1 }, { sig | 0x00F5u, -1 },
+			{ sig | 0x0105u, -1 }, { sig | 0x0100u, -1 },
 		};
 		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
 			m->quux_id = cases[i].id;
@@ -440,73 +442,28 @@ int main(void)
 		m->quux_id = 0;
 	}
 
-	// ---- revision 13's words, 40 bits of the window's 48 ---------------------
+	// ---- the machines this program reads: the CADR and QUUX -----------------
 	//
-	// The same window read as revision 13's machine: A, M and the PDL buffer
-	// whole at 40 bits and nothing above, the dispatch memory and both map
-	// levels at revision 13's depths, and the registers that are words.
+	// QUUX is revision 16 and nothing older: an image of QUUX at any other
+	// revision is refused, and its arrays are QUUX's sizes at 40-bit words.
 	{
-		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
-			m->amem[i] = poison(IMG_SEL_AMEM, i, 48);
 		struct cadr_image w;
-		if (img_alloc_revision(&w, 1, 1, 13) != 0) {
-			fprintf(stderr, "out of memory\n");
-			return 1;
+		for (int rv = 11; rv <= 17; ++rv) {
+			const int made = img_alloc_revision(&w, 16, 1, rv) == 0;
+			if (made != (rv == 16))
+				fail("an image of QUUX at revision", (unsigned long long)rv, 16);
+			if (!made)
+				continue;
+			if (!w.quux || !w.rev15 || !w.rev16 || w.dmem_words != 4096 || w.pdl_words != 16384 ||
+			    w.word_bits != 40 || w.main)
+				fail("QUUX's arrays", w.dmem_words, 4096);
+			img_free(&w);
 		}
-		if (w.dmem_words != 4096 || w.l1_words != 8192 || w.l2_words != 4096 ||
-		    w.word_bits != 40 || w.main)
-			fail("revision 13's arrays", w.dmem_words, 4096);
-		// The model is the CADR's arrays, and what is past them reads 0.
-		// Through the machine's own reader, whose QUUX half needs the
-		// clocks this model has not: the words, and not QUUX's own.
-		w.quux = 0;
-		if (ro_read_machine(&r, &w) != 0)
-			fail("revision 13's window would not give its words up", r.stale, 0);
-		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
-			if (w.amem[i] != poison(IMG_SEL_AMEM, i, 40)) {
-				fail("an A memory word at 40 bits", w.amem[i],
-				     poison(IMG_SEL_AMEM, i, 40));
-				break;
-			}
-		if (w.q != (m->regs[IMG_RG_Q] & 0xFFFFFFFFFFull) ||
-		    w.md_held != (m->regs[IMG_RG_MDHELD] & 0xFFFFFFFFFFull))
-			fail("Q at 40 bits", w.q, m->regs[IMG_RG_Q] & 0xFFFFFFFFFFull);
-		if (w.dmem[IMG_DMEM_WORDS - 1] != m->dmem[IMG_DMEM_WORDS - 1] ||
-		    w.dmem[IMG_DMEM_WORDS] != 0 || w.l1_map[IMG_L1_WORDS] != 0)
-			fail("the dispatch memory past 2,048", w.dmem[IMG_DMEM_WORDS], 0);
-		img_free(&w);
-		// Revision 14: revision 13's arrays and words, and no map levels,
-		// which are left zero and never asked for (A14.14).
-		if (img_alloc_revision(&w, 1, 1, 14) != 0) {
-			fprintf(stderr, "out of memory\n");
-			return 1;
-		}
-		if (!w.rev13 || !w.rev14 || w.dmem_words != 4096 || w.l1_words != 8192 ||
-		    w.l2_words != 4096 || w.word_bits != 40 || w.main)
-			fail("revision 14's arrays", w.dmem_words, 4096);
-		w.quux = 0;
-		const unsigned long before = r.reads;
-		if (ro_read_machine(&r, &w) != 0)
-			fail("revision 14's window would not give its words up", r.stale, 0);
-		if (w.amem[IMG_AMEM_WORDS - 1] != poison(IMG_SEL_AMEM, IMG_AMEM_WORDS - 1, 40))
-			fail("revision 14's A memory at 40 bits", w.amem[IMG_AMEM_WORDS - 1],
-			     poison(IMG_SEL_AMEM, IMG_AMEM_WORDS - 1, 40));
-		unsigned nonzero = 0;
-		for (unsigned i = 0; i < w.l1_words; ++i)
-			nonzero += w.l1_map[i] != 0;
-		for (unsigned i = 0; i < w.l2_words; ++i)
-			nonzero += w.l2_map[i] != 0;
-		if (nonzero != 0 || m->l1[0] == 0)
-			fail("revision 14's map levels, read", nonzero, 0);
-		// The reads: revision 13's less both map levels' 12,288 words,
-		// each an address written and three words read.
-		if (r.reads - before > 3u * (IMG_PROM_WORDS + IMG_IMEM_WORDS + IMG_AMEM_WORDS +
-					     IMG_MMEM_WORDS + IMG_QUUX_PDL_WORDS + IMG_SPC_WORDS +
-					     IMG_DMEM_WORDS_13 + IMG_OPCS + 21) + 8u)
-			fail("revision 14's reads, which ask for the maps", r.reads - before, 0);
-		img_free(&w);
-		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
-			m->amem[i] = (uint32_t)poison(IMG_SEL_AMEM, i, 32);
+		if (img_alloc_revision(&w, 1, 0, 0) != 0 || w.quux || w.rev15 || w.dmem_words != IMG_DMEM_WORDS ||
+		    w.word_bits != 32 || !w.main)
+			fail("the CADR's arrays", w.dmem_words, IMG_DMEM_WORDS);
+		else
+			img_free(&w);
 	}
 
 	// ---- and the machine is started again ---------------------------------
@@ -593,7 +550,7 @@ int main(void)
 	//
 	// A checkpoint is sized by it, so a count read wrong is a checkpoint
 	// that drops memory or invents it.  The ends, the default and one past
-	// it read as themselves, and revision 13's 512 and 1,024 with them; a
+	// it read as themselves, and QUUX's 512 and 1,024 with them; a
 	// word with no marker --- a fabric older than the word --- and a count
 	// outside 1 to 1,024 read 0, which the caller takes as the old fabric's
 	// fixed 32.
@@ -642,16 +599,16 @@ int main(void)
 		}
 		m->video_word = 0;
 		struct cadr_image hd;
-		if (img_alloc_video(&hd, 1, 1, 13, 1920u, 1080u) != 0 || hd.tv_words != 64800u ||
+		if (img_alloc_video(&hd, 1, 1, 16, 1920u, 1080u) != 0 || hd.tv_words != 64800u ||
 		    hd.video_width != 1920u || hd.video_height != 1080u)
 			fail("an image of QUUX at 1920 by 1080, its buffer's words", hd.tv_words, 64800);
 		else
 			img_free(&hd);
-		if (img_alloc_revision(&hd, 1, 1, 13) != 0 || hd.tv_words != 40960u || hd.video_width != 1280u)
+		if (img_alloc_revision(&hd, 1, 1, 16) != 0 || hd.tv_words != 40960u || hd.video_width != 1280u)
 			fail("an image of QUUX at the old size, its buffer's words", hd.tv_words, 40960);
 		else
 			img_free(&hd);
-		if (img_alloc_video(&hd, 1, 1, 13, 1900u, 1080u) == 0) {
+		if (img_alloc_video(&hd, 1, 1, 16, 1900u, 1080u) == 0) {
 			fail("an image of QUUX 1900 wide, taken", 1900, 0);
 			img_free(&hd);
 		}
@@ -706,18 +663,18 @@ int main(void)
 			fail("no text taken as an amount", 1, 0);
 	}
 
-	// ---- revision 15's window, as --word, --dump and --list take it ----------
+	// ---- QUUX's window, as --word, --dump and --list take it ----------------
 	//
-	// Entry 21 names revision 15 and the window is its own (A15b.13,
+	// Entry 21 names revision 16 and the window is its own (A15b.13,
 	// `quux15_core.sv`'s readout and `quux15_face.sv`): the control store
 	// and the PROM at 64 bits, word 12 carrying `<63:32>` whole; A, M and the
-	// PDL buffer at 40 bits, at QUUX's depths and revision 13's dispatch
-	// memory; no map levels and no transaction audit; a register table of
+	// PDL buffer at 40 bits, at QUUX's depths and a dispatch memory of
+	// 4,096 entries; no map levels and no transaction audit; a register table of
 	// 23 entries (`img_rg15`); and the echo moving only when the word is
 	// there, so a read must wait for it.  Read with the CADR's layout it is
 	// 48-bit words, a map that is not there, and a stale echo refused.
 	{
-		const uint64_t sig15 = ((uint64_t)IMG_QUUX_MARK << 32) | (20ull << 24) | IMG_QUUX_ID_15;
+		const uint64_t sig15 = ((uint64_t)IMG_QUUX_MARK << 32) | (20ull << 24) | IMG_QUUX_ID_16;
 		m->quux_id = sig15;
 		m->wide_hi = 1;
 		m->regs_n = IMG_RG15_COUNT;
@@ -735,14 +692,14 @@ int main(void)
 			if (i != IMG_RG15_ID)
 				m->regs[i] = poison(IMG_SEL_REGS, i, 64);
 		const int rev = ro_quux_revision(&r);
-		if (rev != 15)
-			fail("revision 15's entry 21 read as revision", (unsigned long long)rev, 15);
+		if (rev != 16)
+			fail("QUUX's entry 21 read as revision", (unsigned long long)rev, 16);
 		const int machine = ro_machine_of(rev);
-		if (machine < 0 || machine == ro_machine_of(0) || machine == ro_machine_of(14))
-			fail("revision 15 taken for another machine's layout, number",
+		if (machine < 0 || machine == ro_machine_of(0))
+			fail("QUUX taken for another machine's layout, number",
 			     (unsigned long long)machine, ~0ull);
-		else if (!strstr(ro_machine_names[machine], "revision 15"))
-			fail("revision 15's layout is not named for it, layout", (unsigned long long)machine,
+		else if (strcmp(ro_machine_names[machine], "QUUX") != 0)
+			fail("QUUX's layout is not named for it, layout", (unsigned long long)machine,
 			     ~0ull);
 		const struct { const char *name; unsigned depth, bits, addr; uint64_t want; } m15[] = {
 			{ "imem", IMG_IMEM_WORDS, 64, IMG_IMEM_WORDS - 1u,
@@ -769,48 +726,46 @@ int main(void)
 				continue;
 			}
 			if (mem->depth[machine] != m15[i].depth || mem->bits[machine] != m15[i].bits) {
-				fprintf(stderr, "%s on revision 15 is %u x %u, wanting %u x %u\n", m15[i].name,
+				fprintf(stderr, "%s on QUUX is %u x %u, wanting %u x %u\n", m15[i].name,
 					mem->depth[machine], mem->bits[machine], m15[i].depth, m15[i].bits);
-				fail("revision 15's depth and width", mem->depth[machine], m15[i].depth);
+				fail("QUUX's depth and width", mem->depth[machine], m15[i].depth);
 			}
 			if (!m15[i].depth)
 				continue;
-			// The echo stale for a few reads, as revision 15's face has
+			// The echo stale for a few reads, as QUUX's face has
 			// it before the word is there: the read waits, and does not
 			// refuse a word that is coming.
 			m->stale_for = 3;
 			uint64_t w = 0;
 			if (ro_mem_word(&r, machine, mem, m15[i].addr, &w) != 0) {
 				fprintf(stderr, "%s[%u]: ", m15[i].name, m15[i].addr);
-				fail("revision 15's word was refused while its echo moved", 1, 0);
+				fail("QUUX's word was refused while its echo moved", 1, 0);
 			} else if (w != m15[i].want) {
 				fprintf(stderr, "%s[%u]: ", m15[i].name, m15[i].addr);
-				fail("revision 15's word", w, m15[i].want);
+				fail("QUUX's word", w, m15[i].want);
 			}
 			m->stale_for = 0;
 			++words;
 		}
-		// The register table's names: revision 15's own, and the CADR's
-		// order on every other machine.
+		// The register table's names: QUUX's own, and the CADR's order on
+		// the CADR.
 		if (machine >= 0) {
 			const char *const *n15 = ro_reg_names(machine);
 			if (strcmp(n15[IMG_RG15_Q], "Q") || strcmp(n15[IMG_RG15_FLAGS], "FLAGS") ||
 			    strcmp(n15[IMG_RG15_ID], "ID") || strcmp(n15[IMG_RG15_COMMITTED], "COMMITTED"))
-				fail("revision 15's register table named as another's", 1, 0);
+				fail("QUUX's register table named as another's", 1, 0);
 		}
-		for (int rv = 0; rv <= 14; rv += rv ? 1 : 13) {
-			const int mc = ro_machine_of(rv);
+		{
+			const int mc = ro_machine_of(0);
 			if (mc < 0 || strcmp(ro_reg_names(mc)[IMG_RG_PC], "PC") ||
 			    strcmp(ro_reg_names(mc)[IMG_RG_FLAGS], "FLAGS"))
-				fail("the CADR's register table names, on revision", (unsigned long long)rv, 0);
+				fail("the CADR's register table names", (unsigned long long)mc, 0);
 		}
-		// And a revision with no layout is none, never another's.
-		// Revision 12, retired, among them.
-		const int none[] = { -1, 1, 11, 12, 17, 255 };
-		// Revision 16's window is revision 15's.
+		// And a revision with no layout is none, never another's: the
+		// older revisions, 12 to 15, among them.
+		const int none[] = { -1, 1, 11, 12, 13, 14, 15, 17, 255 };
 		if (ro_machine_of(16) != RO_M_QUUX15)
-			fail("revision 16's layout, which is revision 15's, is", (unsigned long long)ro_machine_of(16),
-			     RO_M_QUUX15);
+			fail("QUUX's layout is", (unsigned long long)ro_machine_of(16), RO_M_QUUX15);
 		for (unsigned i = 0; i < sizeof none / sizeof none[0]; ++i)
 			if (ro_machine_of(none[i]) != -1)
 				fail("a layout for a revision that has none, revision",

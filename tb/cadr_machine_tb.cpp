@@ -565,11 +565,6 @@ int main(int argc, char **argv) {
   dut->chaos_address = 0177001;
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
-  // The host's side of revision 9, idle: nothing written, STATE read.
-  dut->host_we = 0;
-  dut->host_widx = 0;
-  dut->host_wdata = 0;
-  dut->host_ridx = 2;
   // Block-disk's unit 0: a pack when the trace has one.
   dut->drive_present = have_disk ? 1 : 0;
   dut->store_we = 0;
@@ -605,9 +600,6 @@ int main(int argc, char **argv) {
     const auto kit = keys.find(static_cast<uint64_t>(row));
     if (kit != keys.end())
       keys_due.insert(keys_due.end(), kit->second.begin(), kit->second.end());
-    // The host sets the clock before this microcycle, as muir's did.
-    const auto rit = rtc_sets.find(static_cast<uint64_t>(row));
-    if (rit != rtc_sets.end()) host_ops.emplace_back(0u, static_cast<uint32_t>(rit->second));
     // **`sintr` WAS DRIVEN HERE AND THE LINE IS GONE.**  -XBUS.INTR is the
     // machine's own now: `cadr_disk_controller.sv` puts the disk's request on
     // it, `cadr_tv.sv` the display's vertical interrupt, and `cadr_machine.sv`
@@ -864,99 +856,14 @@ int main(int argc, char **argv) {
   size_t txdone_next = 0;
   for (long t = 0; t < kMaxTicks && k < total_rows; ++t) {
     if (t == 4) dut->rst = 0;
-    // **THE HOST'S SIDE, AS LINUX DRIVES IT.**  The word read is the index
-    // asked a tick ago; STATE and the command producer shown are read in
-    // turn.  The clock's start is written once the reset is let go, and a
-    // command's completion is played so that its index stands from muir's
-    // due time: the claim, the handles open, the completion and the claim
-    // let go, the completion written at the due time's own tick, and the
-    // words muir's device wrote put in main memory with the claim.
     {
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
-      const uint32_t rd = dut->host_rdata;
-      if (t > 5) {
-        if (dut->host_ridx == 12) {
-          // MEM_WORDS, once: the memory boards' count times 64K on QUUX,
-          // which the face hands the server for its bounds; nothing on the
-          // CADR, whose host side reads 0.
-          const uint32_t want = quux_machine ? (static_cast<uint32_t>(dut->boards) << 16) : 0u;
-          if (rd != want) {
-            std::fprintf(stderr, "FAIL: the host's MEM_WORDS read %08x, want %08x\n", rd, want);
-            ++bad;
-          }
-          ++mem_words_checked;
-        } else if (dut->host_ridx == 2) {
-          host_state = rd;
-          if (rd & 0x20u) ++fd_refused_seen;
-          if (rd & 0x04u) ++fd_busy_seen;
-        } else {
-          if (rd != host_shown) {
-            // **A PRODUCER SHOWN PAST A COMMAND MUST FIND ITS ENTRY IN MAIN
-            // MEMORY**, every word the device will read of it, as muir's
-            // device found it: the processor's writes before its write of
-            // 164 have drained.  Main memory here is this program's own,
-            // written only when the fabric's port writes it.
-            // Passed: the new value is past the index and the old was not,
-            // the indexes starting again at 0 after a disable.
-            const auto past = [](uint32_t v, uint64_t i) {
-              const uint16_t d = static_cast<uint16_t>(v - i);
-              return d >= 1 && d <= 256;
-            };
-            while (take_next < fd_takes.size() && past(rd, fd_takes[take_next].index) &&
-                   !past(host_shown, fd_takes[take_next].index)) {
-              for (const auto &w : fd_takes[take_next].entry) {
-                ++entry_words_checked;
-                const auto it = q_mem.find(w.first);
-                const uint64_t have = rev13 ? q13_word(w.first) : it == q_mem.end() ? 0u : it->second;
-                if (have != w.second) {
-                  std::fprintf(stderr, "FAIL: the host was shown command %" PRIu64 " with word %o of its "
-                               "entry %08" PRIx64 " in main memory, not the %08" PRIx64 " the processor wrote\n",
-                               fd_takes[take_next].index, w.first, have, w.second);
-                  ++bad;
-                }
-              }
-              ++take_next;
-            }
-          }
-          host_shown = rd;
-        }
-      }
-      if (t == 4 && have_rtc) host_ops.emplace_back(0u, static_cast<uint32_t>(rtc_start));
       // muir's due time is to the nanosecond and the machine reads at its
       // own instants, which are on the grid: the first read that sees the
       // completion is the first at or after it.
       const auto on_grid = [](uint64_t ns) {
         return static_cast<long>((ns + kTickNs - 1) / kTickNs * kTickNs);
       };
-      // The completion is written a tick before the due time's: the
-      // interrupt is up from the next tick and a register read shows it from
-      // the one after, which is the due time's (`quux_file_device.sv`).
-      if (fd_next < fd_done.size() && last_edge >= 0 &&
-          ns_now + 3 * kTickNs >= on_grid(fd_done[fd_next].due)) {
-        const FdDone &d = fd_done[fd_next++];
-        if (!host_ops.empty()) {
-          std::fprintf(stderr, "FAIL: the host is still busy when a completion is due at %" PRIu64 " ns\n",
-                       d.due);
-          ++bad;
-        }
-        if (ns_now + 3 * kTickNs != on_grid(d.due)) {
-          std::fprintf(stderr, "FAIL: a completion due at %" PRIu64 " ns is off the grid at %ld\n",
-                       d.due, ns_now + 3 * kTickNs);
-          ++bad;
-        }
-        const uint32_t epoch = host_state & 0xFFFF0000u;
-        host_ops.emplace_back(3u, epoch | 1u);
-        host_ops.emplace_back(11u, epoch | static_cast<uint32_t>(d.handles));
-        host_ops.emplace_back(9u, epoch | static_cast<uint32_t>(d.prod & 0xFFFFu));
-        host_ops.emplace_back(3u, 0u);
-        for (const auto &w : d.words) {
-          if (rev13)
-            q13_put(w.first, w.second);
-          else
-            q_mem[w.first] = static_cast<uint32_t>(w.second);
-        }
-        ++fd_played;
-      }
       // The far end's Transmit Done: a pulse on the edge a tick before
       // muir's instant's, so that the CSR shows it from that instant's tick
       // as muir's read at or after the instant does (`cadr_io_board.sv`
@@ -974,15 +881,6 @@ int main(int argc, char **argv) {
         dut->chaos_tx_done = 1;
         dut->chaos_tx_abort = d.second;
       }
-      if (!host_ops.empty() && t >= 4) {
-        dut->host_we = 1;
-        dut->host_widx = host_ops.front().first;
-        dut->host_wdata = host_ops.front().second;
-        host_ops.pop_front();
-      } else {
-        dut->host_we = 0;
-      }
-      dut->host_ridx = (t == 6) ? 12u : (t & 1) ? 8u : 2u;
     }
     // The pack side.
     if (have_disk) {
@@ -1083,168 +981,6 @@ int main(int argc, char **argv) {
     // used for; taking it from the bridge's own `mem_write` times the answer
     // and never chooses the data.
     dut->mem_done = 0;
-    // QUUX's main memory, answering the port (see `quux_machine`).
-    const bool q_in_fb = dut->mem_addr >= kFbBase && dut->mem_addr < kFbBase + 4u * kFbWords;
-    const bool q_main_words =
-        rev13 ? q13_main(dut->mem_addr)
-              : (dut->mem_addr >= kMainBase && dut->mem_addr < kMainBase + (4u << 22));
-    const bool q_main = quux_machine && dut->mem_req && (q_main_words || q_in_fb);
-    if (q_main) {
-      // A read in one to five ticks.  **A WRITE IN FOURTEEN TO EIGHTEEN**,
-      // inside the nominal 290 ns the port holds a write to whatever the
-      // memory does, so no instant the processor sees moves; but the write
-      // buffer then really is still draining when a program writes a device
-      // register a few microcycles after its last store, which is what the
-      // file device's host must not be shown a command before.
-      if (q_due < 0)
-      {
-        q_due = lat_hi > 0 ? t + lat_lo + static_cast<long>(q_rng() % static_cast<uint32_t>(lat_hi - lat_lo + 1))
-                           : t + ((dut->mem_write && !dut->mem_line) ? 14 : 1) + static_cast<long>(q_rng() % 5);
-        lat_longest = std::max(lat_longest, q_due - t);
-        if (lat_hi > 0) {
-          ++lat_draws;
-          lat_drawn.insert(q_due - t);
-        }
-      }
-      if (t >= q_due) {
-        // The word's physical address, main memory's or the frame buffer's.
-        const uint32_t w = q_in_fb ? kFb + ((dut->mem_addr - kFbBase) >> 2)
-                                   : (dut->mem_addr - kMainBase) >> 2;
-        if (!q_answered && rev13) {
-          // Revision 13: bytes, packed storage and the window's four a word.
-          q_answered = true;
-          const uint32_t a = dut->mem_addr;
-          const uint32_t ph = dut->phys;
-          constexpr int kRlineWords = static_cast<int>(sizeof(dut->mem_rline) / 4);
-          if (dut->mem_line && dut->mem_beats <= 2 && !dut->mem_write && dma_at(a) && (a & 7u) == 0) {
-            // The channel's word: the beats its five bytes are in.
-            ++ch13_reads;
-            if (dut->mem_beats == 2) ++ch13_two_beats;
-            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
-            for (int b = 0; b < 8 * dut->mem_beats; ++b)
-              dut->mem_rline[b / 4] |= static_cast<uint32_t>(q13_get(a + b)) << (8 * (b % 4));
-          } else if (dut->mem_write && dma_at(a) && dut->mem_wide && (a - kMain13Base) % 5u == 0 &&
-                     (q_owed.empty() || kMain13Base + 5u * q_owed.front().first != a)) {
-            // The channel's word, five bytes: no cycle of the processor's
-            // owes it.
-            ++ch13_writes;
-            for (int b = 0; b < 5; ++b)
-              q13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
-          } else if (dut->mem_line) {
-            ++q_fills;
-            if (q_in_fb) ++q_fb_fills;
-            const uint32_t kWin = rev14 ? (1u << 28) : kWindow13;
-            const uint32_t want = q_in_fb ? kFbBase + 32u * ((ph - kWin) >> 3)
-                                          : kMain13Base + 40u * (ph >> 3);
-            const int beats = q_in_fb ? 4 : 5;
-            // Revision 14: a fill no cycle of the processor's is at is the
-            // walk's or a write-back's re-read, a line of main memory.
-            const bool side_fill = rev14 && !q_in_fb && !dut->mem_write && dut->mem_beats == 5 &&
-                                   (a - kMain13Base) % 40u == 0 &&
-                                   (a != want || !bus_outstanding || dut->wrcyc);
-            if (side_fill) {
-              ++side_fills;
-            } else if (lat_hi > 0 && !bus_outstanding && !dut->mem_write && a == want && dut->mem_beats == beats &&
-                       !dut->wrcyc) {
-              // Under `LAT_HI`: the line of the cycle the processor is still
-              // waiting on (its own `phys`), answered after muir's instant
-              // for the acknowledgment, which is where this testbench ends
-              // `bus_outstanding`.  Its words are this memory's, which every
-              // checked write built, and reach MD, compared every microcycle.
-              ++lat_late_fills;
-            } else if (dut->mem_write || a != want || dut->mem_beats != beats || !bus_outstanding || dut->wrcyc) {
-              std::fprintf(stderr, "microcycle %zu: a line fill of %d beats at %08x for word %o%s, want %d at "
-                           "%08x\n", k, dut->mem_beats, a, ph, dut->wrcyc ? ", a write" : "", beats, want);
-              ++bad;
-            }
-            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
-            for (int b = 0; b < 8 * beats && b / 4 < kRlineWords; ++b)
-              dut->mem_rline[b / 4] |= static_cast<uint32_t>(q13_get(a + b)) << (8 * (b % 4));
-          } else if (dut->mem_write) {
-            ++q_writes;
-            if (q_in_fb) ++q_fb_writes;
-            const int bytes = q_in_fb ? 4 : 5;
-            const uint32_t kWin = rev14 ? (1u << 28) : kWindow13;
-            const auto owed_at = [&](uint32_t p) {
-              return p >= kWin ? kFbBase + 4u * (p - kWin) : kMain13Base + 5u * p;
-            };
-            // Revision 14: a write of main memory no cycle owes, five bytes
-            // of a word, is a write-back's table word.
-            const bool side_write = rev14 && !q_in_fb && dut->mem_wide && (a - kMain13Base) % 5u == 0 &&
-                                    (q_owed.empty() || owed_at(q_owed.front().first) != a);
-            if (side_write) {
-              ++side_writes;
-            } else if (q_owed.empty()) {
-              std::fprintf(stderr, "microcycle %zu: DDR written at %08x, which no cycle wrote\n", k, a);
-              ++bad;
-            } else {
-              const auto want = q_owed.front();
-              q_owed.erase(q_owed.begin());
-              const bool fb = want.first >= kWin;
-              const uint32_t want_a = owed_at(want.first);
-              const uint64_t want_w = want.second & (fb ? 0xFFFFFFFFull : 0xFFFFFFFFFFull);
-              if (a != want_a || dut->mem_wdata != want_w || dut->mem_wide != (fb ? 0 : 1)) {
-                std::fprintf(stderr, "microcycle %zu: DDR written %" PRIx64 " at %08x, %s, the cycle wrote %"
-                             PRIx64 " at %o, want %08x\n", k, static_cast<uint64_t>(dut->mem_wdata), a,
-                             dut->mem_wide ? "five bytes" : "four", want.second, want.first, want_a);
-                ++bad;
-              }
-            }
-            if (!q_in_fb && (a & 7u) > 3u) ++q13_spanning;
-            for (int b = 0; b < bytes; ++b)
-              q13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
-          } else {
-            std::fprintf(stderr, "microcycle %zu: a single read of main memory at %08x, which revision "
-                         "13's port never makes\n", k, a);
-            ++bad;
-          }
-        }
-        if (!q_answered) {
-          q_answered = true;
-          if (dut->mem_line) {
-            ++q_fills;
-            if (q_in_fb) ++q_fb_fills;
-            if ((w & 3) || dut->mem_write) {
-              std::fprintf(stderr, "microcycle %zu: a line fill at %08x, not a line's address\n", k,
-                           dut->mem_addr);
-              ++bad;
-            } else if (!bus_outstanding || dut->wrcyc || (dut->phys & ~3u) != w) {
-              std::fprintf(stderr, "microcycle %zu: a line fill of word %o where the cycle is at %o%s\n",
-                           k, w, dut->phys, dut->wrcyc ? ", a write" : "");
-              ++bad;
-            }
-            for (int x = 0; x < 4; ++x) {
-              const auto it = q_mem.find((w & ~3u) + x);
-              dut->mem_rline[x] = (it == q_mem.end()) ? 0u : it->second;
-            }
-          } else if (dut->mem_write) {
-            ++q_writes;
-            if (q_in_fb) ++q_fb_writes;
-            if (q_owed.empty()) {
-              std::fprintf(stderr, "microcycle %zu: main memory written at word %o, which no cycle wrote\n",
-                           k, w);
-              ++bad;
-            } else {
-              const auto want = q_owed.front();
-              q_owed.erase(q_owed.begin());
-              if (want.first != w || want.second != dut->mem_wdata) {
-                std::fprintf(stderr, "microcycle %zu: main memory written %08x at word %o, the cycle "
-                             "wrote %08x at %o\n", k, dut->mem_wdata, w, want.second, want.first);
-                ++bad;
-              }
-            }
-            q_mem[w] = dut->mem_wdata;
-          } else {
-            const auto it = q_mem.find(w);
-            dut->mem_rdata = (it == q_mem.end()) ? 0u : it->second;
-          }
-        }
-        dut->mem_done = 1;
-      }
-    } else if (quux_machine && !dut->mem_req) {
-      q_due = -1;
-      q_answered = false;
-    }
     // **WHERE IN DDR THE BRIDGE PUT THE WORD**, once a cycle, against the
     // map transcribed from `rtl/plumbing/cadr_ddr_map.sv` for the Zynq
     // boards, which is the map this model is built with: main memory at
@@ -1253,7 +989,7 @@ int main(int argc, char **argv) {
     // the video controller's 40,960.  Nothing else here looks at the
     // address, so a display window folded onto the wrong words would read
     // back whatever the trace hands it and pass.
-    if (dut->mem_req && !saw_mem_req && !q_main) {
+    if (dut->mem_req && !saw_mem_req) {
       const uint32_t p = dut->phys;
       const uint32_t fb = 017000000u;
       const uint32_t want = (p >= fb && p - fb < 0200000u) ? 0x1C000000u + ((p - fb) << 2)
@@ -1266,7 +1002,7 @@ int main(int argc, char **argv) {
         ++bad;
       }
     }
-    if (dut->mem_req && !q_main) saw_mem_req = true;
+    if (dut->mem_req) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
     if (dut->ub_msyn) saw_ub = true;
     // THE GRANT INSTANT, CHECKED DIRECTLY.  A grant a whole microcycle early
@@ -1290,7 +1026,7 @@ int main(int argc, char **argv) {
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
     if (lat_hi > 0 && !quux_machine) {
       // The CADR's main memory at the boards' latency (see `c_due`).
-      if (dut->mem_req && !q_main && bus_outstanding) {
+      if (dut->mem_req && bus_outstanding) {
         if (c_due < 0) {
           c_due = t + lat_lo + static_cast<long>(q_rng() % static_cast<uint32_t>(lat_hi - lat_lo + 1));
           c_word = static_cast<uint32_t>(rdata_for[k < total_rows ? k : 0]);
@@ -1308,7 +1044,7 @@ int main(int argc, char **argv) {
       } else if (!dut->mem_req) {
         c_due = -1;
       }
-    } else if (dut->mem_req && !q_main && bus_outstanding && t >= answer_tick) {
+    } else if (dut->mem_req && bus_outstanding && t >= answer_tick) {
       dut->mem_done = 1;
     }
     // **THE XBUS DEVICES WERE ANSWERED FROM THE TRACE HERE, AND THAT LINE IS
@@ -1724,10 +1460,6 @@ int main(int argc, char **argv) {
     prev_n_memgrant = dut->n_memgrant_o;
   }
 
-  if (mem_words_checked != 1) {
-    std::fprintf(stderr, "FAIL: the host's MEM_WORDS was read %ld times, not once\n", mem_words_checked);
-    ++bad;
-  }
   if (!chaos_txdone.empty()) {
     std::printf("    the Chaosnet's far end: %zu of %zu Transmit Done rises played at muir's instants\n",
                 txdone_next, chaos_txdone.size());

@@ -24,7 +24,7 @@
 #     before `booti`, and each of the four files is named in the board's own
 #     folder, `kria-kr260/`;
 #   - the fabric falls back to the fault bitstream, on both paths;
-#   - every load address is below QUUX revision 13's region, which is the
+#   - every load address is below QUUX's region, which is the
 #     lower of the two machines' (read out of cadr_board.h's KR260 half), and
 #     clear of the SOM tree's two reserved regions and of the script's own
 #     address; and `fdt_high` and `initrd_high` keep `booti` from moving the
@@ -33,12 +33,11 @@
 #     `env save`, `sf` or `fatwrite` anywhere in the script, the served file
 #     or the card's template.
 #
-# **`qos`: HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISIONS 15 AND 16 AND ON
-# NOTHING ELSE.**  The overlay's /etc/init.d/S78quux15-qos is run under the host's
+# **`qos`: HP0's QoS IS WRITTEN AT BOOT ON QUUX AND ON NOTHING ELSE.**  The overlay's /etc/init.d/S78quux15-qos is run under the host's
 # POSIX shells against a stub `devmem` and a stub `cadr-console`, with
-# cadr-common's real fault.sh and the overlay's real quux15-qos.sh: on
-# revisions 15 and 16 both registers are written 0xF and read back; on the CADR,
-# revision 13, a fabric the console does not know, the fault bitstream and an
+# cadr-common's real fault.sh and the overlay's real quux15-qos.sh: on QUUX
+# both registers are written 0xF and read back; on the CADR, an older QUUX, a
+# fabric the console does not know, the fault bitstream and an
 # image with no console nothing is written.  And the overlay carries both
 # files, executable, the defconfig names the overlay, and the hook runs before
 # every package's init script.
@@ -382,9 +381,8 @@ OVERLAY = "board/kria-kr260/rootfs-overlay"
 QOS_HOOK = "etc/init.d/S78quux15-qos"
 QOS_SCRIPT = "usr/sbin/quux15-qos.sh"
 QOS_REGS = (0xFD380008, 0xFD38001C)
-# The revisions whose machine takes HP0 at 0xF: 15, and 16, its machine with
-# the Ethernet device.
-QOS_REVISIONS = (15, 16)
+# The revision whose machine takes HP0 at 0xF: QUUX's, 16.
+QOS_REVISIONS = (16,)
 # The tally's two EMIO words, which fault.sh reads (cadr_board.h's KR260
 # half), and the fault bitstream's word in them.
 QOS_TALLY = (0xFF0A006C, 0xFF0A0070)
@@ -524,13 +522,13 @@ def qos_run(tree, shell, fabric, console=True, stuck=(), action="start"):
 
 
 def qos(tree):
-    """**HP0's QoS IS WRITTEN AT BOOT ON QUUX REVISIONS 15 AND 16 AND ON
-    NOTHING ELSE** (contract G3 revision 15, A15b.5): the overlay's init
-    script, run against stubs of `devmem` and of the fabric's identity, writes
-    both registers to 0xF when `cadr-console machine quux 16` or `machine quux
-    15` says the fabric is revision 16 or 15, and writes nothing at all on the CADR, on revision 13, on a
-    fabric the console does not know, on the fault bitstream, or with no
-    console program; and the image carries it, ahead of every daemon."""
+    """**HP0's QoS IS WRITTEN AT BOOT ON QUUX AND ON NOTHING ELSE** (contract
+    G3 revision 15, A15b.5): the overlay's init script, run against stubs of
+    `devmem` and of the fabric's identity, writes both registers to 0xF when
+    `cadr-console machine quux 16` says the fabric is QUUX, and writes
+    nothing at all on the CADR, on an older QUUX, on a fabric the console
+    does not know, on the fault bitstream, or with no console program; and
+    the image carries it, ahead of every daemon."""
     overlay = os.path.join(tree, OVERLAY)
     # The rootfs: the defconfig names this overlay, and the overlay holds the
     # hook and the script it runs, both executable.
@@ -562,9 +560,8 @@ def qos(tree):
     cases = 0
     for sh in shells:
         name = sh[0]
-        # Revisions 15 and 16: both registers written 0xF, nothing else
-        # written, read back and said.  Revision 16 is revision 15's machine
-        # with the Ethernet device, on the same port.
+        # QUUX: both registers written 0xF, nothing else written, read back
+        # and said.
         for rev in QOS_REVISIONS:
             st, out, writes, regs, calls = qos_run(tree, sh, "quux %d" % rev)
             cases += 1
@@ -589,9 +586,10 @@ def qos(tree):
         # Every other fabric: nothing written, the registers still 0.
         for fabric, console, why in (("cadr", True, "the CADR"),
                                      ("quux 13", True, "QUUX revision 13"),
+                                     ("quux 15", True, "QUUX revision 15"),
                                      ("unknown", True, "a fabric the console does not know"),
                                      ("fault", True, "the fault bitstream"),
-                                     ("quux 15", False, "no cadr-console on the image")):
+                                     ("quux 16", False, "no cadr-console on the image")):
             st, out, writes, regs, calls = qos_run(tree, sh, fabric, console=console)
             cases += 1
             if writes or regs != zero:
@@ -603,17 +601,17 @@ def qos(tree):
             if fabric == "fault" and calls:
                 die("%s, the fault bitstream: the console was asked %s" % (name, calls))
         # A register that does not take the write is said, loudly.
-        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15", stuck=(QOS_REGS[1],))
+        st, out, writes, regs, calls = qos_run(tree, sh, "quux 16", stuck=(QOS_REGS[1],))
         cases += 1
         if "NOT 0xF" not in out:
             die("%s, WRQOS not taking the write: the boot does not say so:" % name, out)
         # `stop` writes nothing.
-        st, out, writes, regs, calls = qos_run(tree, sh, "quux 15", action="stop")
+        st, out, writes, regs, calls = qos_run(tree, sh, "quux 16", action="stop")
         cases += 1
         if writes or st != 0:
             die("%s, stop: devmem wrote %s, status %d" % (name, writes, st), out)
     print("buildroot-kr260: /%s runs /%s at S%02d, before %s: HP0's QoS reads 0xF on QUUX"
-          " revisions 15 and 16 and nothing is written on the CADR, revision 13, an unknown fabric,"
+          " and nothing is written on the CADR, an older QUUX, an unknown fabric,"
           " the fault bitstream or with no console (%d cases, %s)"
           % (QOS_HOOK, QOS_SCRIPT, mine, nums[0][1], cases,
              " and ".join(s[0] for s in shells)))

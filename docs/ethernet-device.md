@@ -367,14 +367,14 @@ drives the page over AXI through the program's own `qed_face_fabric.c`, with
 revision 16's register-page devices behind it, over scripts of muir's
 `EthernetDevice` (`golden/src/quux16_ethernet.rs`). After each step every
 register 240 to 257 must read as muir's. Then it checks each rule of the
-host's side with the case just outside it. The core's `ethernet` group at
-revision 16 (`golden/src/quux15_ethernet.rs`, `quux15_ethernet.quux.r16.pass`)
+host's side with the case just outside it. The core's `ethernet` group
+(`golden/src/quux15_ethernet.rs`, `quux15_ethernet.quux.pass`)
 holds the rest clock for clock to muir's pipeline: the registers, the held
 writes, transmits and deliveries with the testbench as the program, and the
 interrupt. The module check plays the core's side of the engine too, its
 grant, its fill and its clears each delayed at random, and holds each
 delivery's clears, line by line, and 251's move after the last. The core's
-`lineclear` group at revision 16 (`quux15_lineclear.quux.r16.pass`) is a run
+`lineclear` group (`quux15_lineclear.quux.pass`) is a run
 judged by its results: through a ring of one entry, a 42-byte frame and then a
 1,514-byte one, the processor reading a word of the buffer's lines and the
 entry before each delivery, so the cache holds them, and again after, into a

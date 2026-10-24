@@ -112,7 +112,7 @@
 // what is past it; a feeder that mapped past it would write into Linux's
 // memory there.
 _Static_assert(FEEDER_MAP_BYTES <= CADR_BOARD_RECORDS_BYTES,
-	       "the records fit the area revision 13's tree reserves of the spare");
+	       "the records fit the area QUUX's tree reserves of the spare");
 
 // How many requests are named on the console one by one before they are
 // only counted, and how many distinct denied blocks are named.

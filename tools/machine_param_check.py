@@ -1,77 +1,55 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Whether the machine a board is built as reaches `cadr_machine`.
+"""Which machine each board's top level and flow builds.
 
     python3 tools/machine_param_check.py . [--make]
 
-`MACHINE` is "cadr", MIT's machine, or "quux", the evolved CADR.  Each board's
-top level takes it as a parameter and hands it to `cadr_machine`, and the
-board flows set it from the make variable of the same name.  A top level that
-dropped it on the floor would build the CADR under the other name, and every
-check of the board itself would stay green: what holds QUUX is the machine's
-own checks, which build `cadr_machine` with the value directly.  This asks the
-question of the top levels.
+`MACHINE` is "cadr", MIT's machine, or "quux", the evolved CADR.  The CADR's
+top levels, `cadr_arty`, `cadr_kr260` and `cadr_de25`, build the CADR and
+nothing else; QUUX has its own top levels (`quux15_*`) and, on the Zynq
+boards, its own Vivado flows.  This holds the CADR's top levels to the CADR's
+parts, and the flows to the machine each is asked for.
 
-**THE VALUE IS READ AT THE INSTANCE, NOT INFERRED FROM THE TEXT.**  For each
-board, each configuration and each value, Verilator elaborates the top level
-and writes its tree as JSON, and this reads the parameter of the module that
-the top's `u_machine` cell was elaborated into.  The same command is first
-run as a lint with `-Wall`, so the value checked is the value of a design
-that lints clean.  The configurations are the plain board and the memory
-board with its display, which is the one a bitstream is built as.
-
-**AND A NAME THAT IS NEITHER MUST STOP ELABORATION AT `u_machine`.**  A
-near miss, "cdr", handed to the Arty's and the DE25-Nano's top levels must
-fail with `cadr_machine`'s own message, in the instance `<top>.u_machine`.
-That is the parameter's path shown a second way, by the machine refusing it.
+**THE DEBUG CABLE IS THE CADR'S** (contract Q5), read in the elaborated tree
+and not inferred from the text.  For each board and each configuration,
+Verilator lints the top level with `-Wall` and writes its tree as JSON, and
+in it the CADR has one cell each of the cable's connector, `cadr_dbg_cable`,
+and of the join of its two debuggers, `cadr_dbg_join`, and one of the
+register window, `cadr_debug_window`, on a board with a processing system;
+and no assignment to one of the connector's eight pads is a bare high
+impedance, the connector driving each through its enable.  The
+configurations are the plain board and the memory board with its display,
+which is the one a bitstream is built as.  In the same tree the console's
+memory boards are the CADR's, 32 from 1 to 60, its word 39 names no video
+controller, and the Kria KR260's display is built at the raster its check
+holds, with the CADR's picture.
 
 **AND THE FLOWS' OWN REFUSALS**, which run before any vendor tool is looked
-for, so they can be run here: the Arty's Vivado flow refuses a name that is
-not a machine and a QUUX build into a directory that does not say quux, and
-accepts both machines as far as its first Vivado command; the DE25-Nano's
-build and program scripts refuse a name that is not a machine and accept
-both, and the build script refuses QUUX beside `FAULT=1`, because the fault
-bitstream carries no machine.
+for, so they can be run here: the Arty's and the Kria KR260's Vivado flows
+build the CADR, from MIT's boot PROM, refuse a name that is not a machine,
+and refuse `MACHINE=quux`, naming QUUX's own flow; the DE25-Nano's build and
+program scripts refuse a name that is not a machine and accept both, take
+QUUX with no `REVISION` or with the one this tree builds, and refuse any
+other and a `REVISION` on the CADR; and the build script refuses QUUX beside
+`FAULT=1`, because the fault bitstream carries no machine.
 
-**AND THE WORD, `WORD_BITS`, THE SAME WAY** (contract G2): 40 is QUUX,
-revision 13, and QUUX at 32, revision 12, is retired.  On every board that
-builds QUUX, `MACHINE=quux WORD_BITS=40` lints clean and `u_machine`
-elaborates `WORD_BITS` 40, and the file device's page, `u_fd_face`, names
-the revision by its IDENT, "QF13"; and QUUX at the default 32 stops
-elaboration, on the Arty and the DE25-Nano in the processor and on the Kria
-KR260 in its top level.  The Arty's flow refuses a width that is not a word,
-40 on the CADR, 32 on QUUX, and a revision 13 build into a directory that
-does not say `quux13`, and takes revision 13 into one that does; the
-DE25-Nano's two scripts refuse a width that is not a word, 40 on the CADR
-and 32 on QUUX, and take revision 13.
-
-**AND THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5).  In the same
-elaborated tree, the CADR has one cell each of the cable's connector,
-`cadr_dbg_cable`, and of the join of its two debuggers, `cadr_dbg_join`, and
-one of the register window, `cadr_debug_window`, on a board with a processing
-system; QUUX has none of the three.  And the connector's eight pads: on the
-CADR no assignment to one is a bare high impedance, the connector driving each
-through its enable, and on QUUX every assignment to one is, over all eight
-bits, so the pads are inputs nothing drives and their pull-downs hold them.
+**AND THE DE25-NANO'S QUUX BUILDS AT ITS BINDING PERIOD FROM PROM 2002 BY
+DEFAULT**, as the Kria KR260's and the Arty Z7-20's flows do: its
+`build.sh`, asked for no period and no PROM, says 25 ns, the board's, and
+`build/boot_prom.quux15.hex`; it takes the image `PROM` names; it holds the
+image to `PROM_SHA256` when given, refusing one that differs and taking one
+that agrees; it refuses a period it cannot run; and it refuses `PROM` on the
+CADR.  With `--make`, which the Makefile passes and the mutation runner's
+copy (which has no Makefile) does not, `make -n de25 MACHINE=quux` hands
+`build.sh` the revision, the period 25, PROM 2002's image and that image's
+digest, written here apart from the Makefile, and with `PROM` named, that
+image and no digest.
 
 WHAT THIS DOES NOT SAY.  It says nothing about what QUUX is: that is
-`make check MACHINE=quux`, against muir's own QUUX.  It does not run Vivado or Quartus, so it does not see
-the generic reach synthesis there; `boards/de25-nano/quartus/build.sh` reads
-the value back out of Quartus's synthesis report, and the Arty's flow has no
-such read-back.  It does not check where either flow writes its build.
-
-**AND THE DE25-NANO'S REVISION 15 BUILDS AT ITS BINDING PERIOD FROM PROM
-2002 BY DEFAULT**, as the Kria KR260's and the Arty Z7-20's flows do: its
-`build.sh`, asked for no period and no PROM, says 25 ns, the board's,
-and `build/boot_prom.quux15.hex`; it takes the image `PROM` names; it holds
-the image to `PROM_SHA256` when given, refusing one that differs and taking
-one that agrees; and it refuses `PROM` on any other revision.  With
-`--make`, which the Makefile passes and the mutation runner's copy (which has
-no Makefile) does not, `make -n de25 ... REVISION=15` hands `build.sh` the
-period 25, PROM 2002's image and that image's digest, written here apart
-from the Makefile, and with `PROM` named, that image and no digest; and
-revision 16 at the same period, from both.
+`make check MACHINE=quux`, against muir's own QUUX.  It does not run Vivado
+or Quartus, so it does not see what synthesis builds there; and it does not
+check where either flow writes its build.
 
 Exit status 0 when every case agrees, 1 otherwise, with each case's line
 printed either way.
@@ -106,23 +84,8 @@ BOARDS = {
             "plain": ([], []),
             "DDR=1 HDMI=1": (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_ps7_stub.sv"]),
         },
-        # `machines` is what the plain sweep builds with no word; QUUX is
-        # swept at 40 bits by `word_reaches`, and refused at 32.
-        "machines": ["cadr"],
         # The debug cable's eight pads, Pmod JA.
         "pads": ["ja"],
-        # QUUX's K at revision 13, five, the machine's clock left at 100 MHz
-        # so that its timers count true time (`cadr_arty.sv`, `SYNC_K13`).
-        "sync_k": {40: 5},
-        # And revision 14's, `SYNC_K14`: four (contract G3 revision 14).
-        "sync_k14": 4,
-        # Revision 13's most memory boards: what the board's reservation holds
-        # (`cadr_ddr_map.sv`, 32M words), written here apart from it.
-        "boards13_max": 512,
-        # Contract HD: QUUX's video controller and the board name, written
-        # here apart from the top level.
-        "video": (1280, 1024),
-        "name": "Arty Z7-20",
     },
     "de25": {
         "top": "cadr_de25",
@@ -135,21 +98,11 @@ BOARDS = {
             "plain": ([], []),
             "DDR=1 HDMI=1": (["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"], []),
         },
-        "machines": ["cadr"],
         # The debug cable's eight pads, JP1 pins 31 to 38.
         "pads": ["jp1_pin3%d" % i for i in range(1, 9)],
-        "sync_k": {40: 4},
-        # Revision 14 at the same four, the board's one `SYNC_K`.
-        "sync_k14": 4,
-        # 64M words of room, and muir's most is 1,024 boards.
-        "boards13_max": 1024,
-        "video": (1280, 1024),
-        "name": "DE25-Nano",
     },
-    # The Kria KR260: the CADR, and QUUX at revision 13 alone (contract G2,
-    # the KR260 port's K6), on its own memory map, with the `PS8`'s stub for
-    # the board with the processing system.  `machines` is what the plain
-    # sweep builds with no word; QUUX is swept at 40 bits by `word_reaches`.
+    # The Kria KR260, on its own memory map, with the `PS8`'s stub for the
+    # board with the processing system.
     "kr260": {
         "top": "cadr_kr260",
         "file": "boards/kria-kr260/cadr_kr260.sv",
@@ -162,25 +115,19 @@ BOARDS = {
             "plain": ([], []),
             "DDR=1": (["-GDDR=1"], ["tb/cadr_ps8_stub.sv"]),
         },
-        "machines": ["cadr"],
         "pads": ["pmod1"],
-        # Revision 13 at four ticks, `SYNC_K13`, and revision 14 at four,
-        # `SYNC_K14`.
-        "sync_k": {40: 4},
-        "sync_k14": 4,
-        # Revision 13's room on this board: 32M words.
-        "boards13_max": 512,
-        "video": (1920, 1080),
-        "name": "Kria KR260",
     },
 }
 
 # A name that is not a machine, and close enough to one to be a typing slip.
 NOT_A_MACHINE = "cdr"
 
-# The DE25-Nano's revision 15 by default: the board's period, and PROM
-# 2002 assembled for revision 15, its image's path and digest (the Makefile's
-# `QUUX15_PROM_2002_SHA256`, written again here).
+# The one revision QUUX is built at, which the DE25-Nano's scripts take.
+QUUX_REVISION = "16"
+
+# The DE25-Nano's QUUX by default: the board's period, and PROM 2002, its
+# image's path and digest (the Makefile's `QUUX15_PROM_2002_SHA256`, written
+# again here).
 DE25_Q15_PERIOD_NS = "25"
 DE25_Q15_PROM = "build/boot_prom.quux15.hex"
 DE25_Q15_PROM_SHA256 = "2b27752f9327d5ed3e61c7af39777d8ebf7e6ab971f6fdaa2e56bfe1c88cdb1c"
@@ -207,7 +154,7 @@ def run(cmd, env=None):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
-def verilator(board, config, value, mode, mdir=None, word_bits=None, revision=None):
+def verilator(board, config, mode, mdir=None):
     spec = BOARDS[board]
     gens, extra = spec["configs"][config]
     cmd = [VERILATOR, mode]
@@ -216,12 +163,6 @@ def verilator(board, config, value, mode, mdir=None, word_bits=None, revision=No
     for d in spec["dirs"]:
         cmd.append("-I" + d)
     cmd += spec["defines"] + gens
-    if value is not None:
-        cmd.append('-GMACHINE="%s"' % value)
-    if word_bits is not None:
-        cmd.append("-GWORD_BITS=%d" % word_bits)
-    if revision is not None:
-        cmd.append("-GREVISION=%d" % revision)
     if mdir is not None:
         cmd += ["-Mdir", mdir]
     cmd += ["--top-module", spec["top"]]
@@ -237,64 +178,6 @@ def walk(node, fn):
     elif isinstance(node, list):
         for v in node:
             walk(v, fn)
-
-
-def machine_at_instance(tree, top):
-    """The MACHINE parameter of the module `<top>.u_machine` became."""
-    modules = {}
-    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
-         if n.get("type") == "MODULE" else None)
-    tops = [m for m in modules.values() if m.get("origName") == top]
-    if len(tops) != 1:
-        return None, "%d modules named %s in the tree" % (len(tops), top)
-    cells = []
-    walk(tops[0], lambda n: cells.append(n)
-         if n.get("type") == "CELL" and n.get("name") == "u_machine" else None)
-    if len(cells) != 1:
-        return None, "%d cells named u_machine in %s" % (len(cells), top)
-    mod = modules.get(cells[0].get("modp"))
-    if mod is None or mod.get("origName") != "cadr_machine":
-        return None, "%s.u_machine is not a cadr_machine" % top
-    values = []
-
-    def param(n):
-        if n.get("type") == "VAR" and n.get("name") == "MACHINE" \
-                and n.get("isParam"):
-            v = n.get("valuep") or []
-            if len(v) == 1 and v[0].get("type") == "CONST":
-                values.append(v[0]["name"].replace('\\"', "").strip('"'))
-            else:
-                values.append(None)
-    walk(mod, param)
-    if len(values) != 1 or values[0] is None:
-        return None, "no constant MACHINE parameter in %s" % mod.get("name")
-    return values[0], None
-
-
-def word_bits_at_instance(tree, top):
-    """The WORD_BITS parameter of the module `<top>.u_machine` became."""
-    modules = {}
-    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
-         if n.get("type") == "MODULE" else None)
-    tops = [m for m in modules.values() if m.get("origName") == top]
-    cells = []
-    if len(tops) == 1:
-        walk(tops[0], lambda n: cells.append(n)
-             if n.get("type") == "CELL" and n.get("name") == "u_machine" else None)
-    if len(cells) != 1:
-        return None, "no one u_machine in %s" % top
-    mod = modules.get(cells[0].get("modp"))
-    values = []
-
-    def param(n):
-        if n.get("type") == "VAR" and n.get("name") == "WORD_BITS" and n.get("isParam"):
-            v = n.get("valuep") or []
-            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
-    walk(mod, param)
-    if len(values) != 1 or values[0] is None:
-        return None, "no constant WORD_BITS in %s" % mod.get("name")
-    # Verilator writes a constant as 32'h28 or 32'sh28.
-    return int(values[0].split("h")[-1], 16), None
 
 
 def params_at_cell(tree, top, cell, names):
@@ -326,89 +209,19 @@ def params_at_cell(tree, top, cell, names):
     return values, None
 
 
-def params_at_path(tree, top, path, names):
-    """As `params_at_cell`, for a cell inside a cell: `path` names the cell in
-    `<top>`, then the cell in the module that one became, and so on."""
-    modules = {}
-    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
-         if n.get("type") == "MODULE" else None)
-    mods = [m for m in modules.values() if m.get("origName") == top]
-    if len(mods) != 1:
-        return None, "%d modules named %s" % (len(mods), top)
-    mod = mods[0]
-    for name in path:
-        cells = []
-        walk(mod, lambda n: cells.append(n)
-             if n.get("type") == "CELL" and n.get("name") == name else None)
-        if len(cells) != 1:
-            return None, "%d cells %s in %s" % (len(cells), name, mod.get("name"))
-        mod = modules.get(cells[0].get("modp"))
-    values = {}
-
-    def param(n):
-        if n.get("type") == "VAR" and n.get("name") in names and n.get("isParam"):
-            v = n.get("valuep") or []
-            if len(v) == 1 and v[0].get("type") == "CONST":
-                values[n["name"]] = int(v[0]["name"].split("h")[-1], 16)
-    walk(mod, param)
-    if set(values) != set(names):
-        return None, "no constant %s in %s" % (", ".join(sorted(set(names) - set(values))), mod.get("name"))
-    return values, None
-
-
-def boards_at_console(board, config, asked, rev13, tree):
-    """The console's memory boards are the machine's: the CADR's and revision
-    12's 32 from 1 to 60, revision 13's 512 from 1 to the board's most."""
-    top = BOARDS[board]["top"]
-    want = {"MEM_BOARDS_DEFAULT": 512 if rev13 else 32,
-            "MEM_BOARDS_MAX": BOARDS[board]["boards13_max"] if rev13 else 60}
-    what = "%s, %s, %s: u_console's memory boards come up at %d and take 1 to %d" % (
-        top, config, asked, want["MEM_BOARDS_DEFAULT"], want["MEM_BOARDS_MAX"])
-    got, why = params_at_cell(tree, top, "u_console", list(want))
-    if got is None and why is None:
-        if config.startswith("DDR"):
-            say(False, "%s --- no u_console in a build with the processing system" % what)
-        return
-    if got is None:
-        say(False, "%s --- %s" % (what, why))
-    elif got != want:
-        say(False, "%s --- it has %s" % (what, got))
-    else:
-        say(True, what)
-
-
-def fd_ident_at_instance(tree, top):
-    """The IDENT parameter of the module the file device's page, the cell
-    `u_fd_face` in `<top>`, became."""
-    modules = {}
-    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
-         if n.get("type") == "MODULE" else None)
-    tops = [m for m in modules.values() if m.get("origName") == top]
-    cells = []
-    if len(tops) == 1:
-        walk(tops[0], lambda n: cells.append(n)
-             if n.get("type") == "CELL" and n.get("name") == "u_fd_face" else None)
-    if len(cells) != 1:
-        return None, "no one u_fd_face in %s" % top
-    mod = modules.get(cells[0].get("modp"))
-    values = []
-
-    def param(n):
-        if n.get("type") == "VAR" and n.get("name") == "IDENT" and n.get("isParam"):
-            v = n.get("valuep") or []
-            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
-    walk(mod, param)
-    if len(values) != 1 or values[0] is None:
-        return None, "no constant IDENT in %s" % mod.get("name")
-    return int(values[0].split("h")[-1], 16), None
-
-
-# **THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5): its connector, the
+# **THE DEBUG CABLE IS THE CADR'S** (contract Q5): its connector, the
 # join of its two debuggers and the register window that carries it on the
 # general-purpose port.  The CADR builds the connector and the join on every
-# board and the window on every board with a processing system; QUUX builds
-# none of the three.
+# board and the window on every board with a processing system.
 CABLE_MODULES = ("cadr_dbg_cable", "cadr_dbg_join", "cadr_debug_window")
+
+
+def name_of(value):
+    """A board name parameter's characters: the literal is right-justified,
+    so the bytes from the highest that is not zero down to bit 0.  QUUX's
+    top levels' checks read their names with it."""
+    b = value.to_bytes(64, "big").lstrip(b"\0")
+    return b.decode("ascii", "replace")
 
 
 def cable_cells(tree):
@@ -452,205 +265,58 @@ def pad_writes(tree, pads):
     return writes
 
 
-def cable_at_top(board, config, asked, machine, tree):
-    """The CADR carries the cable's modules and QUUX none of them."""
+def cable_at_top(board, config, tree):
+    """The CADR carries the cable's modules, and its connector drives the
+    cable's pads, every one through its enable, so no assignment to a pad is
+    a bare high impedance."""
     top = BOARDS[board]["top"]
-    if machine == "cadr":
-        want = {"cadr_dbg_cable": 1, "cadr_dbg_join": 1,
-                "cadr_debug_window": 1 if "DDR" in config else 0}
-    else:
-        want = dict((m, 0) for m in CABLE_MODULES)
+    want = {"cadr_dbg_cable": 1, "cadr_dbg_join": 1,
+            "cadr_debug_window": 1 if "DDR" in config else 0}
     got = cable_cells(tree)
-    what = "%s, %s, %s: the debug cable's cells are %s" % (
-        top, config, asked,
-        ", ".join("%s %d" % (m, want[m]) for m in CABLE_MODULES))
+    what = "%s, %s: the debug cable's cells are %s" % (
+        top, config, ", ".join("%s %d" % (m, want[m]) for m in CABLE_MODULES))
     if got != want:
         say(False, "%s --- the tree has %s" % (
             what, ", ".join("%s %d" % (m, got[m]) for m in CABLE_MODULES)))
     else:
         say(True, what)
-    # **AND THE PADS.**  On the CADR the connector drives them, every one
-    # through its enable, so no assignment to a pad is a bare high impedance;
-    # on QUUX every assignment to one is, and they cover the eight bits, so
-    # the pads are inputs nothing drives and their pull-downs hold them.
     writes = pad_writes(tree, BOARDS[board]["pads"])
     floated = sum(bits for bits, z in writes if z)
-    if machine == "cadr":
-        what = "%s, %s, %s: the connector drives the cable's pads" % (top, config, asked)
-        ok = len(writes) > 0 and floated == 0
-    else:
-        what = "%s, %s, %s: the cable's 8 pads are left undriven" % (top, config, asked)
-        ok = len(writes) > 0 and all(z for _, z in writes) and floated == 8
-    if ok:
+    what = "%s, %s: the connector drives the cable's pads" % (top, config)
+    if len(writes) > 0 and floated == 0:
         say(True, what)
     else:
         say(False, "%s --- %d assignment(s) to them, %d of them high impedance over %d bit(s)"
             % (what, len(writes), sum(1 for _, z in writes if z), floated))
 
 
-def word_reaches(board, config, bits, scratch):
-    """QUUX at `bits`, 40, lints clean and is the width at u_machine."""
+def console_at_top(board, config, tree):
+    """The console's memory boards are the CADR's, 32 from 1 to 60, and its
+    word 39 names no video controller."""
     top = BOARDS[board]["top"]
-    want = bits
-    asked = "WORD_BITS=%d" % bits
-    what = "%s, %s, MACHINE=quux, %s: u_machine elaborates WORD_BITS %d" % (top, config, asked, want)
-    rc, out = verilator(board, config, "quux", "--lint-only", word_bits=bits)
-    if rc != 0:
-        say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
+    want = {"MEM_BOARDS_DEFAULT": 32, "MEM_BOARDS_MAX": 60,
+            "VIDEO_WIDTH": 0, "VIDEO_HEIGHT": 0}
+    what = "%s, %s: u_console's memory boards come up at 32 and take 1 to 60, " \
+           "and its word 39 names no video controller" % (top, config)
+    got, why = params_at_cell(tree, top, "u_console", list(want))
+    if got is None and why is None:
+        if config.startswith("DDR"):
+            say(False, "%s --- no u_console in a build with the processing system" % what)
         return
-    mdir = tempfile.mkdtemp(dir=scratch)
-    rc, out = verilator(board, config, "quux", "--json-only", mdir, word_bits=bits)
-    if rc != 0:
-        say(False, "%s --- the JSON dump failed:\n%s" % (what, out.strip()))
-        return
-    with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
-        tree = json.load(f)
-    shutil.rmtree(mdir, True)
-    got, why = word_bits_at_instance(tree, top)
     if got is None:
         say(False, "%s --- %s" % (what, why))
     elif got != want:
-        say(False, "%s --- it elaborates %d" % (what, got))
-    else:
-        say(True, what)
-    # **AND THE REVISION'S K**, the board's own.
-    k_at_generator(board, config, "MACHINE=quux, %s" % asked, want, tree)
-    # And no debug cable at revision 13 either.
-    cable_at_top(board, config, "MACHINE=quux, %s" % asked, "quux", tree)
-    # And the console's memory boards are the revision's.
-    boards_at_console(board, config, "MACHINE=quux, %s" % asked, want > 32, tree)
-    if board == "kr260":
-        kr260_raster(config, "MACHINE=quux, %s" % asked, "quux", tree)
-    video_and_name(board, config, "MACHINE=quux, %s" % asked, "quux", want > 32, tree)
-    # And the file device's page names the revision: "QF13" at 40 bits
-    # (`rtl/plumbing/quux_fd_face.sv`).
-    ident_want = 0x51463133
-    what = "%s, %s, MACHINE=quux, %s: u_fd_face's IDENT is %08x" % (top, config, asked, ident_want)
-    got, why = fd_ident_at_instance(tree, top)
-    if got is None:
-        say(False, "%s --- %s" % (what, why))
-    elif got != ident_want:
-        say(False, "%s --- it is %08x" % (what, got))
+        say(False, "%s --- it has %s" % (what, got))
     else:
         say(True, what)
 
 
-def revision_reaches(board, config, scratch):
-    """**REVISION 14 REACHES `u_machine` WHEN IT IS ASKED FOR, AND ONLY
-    THEN** (contract G3 revision 14): `MACHINE=quux WORD_BITS=40
-    REVISION=14` lints clean and elaborates `REVISION` 14 and the TLB's
-    4,096 entries at u_machine, the board's revision 14 K at the generator,
-    and the memory system's module, `quux_mmu`; QUUX at 40 bits with no
-    revision is 13, with no `quux_mmu`; and `REVISION=14` on the CADR stops
-    elaboration in the top level."""
-    top = BOARDS[board]["top"]
-    for rev, asked in ((14, "REVISION=14"), (None, "no REVISION")):
-        want = 14 if rev else 13
-        what = "%s, %s, MACHINE=quux, WORD_BITS=40, %s: u_machine elaborates REVISION %d" % (
-            top, config, asked, want)
-        rc, out = verilator(board, config, "quux", "--lint-only", word_bits=40, revision=rev)
-        if rc != 0:
-            say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
-            continue
-        mdir = tempfile.mkdtemp(dir=scratch)
-        rc, out = verilator(board, config, "quux", "--json-only", mdir, word_bits=40, revision=rev)
-        if rc != 0:
-            say(False, "%s --- the JSON dump failed:\n%s" % (what, out.strip()))
-            continue
-        with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
-            tree = json.load(f)
-        shutil.rmtree(mdir, True)
-        got, why = params_at_cell(tree, top, "u_machine", ["REVISION", "TLB_ENTRIES"])
-        if got is None:
-            say(False, "%s --- %s" % (what, why or "no u_machine"))
-        elif got != {"REVISION": want, "TLB_ENTRIES": 4096}:
-            say(False, "%s --- it elaborates %s" % (what, got))
-        else:
-            say(True, "%s and TLB_ENTRIES 4096" % what)
-        mmus = []
-        walk(tree, lambda n: mmus.append(n)
-             if n.get("type") == "MODULE" and n.get("origName") == "quux_mmu" else None)
-        what = "%s, %s, MACHINE=quux, WORD_BITS=40, %s: %d quux_mmu" % (
-            top, config, asked, 1 if rev else 0)
-        say(len(mmus) == (1 if rev else 0), what if len(mmus) == (1 if rev else 0)
-            else "%s --- the tree has %d" % (what, len(mmus)))
-        if rev:
-            k_want = BOARDS[board]["sync_k14"]
-            kwhat = "%s, %s, MACHINE=quux, WORD_BITS=40, REVISION=14: the microcycle is SYNC_K=%d ticks at the generator" % (
-                top, config, k_want)
-            k, why = sync_k_at_generator(tree)
-            if k is None:
-                say(False, "%s --- %s" % (kwhat, why))
-            elif k != k_want:
-                say(False, "%s --- it counts %d" % (kwhat, k))
-            else:
-                say(True, kwhat)
-    what = "%s, %s, MACHINE=cadr, REVISION=14: refused in %s" % (top, config, top)
-    rc, out = verilator(board, config, "cadr", "--lint-only", revision=14)
-    say(rc != 0 and "REVISION is 14 on cadr" in out,
-        what if rc != 0 and "REVISION is 14 on cadr" in out else "%s --- it was not:\n%s" % (what, out.strip()))
-
-
-def sync_k_at_generator(tree):
-    """The SYNC_K of the one `quux_phase_gen` the tree elaborates."""
-    mods = []
-    walk(tree, lambda n: mods.append(n)
-         if n.get("type") == "MODULE" and n.get("origName") == "quux_phase_gen" else None)
-    if len(mods) != 1:
-        return None, "%d quux_phase_gen modules in the tree" % len(mods)
-    values = []
-
-    def param(n):
-        if n.get("type") == "VAR" and n.get("name") == "SYNC_K" and n.get("isParam"):
-            v = n.get("valuep") or []
-            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
-    walk(mods[0], param)
-    if len(values) != 1 or values[0] is None:
-        return None, "no constant SYNC_K in quux_phase_gen"
-    # Verilator writes a constant as 32'h4 or 32'sh4.
-    return int(values[0].split("h")[-1], 16), None
-
-
-def reaches(board, config, value, scratch):
-    """The value asked for lints clean and is the value at u_machine."""
-    top = BOARDS[board]["top"]
-    want = value if value is not None else "cadr"
-    asked = "MACHINE=%s" % value if value is not None else "no MACHINE"
-    what = "%s, %s, %s: u_machine elaborates MACHINE \"%s\"" % (top, config, asked, want)
-    rc, out = verilator(board, config, value, "--lint-only")
-    if rc != 0:
-        say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
-        return
-    mdir = tempfile.mkdtemp(dir=scratch)
-    rc, out = verilator(board, config, value, "--json-only", mdir)
-    if rc != 0:
-        say(False, "%s --- the JSON dump failed:\n%s" % (what, out.strip()))
-        return
-    with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
-        tree = json.load(f)
-    shutil.rmtree(mdir, True)
-    got, why = machine_at_instance(tree, top)
-    if got is None:
-        say(False, "%s --- %s" % (what, why))
-    elif got != want:
-        say(False, "%s --- it elaborates \"%s\"" % (what, got))
-    else:
-        say(True, what)
-    # **AND THE DEBUG CABLE IS THERE ON THE CADR AND NOWHERE ON QUUX.**
-    cable_at_top(board, config, asked, want, tree)
-    # **AND THE CONSOLE'S MEMORY BOARDS ARE THE CADR'S.**
-    boards_at_console(board, config, asked, False, tree)
-    if board == "kr260":
-        kr260_raster(config, asked, want, tree)
-    video_and_name(board, config, asked, want, False, tree)
-
-
-def kr260_raster(config, asked, machine, tree):
+def kr260_raster(config, tree):
     """**THE KRIA KR260'S DISPLAY IS BUILT AT THE RASTER ITS CHECK HOLDS.**
     `build/display_out_kr260.pass` builds `cadr_display_out` with the figures
     in `boards/kria-kr260/display_raster.mk` and holds the eight edges at them;
     this holds that the board's top level hands its `u_display` the same
-    figures, read at the instance, and the machine's own picture."""
+    figures, read at the instance, and the CADR's own picture."""
     if config != "DDR=1":
         return
     top = BOARDS["kr260"]["top"]
@@ -663,13 +329,11 @@ def kr260_raster(config, asked, machine, tree):
             want[k] = int(v)
     raster = ["H_ACTIVE", "H_FRONT", "H_SYNC", "H_BACK",
               "V_ACTIVE", "V_FRONT", "V_SYNC", "V_BACK"]
-    what = "%s, %s, %s: u_display's raster is display_raster.mk's" % (top, config, asked)
+    what = "%s, %s: u_display's raster is display_raster.mk's" % (top, config)
     if sorted(want) != sorted(raster):
         say(False, "%s --- display_raster.mk names %s" % (what, sorted(want)))
         return
-    vw, vh = BOARDS["kr260"]["video"]
-    pic = {"PIC_W": 768, "PIC_H": 963, "WORDS_PER_LINE": 24, "SPREAD": 1} if machine == "cadr" \
-        else {"PIC_W": vw, "PIC_H": vh, "WORDS_PER_LINE": vw // 32, "SPREAD": 0}
+    pic = {"PIC_W": 768, "PIC_H": 963, "WORDS_PER_LINE": 24, "SPREAD": 1}
     want.update(pic)
     got, why = params_at_cell(tree, top, "u_display", list(want))
     if got is None:
@@ -679,110 +343,35 @@ def kr260_raster(config, asked, machine, tree):
             what, ", ".join("%s=%d" % kv for kv in sorted(got.items())),
             ", ".join("%s=%d" % kv for kv in sorted(want.items()))))
     else:
-        say(True, "%s, and %s's picture %dx%d" % (what, machine, pic["PIC_W"], pic["PIC_H"]))
+        say(True, "%s, and the CADR's picture %dx%d" % (what, pic["PIC_W"], pic["PIC_H"]))
 
 
-def name_of(value):
-    """A board name parameter's characters: the literal is right-justified,
-    so the bytes from the highest that is not zero down to bit 0."""
-    b = value.to_bytes(64, "big").lstrip(b"\0")
-    return b.decode("ascii", "replace")
-
-
-def video_and_name(board, config, asked, machine, rev13, tree):
-    """**THE VIDEO CONTROLLER'S SIZE AND THE BOARD NAME ARE THE BOARD'S, AND
-    ONE OF EACH** (contract HD): the size this table gives the board at
-    u_machine, at its console's word 39 on QUUX (none on the CADR), and at its
-    display's picture on QUUX; the name at u_machine, and on revision 13
-    packed into the feature page's words 20-24 as the page gives them."""
+def board_top(board, config, scratch):
+    """The top level lints clean, and its elaborated tree is the CADR's."""
     top = BOARDS[board]["top"]
-    spec = BOARDS[board]
-    vw, vh = spec.get("video", (1280, 1024))
-    name = spec["name"]
-    what = "%s, %s, %s: u_machine's video controller is %dx%d and its board name %r" % (
-        top, config, asked, vw, vh, name)
-    got, why = params_at_cell(tree, top, "u_machine", ["VIDEO_WIDTH", "VIDEO_HEIGHT", "BOARD_NAME"])
-    if got is None:
-        say(False, "%s --- %s" % (what, why or "no u_machine"))
-    elif (got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"], name_of(got["BOARD_NAME"])) != (vw, vh, name):
-        say(False, "%s --- it has %dx%d and %r" % (what, got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"],
-                                                     name_of(got["BOARD_NAME"])))
-    else:
-        say(True, what)
-    if rev13 and machine == "quux":
-        want = int.from_bytes(name.encode("ascii").ljust(20, b"\0"), "little")
-        what = "%s, %s, %s: the feature page's words 20-24 hold %r" % (top, config, asked, name)
-        got, why = params_at_path(tree, top, ["u_machine", "feature_page"], ["BOARD_NAME_WORDS"])
-        if got is None:
-            say(False, "%s --- %s" % (what, why or "no feature_page"))
-        elif got["BOARD_NAME_WORDS"] != want:
-            say(False, "%s --- they hold %040x, want %040x" % (what, got["BOARD_NAME_WORDS"], want))
-        else:
-            say(True, what)
-    want_con = (vw, vh) if machine == "quux" else (0, 0)
-    what = "%s, %s, %s: u_console's word 39 says %s" % (
-        top, config, asked, "%dx%d" % want_con if machine == "quux" else "no video controller")
-    got, why = params_at_cell(tree, top, "u_console", ["VIDEO_WIDTH", "VIDEO_HEIGHT"])
-    if got is None and why is None:
-        pass
-    elif got is None:
-        say(False, "%s --- %s" % (what, why))
-    elif (got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"]) != want_con:
-        say(False, "%s --- it has %dx%d" % (what, got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"]))
-    else:
-        say(True, what)
-    if machine == "quux":
-        what = "%s, %s, %s: u_display shows the video controller, %dx%d at %d words a line" % (
-            top, config, asked, vw, vh, vw // 32)
-        got, why = params_at_cell(tree, top, "u_display", ["PIC_W", "PIC_H", "WORDS_PER_LINE"])
-        if got is None and why is None:
-            pass
-        elif got is None:
-            say(False, "%s --- %s" % (what, why))
-        elif (got["PIC_W"], got["PIC_H"], got["WORDS_PER_LINE"]) != (vw, vh, vw // 32):
-            say(False, "%s --- it shows %s" % (what, got))
-        else:
-            say(True, what)
-
-
-def k_at_generator(board, config, asked, bits, tree):
-    """The K `quux_phase_gen` counts is the board's own for the word."""
-    top = BOARDS[board]["top"]
-    k_want = BOARDS[board]["sync_k"][bits]
-    kwhat = "%s, %s, %s: the microcycle is SYNC_K=%d ticks at the generator" % (
-        top, config, asked, k_want)
-    k, why = sync_k_at_generator(tree)
-    if k is None:
-        say(False, "%s --- %s" % (kwhat, why))
-    elif k != k_want:
-        say(False, "%s --- it counts %d" % (kwhat, k))
-    else:
-        say(True, kwhat)
-
-
-def refused_at(board, config, value, message, instance):
-    """Elaboration stops with `message`, noted in `instance`."""
-    top = BOARDS[board]["top"]
-    what = "%s, %s, MACHINE=%s: refused in %s" % (top, config, value, instance)
-    rc, out = verilator(board, config, value, "--lint-only")
-    lines = out.split("\n")
-    at = [i for i, line in enumerate(lines) if message in line]
-    noted = any("In instance '%s'" % instance in line
-                for i in at for line in lines[i + 1:i + 3])
-    if rc == 0:
-        say(False, "%s --- the lint passed" % what)
-    elif not at:
-        say(False, "%s --- no line says \"%s\":\n%s" % (what, message, out.strip()))
-    elif not noted:
-        say(False, "%s --- the refusal is not noted in that instance:\n%s"
-            % (what, out.strip()))
-    else:
-        say(True, what)
+    what = "%s, %s: the top level lints clean" % (top, config)
+    rc, out = verilator(board, config, "--lint-only")
+    if rc != 0:
+        say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
+        return
+    say(True, what)
+    mdir = tempfile.mkdtemp(dir=scratch)
+    rc, out = verilator(board, config, "--json-only", mdir)
+    if rc != 0:
+        say(False, "%s, %s: the JSON dump failed:\n%s" % (top, config, out.strip()))
+        return
+    with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
+        tree = json.load(f)
+    shutil.rmtree(mdir, True)
+    cable_at_top(board, config, tree)
+    console_at_top(board, config, tree)
+    if board == "kr260":
+        kr260_raster(config, tree)
 
 
 def flow(what, cmd, env_add, rc_want, has, lacks):
     env = dict(os.environ)
-    for name in ("MACHINE", "WORD_BITS", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256"):
+    for name in ("MACHINE", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256", "FAULT"):
         env.pop(name, None)
     env.update(env_add)
     rc, out = run(cmd, env)
@@ -803,7 +392,7 @@ def make_flow(what, make_args, has, lacks):
     and none of `lacks`.  PROM 2002's image is not remade (`-o`): nothing in
     `make check` reads it, and `-n` runs nothing."""
     env = dict(os.environ)
-    for name in ("MACHINE", "WORD_BITS", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256", "MAKEFLAGS", "MFLAGS"):
+    for name in ("MACHINE", "REVISION", "PERIOD_NS", "PROM", "PROM_SHA256", "MAKEFLAGS", "MFLAGS"):
         env.pop(name, None)
     rc, out = run(["make", "-s", "-n", "-o", DE25_Q15_PROM, "de25"] + make_args, env)
     line = [l for l in out.replace("\\\n", " ").split("\n") if "boards/de25-nano/quartus/build.sh" in l]
@@ -834,183 +423,29 @@ def main():
     try:
         for board, spec in sorted(BOARDS.items()):
             for config in spec["configs"]:
-                for value in [None] + spec["machines"]:
-                    reaches(board, config, value, scratch)
-        for board in ("arty", "de25"):
-            top = BOARDS[board]["top"]
-            refused_at(board, "plain", NOT_A_MACHINE,
-                       'cadr_machine: MACHINE is "%s"' % NOT_A_MACHINE,
-                       "%s.u_machine" % top)
-        # QUUX at revision 12's word, the default 32, is refused: on the
-        # Kria KR260 by its top level, and on the Arty and the DE25-Nano by
-        # the processor, revision 12 being retired.
-        for config in BOARDS["kr260"]["configs"]:
-            refused_at("kr260", config, "quux",
-                       "and the Kria KR260 builds the CADR and QUUX revision 13", "cadr_kr260")
-        for board in ("arty", "de25"):
-            top = BOARDS[board]["top"]
-            for config in BOARDS[board]["configs"]:
-                refused_at(board, config, "quux",
-                           "cadr_microcycle: WORD_BITS is 32 on quux", "%s.u_machine.processor" % top)
-        # The word, on the boards that build QUUX.
-        for board in ("arty", "de25"):
-            word_reaches(board, "DDR=1 HDMI=1", 40, scratch)
-        # With the processing system: the file device's page is there only
-        # behind its port, as on the other boards.
-        word_reaches("kr260", "DDR=1", 40, scratch)
-        # And the revision, on the three boards that build QUUX.
-        for board, config in (("arty", "DDR=1 HDMI=1"), ("de25", "DDR=1 HDMI=1"), ("kr260", "DDR=1")):
-            revision_reaches(board, config, scratch)
+                board_top(board, config, scratch)
 
-        # **THE ARTY'S FLOW STATES THE K ITS MACHINE COUNTS**: `tick.tcl`'s
-        # `cadr_sync_k` at 40 is the table's, and the flow sets the `sync_k`
-        # that `quux_machine.xdc` writes its counts from with it, for the
-        # word it builds, before it reads that file; at 32 it has none.
-        what = "the Arty's flow states no K at WORD_BITS=32, revision 12's (tick.tcl, cadr_sync_k)"
-        script = os.path.join(scratch, "sync_k32.tcl")
-        with open(script, "w") as f:
-            f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 32]\"\n")
-        rc, out = run([TCLSH, script])
-        if rc == 0 or "TICK: FAILED --- WORD_BITS=32 has no K" not in out:
-            say(False, "%s --- it says:\n%s" % (what, out.strip()))
-        else:
-            say(True, what)
-        for bits in (40,):
-            k_want = BOARDS["arty"]["sync_k"][bits]
-            what = "the Arty's flow states K=%d at WORD_BITS=%d (tick.tcl, cadr_sync_k)" % (k_want, bits)
-            script = os.path.join(scratch, "sync_k.tcl")
-            with open(script, "w") as f:
-                f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k %d]\"\n" % bits)
-            rc, out = run([TCLSH, script])
-            if rc != 0 or ("K=%d" % k_want) not in out.split("\n"):
-                say(False, "%s --- it says:\n%s" % (what, out.strip()))
-            else:
-                say(True, what)
-        for board, top in (("arty", "boards/arty-z7-20/cadr_arty.sv"), ("kr260", "boards/kria-kr260/cadr_kr260.sv")):
-            k_want = BOARDS[board]["sync_k14"]
-            what = "the %s flow states K=%d at revision 14 (tick.tcl, cadr_sync_k)" % (board, k_want)
-            script = os.path.join(scratch, "sync_k14.tcl")
-            with open(script, "w") as f:
-                f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 40 %s 14]\"\n" % top)
-            rc, out = run([TCLSH, script])
-            if rc != 0 or ("K=%d" % k_want) not in out.split("\n"):
-                say(False, "%s --- it says:\n%s" % (what, out.strip()))
-            else:
-                say(True, what)
-        what = "the Arty's flow states no K at REVISION=15 (tick.tcl, cadr_sync_k)"
-        script = os.path.join(scratch, "sync_k15.tcl")
-        with open(script, "w") as f:
-            f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 40 boards/arty-z7-20/cadr_arty.sv 15]\"\n")
-        rc, out = run([TCLSH, script])
-        say(rc != 0 and "TICK: FAILED --- REVISION=15 has no K" in out,
-            what if rc != 0 and "TICK: FAILED --- REVISION=15 has no K" in out else "%s --- it says:\n%s" % (what, out.strip()))
-        with open("boards/arty-z7-20/vivado/bitstream.tcl") as f:
-            text = f.read()
-        sets = [i for i, line in enumerate(text.split("\n"))
-                if line.strip() == "set sync_k [cadr_sync_k $word_bits boards/arty-z7-20/cadr_arty.sv $revision]"]
-        reads = [i for i, line in enumerate(text.split("\n"))
-                 if "read_xdc" in line and "quux_machine.xdc" in line and not line.lstrip().startswith("#")]
-        what = "the Arty's flow sets sync_k from the word and revision it builds, once, before quux_machine.xdc"
-        if len(sets) != 1 or len(reads) != 1 or sets[0] > reads[0]:
-            say(False, "%s --- %d such line(s), %d read(s) of the file" % (what, len(sets), len(reads)))
-        else:
-            say(True, what)
-
-        # The flows.  Every OUTDIR is under the scratch directory, so a flow
-        # that failed to refuse writes nothing anywhere else.
-        arty = [TCLSH, "boards/arty-z7-20/vivado/bitstream.tcl"]
-        kr260 = [TCLSH, "boards/kria-kr260/vivado/bitstream.tcl"]
+        # The Zynq boards' Vivado flows.  Every OUTDIR is under the scratch
+        # directory, so a flow that failed to refuse writes nothing anywhere
+        # else.
         out = lambda name: os.path.join(scratch, name)
-        flow("the Arty's Vivado flow refuses MACHINE=%s" % NOT_A_MACHINE, arty,
-             {"MACHINE": NOT_A_MACHINE, "OUTDIR": out("a")}, 1,
-             ["BIT: FAILED --- MACHINE=%s is not a machine" % NOT_A_MACHINE],
-             ["BIT: the machine is"])
-        flow("the Arty's Vivado flow refuses MACHINE=quux into a directory not named for it",
-             arty, {"MACHINE": "quux", "OUTDIR": out("ddr")}, 1,
-             ["BIT: FAILED --- MACHINE=quux into OUTDIR="],
-             ["BIT: the machine is"])
-        flow("the Arty's Vivado flow takes MACHINE=cadr", arty,
-             {"MACHINE": "cadr", "OUTDIR": out("arty-cadr-ddr")}, None,
-             ["BIT: the machine is cadr"], ["FAILED --- MACHINE"])
-        flow("the Arty's Vivado flow takes MACHINE=quux at WORD_BITS=40", arty,
-             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
-             ["BIT: the machine is quux"], ["FAILED --- MACHINE"])
-        flow("the Arty's Vivado flow refuses MACHINE=quux at revision 12's word", arty,
-             {"MACHINE": "quux", "OUTDIR": out("arty-quux13-ddr")}, 1,
-             ["BIT: FAILED --- MACHINE=quux at WORD_BITS=32, which was revision 12,"],
-             ["BIT: the machine is"])
-        flow("the Arty's Vivado flow takes no MACHINE as cadr", arty,
-             {"OUTDIR": out("b")}, None,
-             ["BIT: the machine is cadr"], ["FAILED --- MACHINE"])
-        flow("the Arty's Vivado flow refuses WORD_BITS=36", arty,
-             {"MACHINE": "quux", "WORD_BITS": "36", "OUTDIR": out("arty-quux13-ddr")}, 1,
-             ["BIT: FAILED --- WORD_BITS=36 is not a word"], ["BIT: the machine is"])
-        flow("the Arty's Vivado flow refuses WORD_BITS=40 on the CADR", arty,
-             {"MACHINE": "cadr", "WORD_BITS": "40", "OUTDIR": out("e")}, 1,
-             ["BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr"],
-             ["BIT: the machine is"])
-        flow("the Arty's Vivado flow refuses revision 13 into a directory not named for it",
-             arty, {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux-ddr")}, 1,
-             ["BIT: FAILED --- WORD_BITS=40 into OUTDIR="], ["BIT: the machine is"])
-        flow("the Arty's Vivado flow takes WORD_BITS=40 on QUUX", arty,
-             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
-             ["BIT: the machine is quux, revision 13 (WORD_BITS=40)"], ["FAILED --- WORD_BITS"])
-        # **EACH MACHINE'S BOOT PROM IS ITS OWN** (contract G2 §2.8): the
-        # Arty's flow names the image it builds in, MIT's for the CADR and
-        # PROM 2001 for QUUX.
-        proms = {("cadr", None): "build/boot_prom.hex",
-                 ("quux", "40"): "build/boot_prom.quux13.hex"}
-        for (value, bits), image in sorted(proms.items(), key=str):
-            env_add = {"MACHINE": value,
-                       "OUTDIR": out("arty-%s%s-ddr" % (value, "13" if bits else ""))}
-            if bits:
-                env_add["WORD_BITS"] = bits
-            flow("the Arty's Vivado flow builds MACHINE=%s%s with %s"
-                 % (value, " WORD_BITS=%s" % bits if bits else "", image), arty, env_add, None,
-                 ["BIT: the boot PROM is %s\n" % image],
-                 ["BIT: the boot PROM is %s\n" % other for other in proms.values() if other != image])
-        # **REVISION 14 ONLY WHEN ASKED FOR, AND INTO ITS OWN DIRECTORY.**
-        for name, cmd, prefix in (("the Arty's", arty, "arty"), ("the Kria KR260's", kr260, "kr260")):
-            flow("%s Vivado flow refuses REVISION=15" % name, cmd,
-                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "15", "OUTDIR": out(prefix + "-quux14")}, 1,
-                 ["BIT: FAILED --- REVISION=15 is not a revision"], ["BIT: the machine is"])
-            flow("%s Vivado flow refuses REVISION=14 on the CADR" % name, cmd,
-                 {"MACHINE": "cadr", "REVISION": "14", "OUTDIR": out(prefix + "-cadr")}, 1,
-                 ["BIT: FAILED --- REVISION=14 is QUUX's, and MACHINE=cadr"], ["BIT: the machine is"])
-            flow("%s Vivado flow refuses revision 14 into a directory that says quux13" % name, cmd,
-                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "14", "OUTDIR": out(prefix + "-quux13")}, 1,
-                 ["quux14"], ["BIT: the machine is"])
-            flow("%s Vivado flow refuses revision 13 into a directory that says quux14" % name, cmd,
-                 {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out(prefix + "-quux14")}, 1,
-                 ["quux13"], ["BIT: the machine is"])
-            flow("%s Vivado flow takes REVISION=14 with PROM 2002" % name, cmd,
-                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "14", "OUTDIR": out(prefix + "-quux14")}, None,
-                 ["BIT: the machine is quux, revision 14 (WORD_BITS=40)\n",
-                  "BIT: the boot PROM is build/boot_prom.quux14.hex\n"],
-                 ["FAILED --- REVISION", "FAILED --- MACHINE"])
-        flow("the Kria KR260's Vivado flow refuses MACHINE=quux at revision 12's word", kr260,
-             {"MACHINE": "quux", "OUTDIR": out("k-quux13")}, 1,
-             ["BIT: FAILED --- MACHINE=quux at WORD_BITS=32, and the Kria KR260 builds"],
-             ["BIT: the machine is"])
-        flow("the Kria KR260's Vivado flow refuses MACHINE=%s" % NOT_A_MACHINE, kr260,
-             {"MACHINE": NOT_A_MACHINE, "OUTDIR": out("k2")}, 1,
-             ["BIT: FAILED --- MACHINE=%s is not a machine" % NOT_A_MACHINE], ["BIT: the machine is"])
-        flow("the Kria KR260's Vivado flow refuses WORD_BITS=40 on the CADR", kr260,
-             {"MACHINE": "cadr", "WORD_BITS": "40", "OUTDIR": out("k3")}, 1,
-             ["BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr"],
-             ["BIT: the machine is"])
-        flow("the Kria KR260's Vivado flow refuses revision 13 into a directory not named for it",
-             kr260, {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("k-quux")}, 1,
-             ["BIT: FAILED --- MACHINE=quux into OUTDIR="], ["BIT: the machine is"])
-        flow("the Kria KR260's Vivado flow takes WORD_BITS=40 on QUUX with PROM 2001", kr260,
-             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("kr260-quux13")}, None,
-             ["BIT: the machine is quux, revision 13 (WORD_BITS=40)\n",
-              "BIT: the boot PROM is build/boot_prom.quux13.hex\n"],
-             ["FAILED --- MACHINE", "FAILED --- WORD_BITS"])
-        flow("the Kria KR260's Vivado flow takes MACHINE=cadr with MIT's PROM", kr260,
-             {"MACHINE": "cadr", "OUTDIR": out("l")}, None,
-             ["BIT: the machine is cadr\n", "BIT: the boot PROM is build/boot_prom.hex\n"],
-             ["FAILED --- MACHINE"])
+        for name, cmd, flow_dir in (
+                ("the Arty's", [TCLSH, "boards/arty-z7-20/vivado/bitstream.tcl"], "boards/arty-z7-20/vivado"),
+                ("the Kria KR260's", [TCLSH, "boards/kria-kr260/vivado/bitstream.tcl"], "boards/kria-kr260/vivado")):
+            flow("%s Vivado flow refuses MACHINE=%s" % (name, NOT_A_MACHINE), cmd,
+                 {"MACHINE": NOT_A_MACHINE, "OUTDIR": out("a")}, 1,
+                 ["BIT: FAILED --- MACHINE=%s is not a machine" % NOT_A_MACHINE],
+                 ["BIT: the machine is"])
+            flow("%s Vivado flow refuses MACHINE=quux, naming QUUX's flow" % name, cmd,
+                 {"MACHINE": "quux", "OUTDIR": out("quux")}, 1,
+                 ["BIT: FAILED --- MACHINE=quux is not built by this flow",
+                  "%s/quux15_bitstream.tcl" % flow_dir],
+                 ["BIT: the machine is"])
+            for env_add, asked in (({"MACHINE": "cadr"}, "MACHINE=cadr"), ({}, "no MACHINE")):
+                flow("%s Vivado flow takes %s as the CADR, with MIT's PROM" % (name, asked), cmd,
+                     dict(env_add, OUTDIR=out("cadr")), None,
+                     ["BIT: the machine is cadr\n", "BIT: the boot PROM is build/boot_prom.hex\n"],
+                     ["FAILED --- MACHINE"])
 
         nowhere = {"QUARTUS_ROOTDIR": out("no-quartus")}
         for script, who in (("build.sh", "de25"), ("program.sh", "de25-program")):
@@ -1018,61 +453,35 @@ def main():
             flow("the DE25-Nano's %s refuses MACHINE=%s" % (script, NOT_A_MACHINE),
                  cmd, dict(nowhere, MACHINE=NOT_A_MACHINE), 1,
                  ["%s: REFUSED: MACHINE is '%s'" % (who, NOT_A_MACHINE)], [])
-            for value, bits in (("cadr", None), ("quux", "40")):
-                # Accepted, and refused only later for the Quartus that is
-                # not there.
-                env_add = dict(nowhere, MACHINE=value)
-                if bits:
-                    env_add["WORD_BITS"] = bits
+            # Accepted, and refused only later for the Quartus that is not
+            # there.
+            for value in ("cadr", "quux"):
                 flow("the DE25-Nano's %s takes MACHINE=%s" % (script, value),
-                     cmd, env_add, 1,
-                     ["%s: REFUSED:" % who], ["REFUSED: MACHINE is"])
-        for script, who in (("build.sh", "de25"), ("program.sh", "de25-program")):
-            cmd = ["sh", "boards/de25-nano/quartus/" + script, "x"]
-            flow("the DE25-Nano's %s refuses WORD_BITS=36" % script, cmd,
-                 dict(nowhere, MACHINE="quux", WORD_BITS="36"), 1,
-                 ["%s: REFUSED: WORD_BITS is '36'" % who], [])
-            flow("the DE25-Nano's %s refuses WORD_BITS=40 on the CADR" % script, cmd,
-                 dict(nowhere, MACHINE="cadr", WORD_BITS="40"), 1,
-                 ["%s: REFUSED: WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr" % who], [])
-            flow("the DE25-Nano's %s refuses MACHINE=quux at revision 12's word" % script, cmd,
-                 dict(nowhere, MACHINE="quux"), 1,
-                 ["%s: REFUSED: MACHINE=quux at WORD_BITS=32, which was revision 12" % who], [])
-            flow("the DE25-Nano's %s takes WORD_BITS=40 on QUUX" % script, cmd,
-                 dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
-                 ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])
+                     cmd, dict(nowhere, MACHINE=value), 1,
+                     ["%s: REFUSED:" % who], ["REFUSED: MACHINE is", "REFUSED: REVISION"])
+            flow("the DE25-Nano's %s takes QUUX at REVISION=%s" % (script, QUUX_REVISION), cmd,
+                 dict(nowhere, MACHINE="quux", REVISION=QUUX_REVISION), 1,
+                 ["%s: REFUSED:" % who], ["REFUSED: REVISION"])
+            for other in ("15", "17"):
+                flow("the DE25-Nano's %s refuses QUUX at REVISION=%s" % (script, other), cmd,
+                     dict(nowhere, MACHINE="quux", REVISION=other), 1,
+                     ["%s: REFUSED: REVISION is not taken" % who], [])
+            flow("the DE25-Nano's %s refuses REVISION on the CADR" % script, cmd,
+                 dict(nowhere, MACHINE="cadr", REVISION=QUUX_REVISION), 1,
+                 ["%s: REFUSED: REVISION is QUUX's, and MACHINE=cadr" % who], [])
+
         cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
-        flow("the DE25-Nano's build.sh refuses REVISION=17", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="17"), 1,
-             ["de25: REFUSED: REVISION is '17'"], [])
-        # Revision 16 is revision 15's top level with the Ethernet device,
-        # QUUX's alone, at revision 15's period and from its PROM 2002.
-        flow("the DE25-Nano's build.sh refuses REVISION=16 on the CADR", cmd,
-             dict(nowhere, MACHINE="cadr", REVISION="16"), 1,
-             ["de25: REFUSED: REVISION=16 is QUUX's, and MACHINE=cadr"], [])
-        flow("the DE25-Nano's build.sh builds revision 16 at %s ns from PROM 2002 by default"
-             % DE25_Q15_PERIOD_NS, cmd, dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="16"), 1,
-             ["de25: revision 16 at %s ns:" % DE25_Q15_PERIOD_NS,
-              "de25: the boot PROM is %s\n" % DE25_Q15_PROM], ["REFUSED: REVISION"])
-        # Revision 15 is its own top level (`quux15_de25.sv`), QUUX's alone,
-        # taken as far as the missing Quartus.
-        flow("the DE25-Nano's build.sh refuses REVISION=15 on the CADR", cmd,
-             dict(nowhere, MACHINE="cadr", REVISION="15"), 1,
-             ["de25: REFUSED: REVISION=15 is QUUX's, and MACHINE=cadr"], [])
-        flow("the DE25-Nano's build.sh takes REVISION=15 on QUUX", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15"), 1,
-             ["de25: REFUSED:"], ["REFUSED: REVISION"])
-        flow("the DE25-Nano's build.sh refuses REVISION=15 at a period it cannot run", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15", PERIOD_NS="9.5"), 1,
-             ["de25: REFUSED: PERIOD_NS is 9.5; revision 15 runs at 10 to 63.5 ns"], [])
-        # Revision 15 by default: the binding fit's period and PROM 2002.
-        q15 = dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15")
-        flow("the DE25-Nano's build.sh builds revision 15 at %s ns from PROM 2002 by default"
-             % DE25_Q15_PERIOD_NS, cmd, q15, 1,
-             ["de25: revision 15 at %s ns:" % DE25_Q15_PERIOD_NS,
+        flow("the DE25-Nano's build.sh refuses QUUX at a period it cannot run", cmd,
+             dict(nowhere, MACHINE="quux", PERIOD_NS="9.5"), 1,
+             ["de25: REFUSED: PERIOD_NS is 9.5; QUUX runs at 10 to 63.5 ns"], [])
+        # QUUX by default: the binding fit's period and PROM 2002.
+        q = dict(nowhere, MACHINE="quux")
+        flow("the DE25-Nano's build.sh builds QUUX at %s ns from PROM 2002 by default"
+             % DE25_Q15_PERIOD_NS, cmd, q, 1,
+             ["de25: QUUX at %s ns:" % DE25_Q15_PERIOD_NS,
               "de25: the boot PROM is %s\n" % DE25_Q15_PROM], [])
-        flow("the DE25-Nano's build.sh takes the boot PROM PROM names on revision 15", cmd,
-             dict(q15, PROM=DE25_Q15_TEST_PROM), 1,
+        flow("the DE25-Nano's build.sh takes the boot PROM PROM names on QUUX", cmd,
+             dict(q, PROM=DE25_Q15_TEST_PROM), 1,
              ["de25: the boot PROM is %s\n" % DE25_Q15_TEST_PROM], ["the boot PROM is %s" % DE25_Q15_PROM])
         image = out("not-prom-2002.hex")
         with open(image, "w") as f:
@@ -1080,36 +489,29 @@ def main():
         with open(image, "rb") as f:
             image_sha = hashlib.sha256(f.read()).hexdigest()
         flow("the DE25-Nano's build.sh refuses a boot PROM whose digest is not PROM_SHA256's", cmd,
-             dict(q15, PROM=image, PROM_SHA256=DE25_Q15_PROM_SHA256), 1,
+             dict(q, PROM=image, PROM_SHA256=DE25_Q15_PROM_SHA256), 1,
              ["de25: REFUSED: %s's sha256 is %s, and PROM_SHA256 is %s" % (image, image_sha, DE25_Q15_PROM_SHA256)],
              ["PROM_SHA256's"])
         flow("the DE25-Nano's build.sh takes a boot PROM whose digest is PROM_SHA256's", cmd,
-             dict(q15, PROM=image, PROM_SHA256=image_sha), 1,
+             dict(q, PROM=image, PROM_SHA256=image_sha), 1,
              ["de25: the boot PROM's sha256 is %s, PROM_SHA256's\n" % image_sha], ["and PROM_SHA256 is"])
-        flow("the DE25-Nano's build.sh refuses PROM on revision 14", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="14", PROM=DE25_Q15_TEST_PROM), 1,
-             ["de25: REFUSED: PROM=%s names revision 15's boot PROM" % DE25_Q15_TEST_PROM], [])
+        flow("the DE25-Nano's build.sh refuses PROM on the CADR", cmd,
+             dict(nowhere, MACHINE="cadr", PROM=DE25_Q15_TEST_PROM), 1,
+             ["de25: REFUSED: PROM=%s names QUUX's boot PROM" % DE25_Q15_TEST_PROM], [])
         if with_make:
-            q15_make = ["MACHINE=quux", "WORD_BITS=40", "REVISION=15", "DDR=1", "HDMI=1"]
-            make_flow("make de25 REVISION=15 hands build.sh %s ns and PROM 2002 with its digest" % DE25_Q15_PERIOD_NS,
-                      q15_make,
-                      ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_PROM,
-                       "PROM_SHA256=%s" % DE25_Q15_PROM_SHA256], [])
-            make_flow("make de25 REVISION=16 hands build.sh %s ns" % DE25_Q15_PERIOD_NS,
-                      ["MACHINE=quux", "WORD_BITS=40", "REVISION=16", "DDR=1", "HDMI=1"],
-                      ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_PROM], [])
-            make_flow("make de25 REVISION=15 PROM=%s hands build.sh that image and no digest" % DE25_Q15_TEST_PROM,
-                      q15_make + ["PROM=%s" % DE25_Q15_TEST_PROM],
+            q_make = ["MACHINE=quux", "DDR=1", "HDMI=1"]
+            make_flow("make de25 MACHINE=quux hands build.sh REVISION=%s, %s ns and PROM 2002 with its digest"
+                      % (QUUX_REVISION, DE25_Q15_PERIOD_NS), q_make,
+                      ["REVISION=%s" % QUUX_REVISION, "PERIOD_NS=%s" % DE25_Q15_PERIOD_NS,
+                       "PROM=%s" % DE25_Q15_PROM, "PROM_SHA256=%s" % DE25_Q15_PROM_SHA256], [])
+            make_flow("make de25 MACHINE=quux PROM=%s hands build.sh that image and no digest" % DE25_Q15_TEST_PROM,
+                      q_make + ["PROM=%s" % DE25_Q15_TEST_PROM],
                       ["PERIOD_NS=%s" % DE25_Q15_PERIOD_NS, "PROM=%s" % DE25_Q15_TEST_PROM], ["PROM_SHA256="])
-        flow("the DE25-Nano's build.sh refuses REVISION=14 on the CADR", cmd,
-             dict(nowhere, MACHINE="cadr", REVISION="14"), 1,
-             ["de25: REFUSED: REVISION=14 is QUUX's, and MACHINE=cadr"], [])
-        flow("the DE25-Nano's build.sh takes REVISION=14 on QUUX", cmd,
-             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="14"), 1,
-             ["de25: REFUSED:"], ["REFUSED: REVISION"])
+            make_flow("make de25 MACHINE=cadr hands build.sh no REVISION, period or PROM",
+                      ["MACHINE=cadr", "DDR=1", "HDMI=1"], ["MACHINE=cadr"],
+                      ["REVISION=", "PERIOD_NS=", "PROM="])
         # A fault build carries no machine, so QUUX beside it is refused, and
         # the CADR, the default, is taken as far as the missing Quartus.
-        cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
         flow("the DE25-Nano's build.sh refuses FAULT=1 with MACHINE=quux", cmd,
              dict(nowhere, FAULT="1", MACHINE="quux"), 1,
              ["de25: REFUSED: FAULT=1 takes no MACHINE=quux"], [])
@@ -1126,8 +528,7 @@ def main():
     if failures:
         print("machine: FAILED, %d of the cases above" % len(failures))
         return 1
-    print("machine: every board's top level hands MACHINE, WORD_BITS, REVISION and its K to u_machine, "
-          "and the flows refuse what they must")
+    print("machine: every board's CADR top level is the CADR's, and the flows refuse what they must")
     return 0
 
 

@@ -79,7 +79,6 @@
 //! such as `HintInverted`, passes here and is caught by the testbench.  The
 //! trace says it carries the fault in its second line.
 
-mod chaos_state;
 mod machine_axis;
 mod quux15_blockdisk;
 mod quux15_console;
@@ -108,21 +107,14 @@ use muir::pipeline::port::LateModel;
 use muir::pipeline::{CACHE_WORDS, Mutation, Pipeline, PortTiming};
 use muir::tlb;
 
-/// Revision 15.
-const REV15: Geometry = Geometry::QUUX_15;
-
-/// **The revision a trace is of**, `--revision`'s: 15, every trace's unless
-/// it names 16, whose trace says so in its `# revision 16` line, which a
-/// testbench built for another revision refuses (QUUX's Ethernet contract,
-/// §10: revision 16 is revision 15 with the Ethernet device).
-static REVISION: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-
-fn revision() -> u8 {
-    *REVISION.get().unwrap_or(&15)
-}
+/// **The revision every trace is of**, 16, which its `# revision 16` line
+/// says and a testbench built for another refuses (QUUX's Ethernet contract,
+/// §10: revision 16 is revision 15's pipeline with the Ethernet device and no
+/// Chaosnet interface).
+const REVISION: u8 = 16;
 
 fn geometry() -> Geometry {
-    if revision() == 16 { Geometry::QUUX_16 } else { REV15 }
+    Geometry::QUUX_16
 }
 
 /// **A board revision 15 runs on**: its port's memory timing and its
@@ -520,7 +512,7 @@ fn transfer_program() -> Prog {
 
 /// **Main memory and a register** through the windows, which never touch the
 /// TLB: a word written and read back, a word of its line never written, and
-/// the register page's word 0, MACHINE-ID at revision 15.  The first start
+/// the register page's word 0, MACHINE-ID.  The first start
 /// waits behind the boot's sweep of the TLB.
 fn memory_program() -> Prog {
     const WORD: u32 = 0o2007;
@@ -529,7 +521,7 @@ fn memory_program() -> Prog {
     p.poke(WORD, w(0o025, 0x1234_5678));
     p.read(phys_va(WORD), w(0o025, 0x1234_5678), "the word written");
     p.read(phys_va(WORD - 1), 0, "a word of its line, never written");
-    p.read(reg(0), (0x5155 << 16) | (15 << 4) | 4, "MACHINE-ID, revision 15");
+    p.read(reg(0), (0x5155 << 16) | (u64::from(REVISION) << 4) | 4, "MACHINE-ID");
     p.park();
     p
 }
@@ -1039,9 +1031,6 @@ struct Case {
     /// Key words and mouse moves handed to muir's keyboard and mouse as the
     /// run goes (`quux15_input.rs`).
     input: Vec<quux15_input::Inject>,
-    /// Frames put on muir's Chaosnet cable as the run goes, and its far
-    /// end's side written down for the testbench (`quux15_network.rs`).
-    net: Option<quux15_network::NetRun>,
     /// What a register access's run must end with (`quux15_regread.rs`).
     calls: Option<Calls>,
     /// Revision 16's Ethernet frames arriving as the run goes, and its host's
@@ -1093,7 +1082,6 @@ impl Case {
             resume: None,
             disk: None,
             input: Vec::new(),
-            net: None,
             eth: None,
             calls: None,
         }
@@ -1160,9 +1148,7 @@ impl Case {
         if let Some((w, h)) = self.video {
             out.push(format!("# video {w:x} {h:x}"));
         }
-        if revision() != 15 {
-            out.push(format!("# revision {}", revision()));
-        }
+        out.push(format!("# revision {REVISION}"));
         if let Some(d) = &self.disk {
             out.extend(d.lines());
         }
@@ -1170,7 +1156,7 @@ impl Case {
     }
 }
 
-/// The machine for `case`: QUUX as the fabric builds it, at revision 15,
+/// The machine for `case`: QUUX as the fabric builds it, at revision 16,
 /// with QUUX's main memory, and the case's memories.
 fn machine(case: &Case) -> Machine {
     let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
@@ -1212,11 +1198,6 @@ fn machine(case: &Case) -> Machine {
     if let Some(d) = &case.disk {
         let bd = m.block_disk.as_mut().expect("QUUX's machine has block-disk");
         bd.attach(quux15_blockdisk::pack(d.blocks));
-    }
-    // **A CABLE ON THE CHAOSNET INTERFACE** for a run that puts frames on
-    // it, with nothing else on it (`quux15_network.rs`).
-    if case.net.is_some() {
-        m.ioboard.chaos.as_mut().expect("the Chaosnet interface").plug(muir::chaos::ether::Ether::new());
     }
     m
 }
@@ -1400,9 +1381,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     }
     e.port.model = case.late;
     if let Some(r) = &case.eth {
-        if revision() != 16 {
-            return Err((2, format!("{name}: a run with the Ethernet device is revision 16's: --revision 16")));
-        }
         quux15_ethernet::attach(&mut e, r);
     }
     let mut t = trace15::Trace15::start(&mut e);
@@ -1414,7 +1392,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     let mut host = FileHost::default();
     let mut disk = quux15_blockdisk::Watch::new(case.disk.as_ref());
     let mut feed = quux15_input::Feed::new(&case.input);
-    let mut net = quux15_network::Net::new(case, period, bubbles).map_err(|x| (1, x))?;
     let limit = case.disk.as_ref().map_or(200_000, |d| d.max_clocks.max(200_000));
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
@@ -1426,7 +1403,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                      host: &mut FileHost,
                      disk: &mut quux15_blockdisk::Watch,
                      feed: &mut quux15_input::Feed,
-                     net: &mut quux15_network::Net,
                      rows: &mut Vec<String>,
                      parked_at: &mut Option<u64>,
                      halted: &mut bool|
@@ -1435,7 +1411,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             return Err((1, format!("{name} never reached its park in {limit} clocks")));
         }
         feed.before(e);
-        net.before(e).map_err(|x| (1, format!("{name}: {x}")))?;
         match e.tick() {
             Ok(()) => {}
             Err(h) => match (halt_code(&h), case.halts) {
@@ -1454,7 +1429,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         disk.watch(e).map_err(|x| (1, format!("{name}: {x}")))?;
         let row = t.row(e);
         feed.after(e, row.commit).map_err(|x| (1, format!("{name}: {x}")))?;
-        net.after(e).map_err(|x| (1, format!("{name}: {x}")))?;
         if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
             *parked_at = Some(e.clock());
         }
@@ -1470,7 +1444,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         match *act {
             Act::Wait(n) => {
                 for _ in 0..n {
-                    if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)? {
+                    if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)? {
                         break;
                     }
                 }
@@ -1478,7 +1452,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
             Act::Spy(eadr, v) => {
                 memory.push(format!("# spy {:x} {eadr:x} {v:x}", e.clock() + 1));
                 e.spy_write(eadr, v);
-                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
             }
             Act::UntilHalted => {
                 let from = e.clock();
@@ -1486,7 +1460,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     if e.clock() > from + 20_000 {
                         return Err((1, format!("{name}: the halt did not end by clock {}", e.clock())));
                     }
-                    clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
+                    clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
                 }
                 memory.push(format!("# halted {:x} {}", e.clock(), quux15_console::tail_hex(&e)));
                 halted_cycles = Some(e.machine().cycles);
@@ -1516,7 +1490,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 // One clock more, in which the testbench's console takes the
                 // devices' snapshot; the file is of the machine as it leaves
                 // it, as a fabric writes it (A15b.13).
-                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)?;
+                clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)?;
                 let dir = std::env::var("QUUX15_CHECKPOINTS").map_err(|_| {
                     (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
                 })?;
@@ -1525,8 +1499,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 // board's apart from the Kria's.
                 let b2 = if bubbles == 2 { ".b2" } else { "" };
                 let board = board_suffix();
-                let rev = if revision() == 16 { ".r16" } else { "" };
-                let file = format!("{dir}/{name}.p{period}{b2}{board}{rev}.chk");
+                let file = format!("{dir}/{name}.p{period}{b2}{board}.chk");
                 // A file device with a handle open or a command queued holds
                 // what no checkpoint carries: muir refuses, and so must the
                 // board's writer.  And block-disk's transfer in flight, which
@@ -1555,7 +1528,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     std::path::Path::new(&file),
                     "rtl",
                     e.machine().memory_boards(),
-                    if revision() == 16 { muir::checkpoint::VERSION_16 } else { muir::checkpoint::VERSION_15 },
+                    muir::checkpoint::VERSION_16,
                     &body,
                 )
                 .map_err(|x| (2, format!("{name}: {file}: {x}")))?;
@@ -1581,7 +1554,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         memory.extend(host.lines);
         memory.extend(host.eth.lines);
         memory.extend(feed.lines);
-        memory.extend(net.lines);
         let summary = format!("{name}: checkpoint at clock {}", e.clock());
         return Ok(Ran { lines: rows, summary, memory, reached: [0; 14], sent: None });
     }
@@ -1592,7 +1564,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
         {
             break;
         }
-        if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut net, &mut rows, &mut parked_at, &mut halted)? {
+        if clock(&mut e, &mut t, &mut host, &mut disk, &mut feed, &mut rows, &mut parked_at, &mut halted)? {
             break;
         }
     }
@@ -1601,7 +1573,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     }
     // The machine it ends with, against micro's, and the results.
     feed.finished().map_err(|x| (1, format!("{name}: {x}")))?;
-    net.finished().map_err(|x| (1, format!("{name}: {x}")))?;
     // A register access's calls: the unhalted end, held to `micro`'s below,
     // or the one halt point's that sends the access out.
     let mut sent = None;
@@ -1673,7 +1644,6 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     memory.extend(host.lines);
     memory.extend(host.eth.lines);
     memory.extend(feed.lines);
-    memory.extend(net.lines);
     memory.extend(disk.lines);
     // A run at another video controller's size: the mode and the frame
     // buffer as muir's video controller ends with them; a run that ends in
@@ -1777,7 +1747,7 @@ fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let given = args.iter().any(|a| a == "--machine");
     if given && machine_axis::take(&mut args) != Which::Quux {
-        eprintln!("quux15: revision 15 is QUUX's; give --machine quux or no --machine");
+        eprintln!("quux15: the pipeline is QUUX's; give --machine quux or no --machine");
         std::process::exit(2);
     }
     let (mut name, mut prom_only, mut planted, mut period, mut bubbles) = (None, false, None, None, 1u8);
@@ -1808,21 +1778,6 @@ fn main() {
                 };
                 if BOARD.set(*b).is_err() {
                     eprintln!("quux15: --board is given twice");
-                    std::process::exit(2);
-                }
-            }
-            "--revision" => {
-                let v = it.next().unwrap_or_default();
-                let r = match v.as_str() {
-                    "15" => 15,
-                    "16" => 16,
-                    _ => {
-                        eprintln!("quux15: --revision is `{v}`; it is 15 or 16");
-                        std::process::exit(2);
-                    }
-                };
-                if REVISION.set(r).is_err() {
-                    eprintln!("quux15: --revision is given twice");
                     std::process::exit(2);
                 }
             }
@@ -1886,8 +1841,7 @@ fn main() {
         out.push(trace15::COLUMNS.to_string());
         out.push(format!(
             "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, \
-             revision {}, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {} words{}{}",
-            revision(),
+             revision {REVISION}, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {} words{}{}",
             period / 2,
             if period % 2 == 1 { 5 } else { 0 },
             timing(),

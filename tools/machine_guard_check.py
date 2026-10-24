@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The machine's elaboration guards on the board's video size and name.
+"""QUUX's core's elaboration guards on the board's name.
 
-    machine_guard_check.py <source>...
     machine_guard_check.py --quux15 <source>...
 
-`rtl/machine/cadr_machine.sv` refuses at elaboration a board name over 20
-characters, with a byte outside `040`-`176`, and a video controller muir's
-`check_video_size` would refuse (contract HD).  Each refusal is held here
-with its negative control: QUUX at revision 13 is linted with the value just
-inside the rule, which must pass, and just outside it, which must stop with
-the guard's own words.  A guard that refused everything, or nothing, fails one
-of the pair.
-
-With `--quux15`, revision 15's core, `rtl/machine/quux15_core.sv`, is linted
-the same way for its guards on the board name, which are `cadr_machine.sv`'s.
+`rtl/machine/quux15_core.sv` refuses at elaboration a board name over 20
+characters, or with a byte outside `040`-`176` (contract HD).  Each refusal
+is held here with its negative control: the core is linted with the value
+just inside the rule, which must pass, and just outside it, which must stop
+with the guard's own words.  A guard that refused everything, or nothing,
+fails one of the pair.
 """
 import os
 import subprocess
@@ -31,27 +26,15 @@ CASES = [
     ("a name with a byte over 176", ['-GBOARD_NAME="Kria KR260\x7f"'], "a byte outside 040-176"),
     ("a name of 040 and 176", ['-GBOARD_NAME=" ~"'], None),
     ("no name", [], None),
-    ("1920 by 1080", ["-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1080"], None),
-    ("1952 by 1080", ["-GVIDEO_WIDTH=1952", "-GVIDEO_HEIGHT=1080"], "cannot be"),
-    ("1920 by 1081", ["-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1081"], "cannot be"),
-    ("1900 by 1000, a line not whole words", ["-GVIDEO_WIDTH=1900", "-GVIDEO_HEIGHT=1000"], "cannot be"),
-    ("1024 by 768", ["-GVIDEO_WIDTH=1024", "-GVIDEO_HEIGHT=768"], None),
 ]
-
-# Revision 15's core: the board name's cases, the same rule.
-CASES15 = [c for c in CASES if "BOARD_NAME" in "".join(c[1]) or not c[1]]
 
 
 def main():
-    sources = sys.argv[1:]
-    if sources[:1] == ["--quux15"]:
-        sources = sources[1:]
-        base = [VERILATOR, "--lint-only", "-Irtl/machine", "--top-module", "quux15_core"]
-        cases = CASES15
-    else:
-        base = [VERILATOR, "--lint-only", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-                "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "--top-module", "cadr_machine"]
-        cases = CASES
+    if sys.argv[1:2] != ["--quux15"]:
+        sys.exit("usage: machine_guard_check.py --quux15 <source>...")
+    sources = sys.argv[2:]
+    base = [VERILATOR, "--lint-only", "-Irtl/machine", "--top-module", "quux15_core"]
+    cases = CASES
     bad = 0
     for what, params, refusal in cases:
         p = subprocess.run(base + params + sources, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

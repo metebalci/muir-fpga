@@ -49,7 +49,7 @@
 // `--already-halted` takes the machine as running when the count still
 // stands there (`bind_halted_here`).  The sidecar's `running:` line says
 // which, and its resume line names what muir needs to take the file as the
-// board ran it: on QUUX the revision and K, and on the CADR its Chaosnet
+// board ran it: on QUUX the clock's period, and on the CADR its Chaosnet
 // address, which is the one the fabric's interface holds unless
 // `--chaos-address` says otherwise (`bind_chaos_address`).
 //
@@ -99,7 +99,7 @@
 // <cadr/cadr_board.h>, which has the region's base for every board.
 #define DDR_MAIN_BASE    CADR_BOARD_MAIN_BASE
 #define DDR_DISPLAY_BASE CADR_BOARD_DISPLAY_BASE
-// QUUX revision 13's main memory, packed storage below the display.
+// QUUX's main memory, packed storage below the display.
 #define DDR_MAIN13_BASE  CADR_BOARD_QUUX13_MAIN_BASE
 
 // **THE MACHINE'S OWN MAIN MEMORY IS THE CONSOLE'S PAGE 2 WORD 37**, in
@@ -110,10 +110,9 @@
 // default: the CADR's 32 boards, QUUX's 2MW.  **A CADR raised past 32 boards
 // cannot cold-boot System 100** --- measured --- and System 1003 and later can.
 #define DEFAULT_BOARDS 32u
-// **REVISION 13's MAIN MEMORY IS 32MW ON THE BOARDS BY DEFAULT**
-// (contract G2 §3), which the fabric comes up with and word 37 reads, as on
-// every revision; the most is the room the board keeps for it
-// (`cadr_board.h`), in 64K-word units.
+// **QUUX's MAIN MEMORY IS 32MW ON THE BOARDS BY DEFAULT** (contract G2
+// §3), which the fabric comes up with and word 37 reads; the most is the
+// room the board keeps for it (`cadr_board.h`), in 64K-word units.
 #define MAX_BOARDS_13 (CADR_BOARD_QUUX13_MAIN_WORDS_MAX >> 16)
 // The most the CADR's backplane holds, sixty 64K-word boards.
 #define MAX_BOARDS 60u
@@ -152,11 +151,10 @@ static void usage(void)
 	exit(2);
 }
 
-// QUUX's revision 15 has a window of its own, and its own list.
-static void print_missing(int quux, int revision)
+// QUUX has a window of its own, and its own list.
+static void print_missing(int quux)
 {
-	const char *const *m = quux && revision >= 15 ? chk_rtl_missing_quux15()
-			       : quux ? chk_rtl_missing_quux() : chk_rtl_missing();
+	const char *const *m = quux ? chk_rtl_missing_quux15() : chk_rtl_missing();
 	say("what a checkpoint off this board cannot carry, and what is written");
 	say("instead.  Every one of these is a field muir's own format has and");
 	say("this fabric has no reading for:");
@@ -403,7 +401,7 @@ int main(int argc, char **argv)
 		}
 	}
 	if (want_missing) {
-		print_missing(quux, 0);
+		print_missing(quux);
 		return 0;
 	}
 	if (verify)
@@ -431,8 +429,9 @@ int main(int argc, char **argv)
 	// --- is the only order in which the packs are certainly whole; the
 	// --- board procedure in `docs/checkpoint.md` is those five commands.
 	if (halt_only) {
-		// Revision 15's halt is its drain's end, which `ro_found` asks
-		// for by the machine.
+		// QUUX's halt is its drain's end, which `ro_found` asks for by
+		// the machine.  A QUUX this program does not read is refused by
+		// the revision MACHINE-ID names.
 		const int rev = ro_quux_revision(&r);
 		if (rev < 0) {
 			say("the readout's register table entry %u does not answer: which "
@@ -440,20 +439,26 @@ int main(int argc, char **argv)
 			    IMG_RG_QUUX_ID);
 			return 1;
 		}
+		if (ro_machine_of(rev) < 0) {
+			say("the bitstream is QUUX revision %d, and this program has no "
+			    "layout of its window: nothing is halted", rev);
+			return 1;
+		}
+		const int pipe = rev != 0;
 		struct ro_stand st;
-		int found = ro_found(&r, rev >= 15, &st);
+		int found = ro_found(&r, pipe, &st);
 		if (found == RO_FOUND_HALTED) {
 			say("the machine is already halted at %llu microcycles",
 			    (unsigned long long)st.cycles);
 			return 0;
 		}
 		if (found != RO_FOUND_RUNNING) {
-			say_not_halted(found, &st, rev >= 15, "found");
+			say_not_halted(found, &st, pipe, "found");
 			say("nothing is written, and the machine is left as it was found");
 			return 1;
 		}
 		ro_halt(&r);
-		found = ro_found(&r, rev >= 15, &st);
+		found = ro_found(&r, pipe, &st);
 		if (found == RO_FOUND_RUNNING) {
 			say("the machine did not stop: it is still retiring "
 			    "microcycles after a write of zero to the clock "
@@ -461,7 +466,7 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		if (found != RO_FOUND_HALTED) {
-			say_not_halted(found, &st, rev >= 15,
+			say_not_halted(found, &st, pipe,
 				       "after a write of zero to the clock control register");
 			say("no halt is marked, and RUN is left clear");
 			return 1;
@@ -574,33 +579,26 @@ int main(int argc, char **argv)
 		if (opened)
 			chaos_face_close(&cf);
 	}
-	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
-	// words, sizes and main memory are its own (contract G2 appendix A1.13),
-	// and revision 14's are revision 13's (A14.14): `bind_revision_known`.
+	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>, MACHINE-ID's: this
+	// program reads QUUX at `IMG_QUUX_REVISION` alone, and an older fabric
+	// is refused by the revision the identity line reads.
 	int revision = 0;
 	if (quux) {
 		revision = ro_quux_revision(&r);
-		if (revision < 0 || !bind_revision_known((unsigned)revision)) {
-			say("the readout's register table entry %u names no revision of QUUX "
-			    "this program knows", IMG_RG_QUUX_ID);
+		if (revision < 0) {
+			say("the readout's register table entry %u names no revision of QUUX",
+			    IMG_RG_QUUX_ID);
 			return 1;
 		}
-		// Entry 21's <31:24> is K on revisions 13 and 14 and revision
-		// 15's clock period in units of 0.5 ns, with <23:16> L or 0.
-		{
-			unsigned k = 0, l = 0;
-			ro_machine_is_quux(&r, &k, &l);
-			if (revision >= 15)
-				say("the bitstream is QUUX revision %d, its clock's period %u%s ns",
-				    revision, k / 2u, k % 2u ? ".5" : "");
-			else
-				say("the bitstream is QUUX, its microcycle %u ticks and %u more "
-				    "for ILONG", k, l);
+		if (ro_machine_of(revision) < 0) {
+			say("the bitstream is QUUX revision %d, and this program has no layout "
+			    "of its window: nothing is written", revision);
+			return 1;
 		}
-		if (bind_revision_packed((unsigned)revision))
-			say("the bitstream is QUUX revision %d: 40-bit words and packed "
-			    "main memory, checkpoint version %u", revision,
-			    revision >= 16 ? CHK_VERSION_16 : revision >= 15 ? CHK_VERSION_15 : CHK_VERSION_40);
+		// Entry 21's <31:24> is the clock's period in units of 0.5 ns.
+		say("the bitstream is QUUX, its clock's period %u%s ns, 40-bit words and "
+		    "packed main memory, checkpoint version %u", sync_k / 2u,
+		    sync_k % 2u ? ".5" : "", CHK_VERSION_16);
 	}
 	// **HOW MUCH MAIN MEMORY, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
 	// checkpoint is of all of main memory, and muir refuses to resume one
@@ -628,14 +626,13 @@ int main(int argc, char **argv)
 		boards = has;
 	}
 	bind_memory_words(quux, boards, memory, sizeof memory);
-	const int packed = quux && bind_revision_packed((unsigned)revision);
-	if (!packed && boards > MAX_BOARDS) {
+	if (!quux && boards > MAX_BOARDS) {
 		say("the machine has %s: the backplane holds 1 to %u", memory, MAX_BOARDS);
 		return 2;
 	}
-	if (packed && boards > MAX_BOARDS_13) {
-		say("the machine has %s: revision %d's room on this board holds 1MW to %uMW",
-		    memory, revision, MAX_BOARDS_13 / RO_MW_UNITS);
+	if (quux && boards > MAX_BOARDS_13) {
+		say("the machine has %s: QUUX's room on this board holds 1MW to %uMW",
+		    memory, MAX_BOARDS_13 / RO_MW_UNITS);
 		return 2;
 	}
 
@@ -679,9 +676,9 @@ int main(int argc, char **argv)
 	// **A CHECKPOINT IS OF A HALTED MACHINE, AND A MACHINE THAT HAS STOPPED
 	// RETIRING IS NOT ONE.**  CYCLES stands still on both, so `ro_found`
 	// asks why it stands (`readout.h`): one stopped with SRUN up and no halt
-	// named, or on revision 15 with its pipeline undrained, is refused here,
+	// named, or on QUUX with its pipeline undrained, is refused here,
 	// before anything is read, and left as it was found.
-	const int rev15 = quux && revision >= 15;
+	const int rev15 = quux;
 	struct ro_stand stand;
 	const int found = ro_found(&r, rev15, &stand);
 	if (found != RO_FOUND_RUNNING && found != RO_FOUND_HALTED) {
@@ -738,37 +735,13 @@ int main(int argc, char **argv)
 
 	if (ro_read_machine(&r, &img) != 0) {
 		say("the readout gave back a word for an address that was not "
-		    "the one asked for, %lu times: the window is not answering%s",
-		    r.stale, quux ? ", or QUUX's clocks could not be read within "
-		    "64 us of each other" : "");
+		    "the one asked for, %lu times: the window is not answering",
+		    r.stale);
 		img_free(&img);
 		return 1;
 	}
 	// **QUUX: THE WRITE BUFFER IS DRAINED BEFORE MAIN MEMORY IS READ**
-	// (contract Q6).  QUUX's memory port acknowledges a write when its buffer
-	// takes it and writes main memory behind the processor, so a machine
-	// halted just after a write can still owe DDR that word.  It drains
-	// itself within one write, a few hundred nanoseconds, and a halted
-	// machine starts no other: this waits for the port to say so, and a
-	// port that never does is a fault this program names rather than a
-	// checkpoint it writes with a word missing.
-	// Revision 15's halt drains the port before it stands (A15b.13).
-	if (quux && !img.rev15 && !img_flag(&img, IMG_F_MEM_DRAINED)) {
-		int drained = 0;
-		for (int i = 0; i < 100000 && drained == 0; ++i)
-			drained = ro_mem_drained(&r);
-		if (drained != 1) {
-			say("QUUX's memory port %s: its write buffer may still owe main "
-			    "memory a word, and no checkpoint is written without it",
-			    drained < 0 ? "could not be asked whether it is idle"
-					: "never went idle after the halt");
-			img_free(&img);
-			if (was_running && !leave_halted)
-				ro_start(&r);
-			return 1;
-		}
-		img.flags |= 1ull << IMG_F_MEM_DRAINED;
-	}
+	// (contract Q6): its halt drains the port before it stands (A15b.13).
 	// **QUUX: THE FABRIC'S DISK AND THE BAY MUST AGREE, AND NO TRANSFER MAY
 	// BE IN FLIGHT.**  Block-disk says whether a pack is on unit 0, and muir
 	// refuses a checkpoint with a pack onto a machine without one; a walk in
@@ -814,9 +787,9 @@ int main(int argc, char **argv)
 		say("the machine was running%s: the file records RUN and SRUN set, as "
 		    "they stood before the halt, and muir resumes it running",
 		    halted_for_it ? " until cadr-checkpoint --halt stopped it" : "");
-	else if (img.rev15)
-		// Revision 15's RUN is the console word's `<6>`, and it keeps no
-		// SRUN in its file (`chk_rtl_run_state`).
+	else if (quux)
+		// QUUX's RUN is the console word's `<6>`, and it keeps no SRUN in
+		// its file (`chk_rtl_run_state`).
 		say("the machine was halted when found: the file records RUN %s, as read",
 		    (img.q15.tail[IMG_TL15_CONSOLE] >> 6) & 1u ? "set" : "clear");
 	else
@@ -847,14 +820,14 @@ int main(int argc, char **argv)
 	// machine**: the fabric's own memory port is the machine's, and Linux
 	// reads the same cells from the other side of the controller, which is
 	// what the proving boards established on silicon.
-	if (img.rev13) {
-		// **REVISION 13's IS NOT COPIED.**  Packed storage is the file's
+	if (quux) {
+		// **QUUX's IS NOT COPIED.**  Packed storage is the file's
 		// own layout for 40-bit words, and 32M words are 160 MB, which a
 		// copy beside a body of the same size would leave Linux no room
 		// for: the mapping is handed to the file as it stands, and read
 		// while the machine is halted (`chk_hole`).
 		img.main13 = cadr_map(fd, DDR_MAIN13_BASE, (size_t)boards * IMG_BOARD_WORDS * 5u,
-				      "revision 13's main memory");
+				      "QUUX's main memory");
 		if (!img.main13) {
 			img_free(&img);
 			return 1;
@@ -925,10 +898,10 @@ int main(int argc, char **argv)
 	bind.revision = quux ? (unsigned)revision : 0u;
 	bind.sync_k = quux ? sync_k : 0u;
 	bind.video_width = quux ? img.video_width : 0u;
-	// Revision 16's 253-257, the board's device's: the resume line names
-	// them, since muir refuses a resume under others.
-	bind.eth = img.rev16;
-	if (img.rev16) {
+	// QUUX's 253-257, the board's device's: the resume line names them,
+	// since muir refuses a resume under others.
+	bind.eth = quux;
+	if (quux) {
 		memcpy(bind.eth_mac, img.q15.eth.mac, sizeof bind.eth_mac);
 		bind.eth_address = img.q15.eth.address;
 		bind.eth_netmask = img.q15.eth.netmask;
@@ -938,8 +911,8 @@ int main(int argc, char **argv)
 	bind.running = ran;
 	bind.chaos_address = quux ? 0u : (unsigned)chaos;
 	bind.microcycles = img.cycles;
-	// Revision 15's instant is in units of 0.5 ns.
-	bind.ns = img.rev15 ? img.q15.ns / 2u : (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;
+	// QUUX's instant is in units of 0.5 ns.
+	bind.ns = quux ? img.q15.ns / 2u : img.ticks * CHK_GRID_NS;
 	when(bind.taken, sizeof bind.taken);
 	snprintf(bind.checkpoint, sizeof bind.checkpoint, "%s", out);
 	if (sha256_file(out, bind.checkpoint_sha, &bind.checkpoint_bytes) != 0) {
@@ -959,7 +932,7 @@ int main(int argc, char **argv)
 	say("%s written: %s, %llu microcycles retired, PC %o, "
 	    "%zu bytes of body packed",
 	    out, memory, (unsigned long long)img.cycles,
-	    img.rev15 ? (unsigned)(img.q15.tail[IMG_TL15_NPC] & 0x3FFFu) : (unsigned)img.pc, body_len);
+	    quux ? (unsigned)(img.q15.tail[IMG_TL15_NPC] & 0x3FFFu) : (unsigned)img.pc, body_len);
 	say("  %lu reads and %lu writes over the console's window",
 	    r.reads, r.writes);
 	say("%s written: %u pack(s) bound to it by name, geometry and SHA-256",
@@ -972,10 +945,6 @@ int main(int argc, char **argv)
 	char cmd[4096];
 	bind_resume_command(&bind, out, cmd, sizeof cmd);
 	say("  to open it: %s", cmd);
-	if (img.rev13)
-		say("  (a revision %d checkpoint, version %u: muir's quux runs it under "
-		    "MUIR_QUUX_REVISION=%d, which the line names)", revision,
-		    img.rev16 ? CHK_VERSION_16 : img.rev15 ? CHK_VERSION_15 : CHK_VERSION_40, revision);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);
@@ -985,7 +954,7 @@ int main(int argc, char **argv)
 	    "in the fabric can see that: the controller recomputes a block's "
 	    "header and checkwords as it moves it, so a block from another "
 	    "moment passes every check the machine makes.");
-	print_missing(quux, revision);
+	print_missing(quux);
 
 	img_free(&img);
 	if (was_running && !leave_halted) {

@@ -27,8 +27,8 @@
 # ILLOP; one such run had first written pages over the pack's GPT.  At
 # 25 MHz, where every path fits in a tick, the same netlist reached the
 # Listener.  The cache's RAMs had the same shape: read on every idle tick at
-# the map's rippling output.  `rtl/machine/cadr_microcycle.sv` and
-# `rtl/machine/quux_mem_port.sv` enable both only on the ticks they use.
+# the map's rippling output.  Both were then enabled only on the ticks they
+# used.
 #
 # **WHAT IS ASKED.**  Every port of every block RAM in the design is sorted
 # by its enable pin: a constant zero is an unused port; an enable whose
@@ -101,9 +101,6 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
     set ports {}
     set counts [dict create unused 0 always 0 boundary 0 anytick 0]
     foreach b $rams {
-        # Revision 14's TLB is asked by name below (`tlb_check.tcl`), block
-        # RAM or UltraRAM alike, which this sort does not reach.
-        if {[string match *g_rev14_mmu.mmu/tlb/* $b]} continue
         foreach {port en addr we} {A ENARDEN ADDRARDADDR WEA B ENBWREN ADDRBWRADDR WEBWE} {
             set enp [get_pins -quiet $b/$en]
             if {![llength $enp]} continue
@@ -164,13 +161,6 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
     set others [get_clocks -quiet -filter "NAME != [get_property NAME $mclk]"]
     if {[llength $others]} {
         set_clock_groups -asynchronous -group $mclk -group $others
-    }
-
-    # Revision 14's TLB, block RAM or UltraRAM, by name, on a build that has
-    # one: the CADR and revision 13 have none, and `tlb_check.tcl`, which the
-    # flows source for every build, would otherwise find no pin and refuse.
-    if {[llength [info procs assert_tlb_enabled_at_the_edge]] && [llength [tlb_cells]]} {
-        assert_tlb_enabled_at_the_edge $bit
     }
 
     set bad 0

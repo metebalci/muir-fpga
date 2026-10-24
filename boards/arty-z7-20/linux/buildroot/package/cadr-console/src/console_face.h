@@ -396,8 +396,8 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 //
 // muir's `--main-memory-boards`: how many 64K-word boards of main memory the
 // machine has: 1 to 60 and 32 --- two million words --- unless something says
-// otherwise, on the CADR; and on QUUX, revision 13 and later, 1 to what
-// the board keeps for its main memory (512 on the Arty Z7-20, 1,024 on the
+// otherwise, on the CADR; and on QUUX, 1 to what the board keeps for its
+// main memory (512 on the Arty Z7-20, 1,024 on the
 // DE25-Nano) and 512, 32M words.  Word 38 says which, below.  The count goes to the machine's address decode, which
 // answers main memory below the count's last board and gives the NXM above
 // it, so the band's cold-boot probe finds exactly the count times 64K words;
@@ -421,8 +421,8 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // The CADR's most and default, and those of a fabric older than word 38.
 #define CONS_BOARDS_MAX        60u
 #define CONS_BOARDS_DEFAULT    32u
-// muir's most on revision 13, the most word 38 may say; a count above it is
-// not a count on any machine.
+// muir's most on QUUX, the most word 38 may say; a count above it is not a
+// count on any machine.
 #define CONS_BOARDS_MOST       1024u
 // **WORD 38, WHAT WORD 37 TAKES ON THIS MACHINE**, read only: a ten-bit marker
 // in bits 31 to 22, the default in 21 to 11 and the most in 10 to 0.  A
@@ -580,8 +580,8 @@ struct console {
 	// machine.  `pack_side.h`'s `pause` one seam along.
 	void (*pause)(struct console *c, unsigned us);
 	// **THE INPUT PAGE, `rtl/plumbing/cadr_input_cables.sv`'s**, for the one
-	// command that needs it: `boot` on QUUX revision 15, whose face has no
-	// word 13 and which boots on the keyboard's boot word instead.  NULL
+	// command that needs it: `boot` on QUUX, whose face has no word 13 and
+	// which boots on the keyboard's boot word instead.  NULL
 	// where the program has not mapped the page; `boot` then refuses there.
 	uint32_t (*in_read)(struct console *c, unsigned word);
 	void (*in_write)(struct console *c, unsigned word, uint32_t v);
@@ -720,7 +720,7 @@ void cons_start(struct console *c);
 // map.  A boot is not a reset.
 void cons_boot(struct console *c);
 
-// **QUUX REVISION 15 HAS NO BUTTON, AND BOOTS ON THE KEYBOARD'S BOOT WORD.**
+// **QUUX HAS NO BUTTON, AND BOOTS ON THE KEYBOARD'S BOOT WORD.**
 // Its face (`rtl/plumbing/quux15_face.sv`) has no word 13: a read there is
 // `UNMAPPED` and a store is dropped.  Its one boot is the keyboard's: a word
 // whose bits 13 to 6 are 0o360 (`ioboard::boot_word`) reaching the machine
@@ -753,9 +753,9 @@ enum cons_in { CONS_IN_IDENT = 0, CONS_IN_STAT = 1, CONS_IN_KEY = 2, CONS_IN_LOS
 #define CONS_IN_POLL_US      10u
 
 // How `boot` booted, or why it did not.  It refuses, writing NOTHING, on a
-// machine it has no boot for: a revision it has not met, or a fabric that did
-// not say which machine it is.  Word 13 is the boot of the CADR and of QUUX
-// revisions 12 to 14; the keyboard's boot word is revision 15's.
+// machine it has no boot for: a revision of QUUX other than the one it is
+// built for, named, or a fabric that did not say which machine it is.  Word
+// 13 is the CADR's boot; the keyboard's boot word is QUUX's.
 enum cons_boot_how { CONS_BOOT_BY_BUTTON = 0, CONS_BOOT_BY_KEYBOARD, CONS_BOOT_REFUSED };
 
 // What `boot` reports: the machine either side of the press.  The button is
@@ -774,7 +774,7 @@ struct cons_boot_report {
 	int held;			/* the line was still down when read */
 	int running;			/* CYCLES moved over the settle */
 	int promdisable;		/* FLAG-1's bit, which a boot clears */
-	// The keyboard's boot word, revision 15's: KEY read back after the
+	// The keyboard's boot word, QUUX's: KEY read back after the
 	// store, the queue's count then, and LOST either side.
 	uint32_t key_after;
 	unsigned queued;
@@ -1006,20 +1006,23 @@ int cons_display_word(struct console *c, int argc, char **argv, int *status);
 //
 // The machine and the microcycle come from the readout window (page 0's words
 // 10 to 12): the processor's register table's entry 21, `cadr_microcycle.sv`'s
-// `RG_QUUX_ID`, which QUUX answers with its signature `0x5155` in <47:32>, K
-// in <31:24>, L in <23:16> and MACHINE-ID's <15:0> in <15:0> on revision 13
-// (0x00D4: the revision in <11:4>, the processor type in <3:0>), 0 there
-// only on revision 12, which is retired and which this program does not
-// know; and which the CADR answers with `CONS_RO_NO_MEMORY`.  A
-// constant of the bitstream, so it reads true with the machine running.
-// MACHINE-ID is the signature over that half, the word QUUX's functional
-// source 16 and the feature page's first word read.  The word's width is the
-// revision's: 32 bits on the CADR, 40 on revision 13 and later.
-// The build is page 2's word 32, `cons_build_of`.
+// `RG_QUUX_ID`, which QUUX answers with its signature `0x5155` in <47:32>,
+// its clock's period in units of 0.5 ns in <31:24>, 0 in <23:16> and
+// MACHINE-ID's <15:0> in <15:0> (0x0104: the revision in <11:4>, the
+// processor type in <3:0>), 0 there only on revision 12, which is retired;
+// and which the CADR answers with `CONS_RO_NO_MEMORY`.  A constant of the
+// bitstream, so it reads true with the machine running.  MACHINE-ID is the
+// signature over that half, the word QUUX's functional source 16 and the
+// feature page's first word read.  **THE LINE NAMES THE FABRIC'S REVISION,
+// WHATEVER IT IS**, since a card can carry an older bitstream than its
+// programs; the programs are built for `CONS_QUUX_REVISION` and read no
+// more into another.  The word's width is 32 bits on the CADR and 40 on
+// QUUX.  The build is page 2's word 32, `cons_build_of`.
 #define CONS_RO_SEL_REGS    10u
 #define CONS_RO_QUUX_ID     21u
 #define CONS_RO_NO_MEMORY   0xA5A55A5AA5A5ull
 #define CONS_QUUX_SIGNATURE 0x5155u
+#define CONS_QUUX_REVISION  16u
 struct cons_machine_id {
 	int answered;		/* the window's echo named the entry asked for */
 	uint64_t entry;		/* entry 21 as read, 48 bits */
@@ -1028,7 +1031,7 @@ struct cons_machine_id {
 	unsigned revision;	/* QUUX's: 12, 13, ...; 0 on the CADR */
 	uint32_t machine_id;	/* QUUX's MACHINE-ID; 0 when the fabric does not carry it */
 	unsigned processor_type;
-	unsigned k, l;		/* QUUX's microcycle, in ticks */
+	unsigned k, l;		/* entry 21's <31:24>, QUUX's period, and <23:16> */
 	unsigned word_bits;	/* 32 or 40; 0 for a revision this program does not know */
 	struct cons_build build;
 };
@@ -1046,6 +1049,8 @@ void cons_say_machine_id(const struct cons_machine_id *m);
 // the word, 0 with nothing done for any other.  The line, and `*status` 0
 // when the fabric said which machine it is and is the one asked for, if one
 // was; 1 when it is not, or did not say; 2 for words it does not take.
+// `quux` alone asks for the QUUX this program is built for,
+// `CONS_QUUX_REVISION`, and an older fabric is not it, named.
 int cons_machine_word(struct console *c, int argc, char **argv, int *status);
 
 struct cons_boards {
@@ -1054,8 +1059,8 @@ struct cons_boards {
 	unsigned count;		/* the boards, 1 to `max` */
 	uint32_t range_word;	/* word 38 as it read */
 	int range_ok;		/* it carried its marker and a range that can be */
-	unsigned dflt;		/* the machine's default: 32, or 512 on revision 13 */
-	unsigned max;		/* the machine's most: 60, or what revision 13's room holds */
+	unsigned dflt;		/* the machine's default: 32, or 512 on QUUX */
+	unsigned max;		/* the machine's most: 60, or what QUUX's room holds */
 };
 
 // What word 37 takes on this machine, out of word 38: its default and most,
@@ -1091,7 +1096,7 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status);
 // and on QUUX it is refused naming this word.  The word is the same word 37
 // inside, sixteen 64K-word boards a megaword, and the range is word 38's in
 // whole megawords: 1MW to 32MW on the Arty Z7-20 and the Kria KR260 and 1MW
-// to 64MW on the DE25-Nano at revision 13, as muir gives it.
+// to 64MW on the DE25-Nano, as muir gives it.
 // Which machine the fabric is comes from `machine`'s entry 21, never from the
 // card.  `*status` 0 when the fabric holds what was asked, 1 when it does not
 // or the machine could not be read, 2 for a form or an amount it does not

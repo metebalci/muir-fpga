@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 		say("%s; not started", why);
 		return 1;
 	}
-	// Main memory: packed storage, 5 bytes a word, at revision 13's base
+	// Main memory: packed storage, 5 bytes a word, at QUUX's base
 	// below the display (`cadr_board.h`), in a room the board keeps for so
 	// many words.
 	const uint32_t base = CADR_BOARD_QUUX13_MAIN_BASE;
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
 		return 1;
 	struct qfd_face face;
 	qfd_fabric_face(&fb, main_mem, &face);
-	say("serving the file device: revision 13, main memory %u words at 0x%08x, packed storage",
+	say("serving the file device: main memory %u words at 0x%08x, packed storage",
 	    fb.mem_words, base);
 
 	struct qfd_ring g;

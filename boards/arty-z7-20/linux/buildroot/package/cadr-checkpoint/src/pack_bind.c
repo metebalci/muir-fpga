@@ -258,27 +258,22 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 	// muir is two executables, and the machine is the one named: `quux` for
 	// QUUX, `cadr` for the CADR.
 	//
-	// **QUUX's TIMING IS `sync`, OF THE BOARD'S K**, and muir refuses a
-	// checkpoint of one K resumed under another --- its default is 4, and
-	// the Arty Z7-20's revision 13 runs at 5 --- so K is named.  **AND ITS
-	// REVISION**, which `quux` takes from the environment and not from a
-	// flag, and refuses a checkpoint of the other revision at: so the line
-	// starts with the assignment a shell takes for that one command.  A
-	// sidecar older than the two lines names neither.
+	// **QUUX's REVISION**, which muir's `quux` takes from the environment
+	// and not from a flag, and refuses a checkpoint of another revision at:
+	// so the line starts with the assignment a shell takes for that one
+	// command.  **AND ITS CLOCK PERIOD**, `sync_k` in units of 0.5 ns, muir's
+	// `--microcycle-ns`, which it refuses a checkpoint of another period
+	// at.  A sidecar older than the lines, or of an older revision, names
+	// neither.
 	if (b->quux) {
-		if (b->revision)
+		if (b->revision == IMG_QUUX_REVISION)
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       "MUIR_QUUX_REVISION=%u ", b->revision);
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0, "quux --rtl");
-		// Revision 15's `sync_k` is its clock's period in units of 0.5
-		// ns, muir's `--microcycle-ns`, which it refuses another at.
-		if (b->sync_k && b->revision >= 15)
+		if (b->sync_k && b->revision == IMG_QUUX_REVISION)
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       " --microcycle-ns %u%s", b->sync_k / 2u,
 					       b->sync_k % 2u ? ".5" : "");
-		else if (b->sync_k)
-			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
-					       " --sync-cycle-ticks %u", b->sync_k);
 		// **AND THE VIDEO CONTROLLER'S SIZE**, which muir takes as
 		// `--video-size` and refuses a checkpoint of another size at:
 		// 1280x1024 is its default, and the Kria KR260's is not.
@@ -314,7 +309,7 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 				       " --chaos-address %o", b->chaos_address);
 #endif
-	// **AND REVISION 16's 253-257**, the board's device's, which muir
+	// **AND QUUX's 253-257**, the board's device's, which muir
 	// refuses a resume under others than (QUUX's Ethernet contract, section
 	// 2.9), given or by default.
 #if CHK_MUTATE != 56
@@ -549,20 +544,6 @@ void bind_memory_words(int quux, unsigned units, char *out, size_t n)
 	} else {
 		snprintf(out, n, "%u memory board%s", units, units == 1 ? "" : "s");
 	}
-}
-
-int bind_revision_known(unsigned revision)
-{
-#if CHK_MUTATE == 48
-	return revision == 13;
-#else
-	return revision >= 13 && revision <= 16;
-#endif
-}
-
-int bind_revision_packed(unsigned revision)
-{
-	return revision >= 13 && revision <= 16;
 }
 
 int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,

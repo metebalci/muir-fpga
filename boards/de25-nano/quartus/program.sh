@@ -9,9 +9,8 @@
 #
 # The second loads the instrumented build from `build/de25-probe/`, which
 # `make de25 PROBE_DEPTH=1024` writes, and the first the plain one.
-# `MACHINE=quux WORD_BITS=40` loads the evolved CADR's build from
-# `build/de25-quux13/` and the same suffixes after it, as `build.sh` names
-# them.
+# `MACHINE=quux DDR=1 HDMI=1` loads QUUX's build from
+# `build/de25-quux-ddr-hdmi/`, as `build.sh` names it.
 #
 # **VOLATILE, AND NOTHING ELSE.**  This loads `build/de25/output_files/
 # cadr_de25.sof` into the part's configuration memory, which a power cycle
@@ -77,18 +76,16 @@ case $machine in
     cadr|quux) ;;
     *) refuse "MACHINE is '$machine'; it is cadr, MIT's machine, or quux, the evolved CADR" ;;
 esac
-# QUUX, revision 13, `WORD_BITS=40`, is its own build, as `build.sh` names
-# it; revision 12, QUUX at 32 bits, is retired and refused.
-word_bits=${WORD_BITS:-32}
-case $word_bits in
-    32|40) ;;
-    *) refuse "WORD_BITS is '$word_bits'; it is 32, or 40 for QUUX revision 13" ;;
-esac
-if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
-    refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
-fi
-if [ "$machine" = quux ] && [ "$word_bits" != 40 ]; then
-    refuse "MACHINE=quux at WORD_BITS=$word_bits, which was revision 12, and revision 12 is retired: give WORD_BITS=40"
+# QUUX is its own build, as `build.sh` names it, at the one revision this
+# tree builds: `REVISION` unset, or that one, is taken, as `build.sh` takes
+# it, and any other refused, as is a `REVISION` on the CADR.
+if [ "$machine" = quux ]; then
+    case ${REVISION:-16} in
+        16) ;;
+        *) refuse "REVISION is not taken: QUUX is built at the one revision this tree has; give no REVISION" ;;
+    esac
+elif [ -n "${REVISION:-}" ]; then
+    refuse "REVISION is QUUX's, and MACHINE=$machine"
 fi
 
 conf=boards/de25-nano/local.conf
@@ -108,7 +105,7 @@ serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 
 out=build/de25
 if [ "$machine" = quux ]; then
-    out=$out-quux13
+    out=$out-quux
 fi
 case ${DDR:-0} in
     ''|0) ;;
@@ -248,7 +245,7 @@ held=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
 if [ -n "$held" ]; then
     [ "$held" = "$built" ] || refuse "the part's hub reports design $held, and this build's is ${built:-not in $sld}"
     say "the part's hub reports design $held, this build's"
-elif [ "$out" = build/de25-probe ] || [ "$out" = build/de25-quux13-probe ]; then
+elif [ "$out" = build/de25-probe ]; then
     refuse "the part's hub reports no design, and the probe's build has a node on it"
 else
     say "the part's hub reports no design, as the plain build's, with no node, does"

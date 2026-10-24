@@ -130,14 +130,6 @@ module cadr_mem_count_harness #(
 
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device,
   // 32 boards of memory declared.
-  // QUUX's line fill and its port's idle (contract Q6): the CADR this
-  // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained, h_mem_wide;
-  logic [2:0] h_mem_beats;
-  // QUUX's host side's word, read by nobody here.
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic [31:0] h9_host_rdata;
-  /* verilator lint_on UNUSEDSIGNAL */
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -229,7 +221,6 @@ module cadr_mem_count_harness #(
       // tied and the word is folded with the rest.
       .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -251,10 +242,7 @@ module cadr_mem_count_harness #(
       // `hp0_aresetn` to make a dead port, which is the one arrangement an
       // audit of transactions per cycle has nothing to say about.
       // `tb/cadr_bus_audit_harness.sv` is where they are wired for real.
-      .port_read_ack(1'b0), .port_write_ack(1'b0),
-      // QUUX's host side of revision 9: idle, as a board with no Linux leaves it.
-      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd0),
-      .host_rdata(h9_host_rdata)
+      .port_read_ack(1'b0), .port_write_ack(1'b0)
   );
 
   // The port's reset, synchronized in as the top level synchronizes it.
@@ -349,7 +337,7 @@ module cadr_mem_count_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

@@ -104,8 +104,8 @@ struct mmio {
 	volatile uint32_t *regs;
 	int mem;			/* /dev/mem, for examine and deposit */
 	uint32_t regs_phys;
-	// The input page, mapped when `boot` first needs it: revision 15's
-	// boot is the keyboard's boot word.  Mapping touches no register.
+	// The input page, mapped when `boot` first needs it: QUUX's boot is
+	// the keyboard's boot word.  Mapping touches no register.
 	volatile uint32_t *in;
 };
 
@@ -325,8 +325,8 @@ static void do_step(struct console *c, unsigned n)
 // **THE BUTTON, AND IT IS WHAT TAKES THE HOLD OFF.**  muir's prompt does the
 // same: its `Command::Boot` presses and then clears its own hold, with the
 // comment "the button starts the machine: it presets RUN, and a finger on it
-// is all a CADR is given.  So the hold comes off with it."  On QUUX revision
-// 15, which has no button, the keyboard's boot word does the same; on a
+// is all a CADR is given.  So the hold comes off with it."  On QUUX, which
+// has no button, the keyboard's boot word does the same; on a
 // machine this program has no boot for, nothing is written and the hold
 // stays.  `cons_boot_command` is the whole of it, in the face.
 static int do_boot(struct console *c, unsigned settle_us)
@@ -352,17 +352,17 @@ static void help(void)
 	say("halt            0 into the clock control register: RUN clear (CC's first act on a debuggee)");
 	say("start           1 into it: RUN");
 	say("boot            the light panel's button: it presets RUN, and the machine runs from the PROM at 0;");
-	say("                on QUUX revision 15, which has no button, the keyboard's cold boot word");
+	say("                on QUUX, which has no button, the keyboard's cold boot word");
 	say("step [N]        CC's CC-CLOCK, 2 then 0, N times: one microcycle each, CYCLES either side");
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
 	say("ident           IDENT, STAT, CYCLES and TICKS");
 	say("machine [cadr|quux [REVISION]]");
 	say("                which machine the fabric is, asked of the fabric: the CADR or");
-	say("                QUUX, its revision and MACHINE-ID, the word's width, K and L,");
+	say("                QUUX, its revision and MACHINE-ID, the word's width, its period,");
 	say("                and the build stamp, on one line.  A board run prints it beside");
 	say("                each result.  With a machine named, exits 0 only when it is that");
-	say("                one");
+	say("                one; quux alone is the QUUX these programs are built for");
 	say("switch          SW0, the no-auto-boot switch: what it did at the last reset,");
 	say("                and where it is now.  Exits 0 when it held the machine");
 	say("debug-cable     the role on " CADR_BOARD_DEBUG_CONNECTOR ": debugger, debuggee, or asked and refused");
@@ -397,7 +397,7 @@ static void help(void)
 	say("                it reports.  Exits 0 when the fabric holds what was asked");
 	say("main-memory-size [<n>MW]  QUUX's: how much main memory, in whole megawords with");
 	say("                the unit written, such as 32MW: 1MW to what the board keeps for");
-	say("                revision 13 (32MW on the Arty Z7-20 and the Kria KR260, 64MW on the");
+	say("                it (32MW on the Arty Z7-20 and the Kria KR260, 64MW on the");
 	say("                DE25-Nano), 32MW by default.  --main-memory-size.  Set it before");
 	say("                the band boots.  With no word it reports.  Exits 0 when the");
 	say("                fabric holds what was asked");

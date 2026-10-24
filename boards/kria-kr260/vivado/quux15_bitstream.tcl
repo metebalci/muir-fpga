@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Build a bitstream of QUUX revision 15 for the Kria KR260
+# Build a bitstream of QUUX for the Kria KR260
 # (`boards/kria-kr260/quux15_kr260.sv`).
 #
 #     make build/boot_prom.quux15.hex
@@ -11,17 +11,17 @@
 # MMCM's divide (20 by default, the board's period); `PROM` the boot PROM's image, a 64-bit word
 # a line, PROM 2002 (`build/boot_prom.quux15.hex`) by default and a test
 # program (`golden/src/quux15.rs --prom`) only when named; `OUTDIR` where
-# it all goes (`build/bitstream-kr260-quux15`).  The memories are placed as
+# it all goes (`build/bitstream-kr260-quux16`).  The memories are placed as
 # `quux15_ram.xdc` says; the report says the period the fit met and the
 # area, and the bitstream carries the tree's build stamp.
 set part    [expr {[info exists ::env(PART)]      ? $::env(PART)      : "xck26-sfvc784-2LV-c"}]
 set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 20}]
 set prom    [expr {[info exists ::env(PROM)]      ? $::env(PROM)      : "build/boot_prom.quux15.hex"}]
-# `REVISION` is QUUX's, 15 by default or 16, the Ethernet device's
-# (QUUX's Ethernet contract, §10), the top's generic and the output's name.
-set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 15}]
-if {$revision ni {15 16}} {
-    puts "Q15BIT: FAILED --- REVISION=$revision is not 15 or 16"
+# `REVISION` is QUUX's, 16 (QUUX's Ethernet contract, §10), the top's
+# generic and the output's name; another is refused.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : 16}]
+if {$revision ne "16"} {
+    puts "Q15BIT: FAILED --- REVISION=$revision: QUUX is built at one revision; leave REVISION unset"
     exit 1
 }
 set outdir  [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/bitstream-kr260-quux$revision"}]
@@ -35,7 +35,7 @@ if {![file exists $prom]} {
     exit 1
 }
 file mkdir $outdir
-puts "Q15BIT: QUUX revision $revision on the Kria KR260 at $period ns, the PROM $prom"
+puts "Q15BIT: QUUX on the Kria KR260 at $period ns, the PROM $prom"
 
 set sources [list \
     rtl/machine/cadr_tick_pkg.sv rtl/plumbing/cadr_ddr_map.sv \

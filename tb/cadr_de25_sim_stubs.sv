@@ -591,25 +591,9 @@ module cadr_machine #(
     parameter string PROM_HEX = "",
     parameter string SYNC_PROM_HEX = "",
     parameter int LMTV = 1,
-    parameter string MACHINE = "cadr",
-    parameter int unsigned SYNC_K = 4,
-    parameter int unsigned SYNC_L = 0,
-    parameter int unsigned WORD_BITS = 32,
-    // The board's video controller and name (contract HD), which the stub
-    // takes and does nothing with.
-    parameter int unsigned VIDEO_WIDTH  = 1280,
-    parameter int unsigned VIDEO_HEIGHT = 1024,
-    parameter logic [8*64-1:0] BOARD_NAME = '0,
     // Whether main memory always answers (`cadr_busint_xbus.sv`'s
     // `dev_hold`), which the stub takes and does nothing with.
-    parameter bit MEMORY_ANSWERS = 1'b0,
-    // QUUX's revision and revision 14's TLB entries, which the stub takes
-    // and does nothing with but the bus address's width (A14.1).
-    parameter int unsigned REVISION = 13,
-    parameter int unsigned TLB_ENTRIES = 4096,
-    localparam int unsigned PHYS_BITS  = (MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14) ? 29
-                                       : WORD_BITS > 32 ? 28 : 22,
-    localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
+    parameter bit MEMORY_ANSWERS = 1'b0
 ) (
     input  var logic         clk,
     input  var logic         rst,
@@ -698,16 +682,16 @@ module cadr_machine #(
     output var logic [13:0]  opc,
     output var logic [31:0]  st,
     output var logic [47:0]  ir,
-    output var logic [WORD_BITS-1:0] a,
-    output var logic [WORD_BITS-1:0] m,
+    output var logic [31:0] a,
+    output var logic [31:0] m,
     output var logic [31:0]  alu,
-    output var logic [WORD_BITS-1:0] r,
-    output var logic [WORD_BITS-1:0] ob,
-    output var logic [WORD_BITS-1:0] q,
+    output var logic [31:0] r,
+    output var logic [31:0] ob,
+    output var logic [31:0] q,
     output var logic [9:0]   dc,
     output var logic [25:0]  lc,
-    output var logic [WORD_BITS-1:0] vma,
-    output var logic [WORD_BITS-1:0] md,
+    output var logic [31:0] vma,
+    output var logic [31:0] md,
     output var logic         vmaok,
     output var logic         jcond,
     output var logic         nop,
@@ -720,7 +704,7 @@ module cadr_machine #(
     output var logic         device,
     output var logic         dev_rq,
     output var logic         dev_write,
-    output var logic [PHYS_BITS-1:0] phys,
+    output var logic [21:0] phys,
     output var logic [31:0]  dev_wdata,
     input  var logic         device_ack,
     input  var logic [31:0]  device_rdata,
@@ -780,27 +764,12 @@ module cadr_machine #(
     output var logic         mem_req,
     output var logic         mem_write,
     output var logic [31:0]  mem_addr,
-    output var logic [WORD_BITS-1:0] mem_wdata,
+    output var logic [31:0] mem_wdata,
     input  var logic         mem_done,
     input  var logic [31:0]  mem_rdata,
-    output var logic         mem_line,
-    output var logic [2:0]   mem_beats,
-    output var logic         mem_wide,
-    input  var logic [RLINE_BITS-1:0] mem_rline,
-    output var logic         mem_drained,
     input  var logic         port_read_ack,
-    input  var logic         port_write_ack,
-    // QUUX's host side of revision 9, which this shell reads nothing of: the
-    // DE25-Nano's top level is simulated as the CADR.
-    /* verilator lint_off UNUSEDSIGNAL */
-    input  var logic         host_we,
-    input  var logic [3:0]   host_widx,
-    input  var logic [31:0]  host_wdata,
-    input  var logic [3:0]   host_ridx,
-    /* verilator lint_on UNUSEDSIGNAL */
-    output var logic [31:0]  host_rdata
+    input  var logic         port_write_ack
 );
-  assign host_rdata = 32'd0;
   logic         tbi_rst /*verilator public_flat_rd*/;
   assign tbi_rst = rst;
   logic         tbo_sintr_o /*verilator public_flat_rw*/;
@@ -1017,7 +986,7 @@ module cadr_machine #(
   assign dev_rq = tbo_dev_rq;
   logic         tbo_dev_write /*verilator public_flat_rw*/;
   assign dev_write = tbo_dev_write;
-  logic [PHYS_BITS-1:0] tbo_phys /*verilator public_flat_rw*/;
+  logic [21:0] tbo_phys /*verilator public_flat_rw*/;
   assign phys = tbo_phys;
   logic [31:0]  tbo_dev_wdata /*verilator public_flat_rw*/;
   assign dev_wdata = tbo_dev_wdata;
@@ -1137,18 +1106,8 @@ module cadr_machine #(
   assign mem_write = tbo_mem_write;
   logic [31:0]  tbo_mem_addr /*verilator public_flat_rw*/;
   assign mem_addr = tbo_mem_addr;
-  logic [WORD_BITS-1:0] tbo_mem_wdata /*verilator public_flat_rw*/;
+  logic [31:0] tbo_mem_wdata /*verilator public_flat_rw*/;
   assign mem_wdata = tbo_mem_wdata;
-  logic         tbo_mem_line /*verilator public_flat_rw*/;
-  assign mem_line = tbo_mem_line;
-  logic [2:0]   tbo_mem_beats /*verilator public_flat_rw*/;
-  assign mem_beats = tbo_mem_beats;
-  logic         tbo_mem_wide /*verilator public_flat_rw*/;
-  assign mem_wide = tbo_mem_wide;
-  logic         tbo_mem_drained /*verilator public_flat_rw*/;
-  assign mem_drained = tbo_mem_drained;
-  logic [RLINE_BITS-1:0] tbi_mem_rline /*verilator public_flat_rd*/;
-  assign tbi_mem_rline = mem_rline;
   logic         tbi_mem_done /*verilator public_flat_rd*/;
   assign tbi_mem_done = mem_done;
   logic [31:0]  tbi_mem_rdata /*verilator public_flat_rd*/;

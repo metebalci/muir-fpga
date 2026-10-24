@@ -468,7 +468,7 @@ region, on every board:
 - **Main memory** is 4M words at 4 bytes a word, the whole 22-bit physical
   space. The machine fits at most 60 boards of 64K words, 3,932,160 words
   (15 MB), since the top four slots of the space are the display, the disk
-  controller and the Unibus. QUUX, revision 13, has its own region (below),
+  controller and the Unibus. QUUX has its own region (below),
   and its count runs to what that region holds. The fabric writes it, and `cadr-console`, `cadr-checkpoint`,
   `quux-file-device` and `quux-ethernet-device` map it.
 - **The display** holds both TV boards' buffers, 32,768 words each, 256 KB in
@@ -496,8 +496,8 @@ DE25-Nano the 1 GB but the service layer's 32 MB and the region; on the Kria
 KR260 its 4 GB but the firmware's reservations and the region. Measured,
 `MemTotal` went from 381,468 kB to 493,976 kB on the Arty Z7-20, from 824,964 kB to 938,276 kB on the DE25-Nano, and from 3,877,244 kB
 to 3,990,556 kB on the Kria KR260. **The display
-stayed where it was and main memory moved to just below it**, so that QUUX
-revision 13's main memory, which fills the room below the display, did not
+stayed where it was and main memory moved to just below it**, so that QUUX's
+main memory, which fills the room below the display, did not
 move, and so that each board's region is inside its old 128 MB. A card whose
 loader still carries the old reservation in its own tree keeps its relocation
 clear of the new region.
@@ -505,17 +505,17 @@ clear of the new region.
 ## Each machine's reservation, and how a card pairs it with its bitstream
 
 **Each machine has its own device trees.** The CADR's reserve the CADR's
-region, as above. QUUX revision 13's reserve its own region (`quux13-reserved.dtsi`). Its main memory is 32M words
+region, as above. QUUX's reserve its own region (`quux13-reserved.dtsi`). Its main memory is 32M words
 of packed storage, 5 bytes a word, directly below the display. The display and
 the disk pack program's records stay where the CADR's are. The region runs
 from main memory to the end of the records, which is where the CADR's ends.
 
-    board        revision 13's region         main memory     Linux
+    board        QUUX's region         main memory     Linux
     Arty Z7-20   0x1200_0000-0x1C11_FFFF      160 MB          350.875 MB, two ranges
     DE25-Nano    0xA000_0000-0xB411_FFFF      room for 320 MB 670.875 MB
     Kria KR260   0x5A00_0000-0x6411_FFFF      160 MB          the rest but the firmware's
 
-**Revision 13's tree is the board's tree with its reservation after the
+**QUUX's tree is the board's tree with its reservation after the
 CADR's**, which it takes out: `zynq-arty-z7-20-quux13.dts`,
 `socfpga_agilex5_de25_nano_quux13.dts` and
 `zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts`. The kernel builds every tree
@@ -526,10 +526,10 @@ loader.** U-Boot runs with the tree in its FIT: `u-boot.img` on the Zynq
 boards and `u-boot.itb` on the DE25-Nano, both on the card. It keeps its
 relocation, and the kernel's tree and the ramdisk it places, clear of that
 tree's reservation, while the bitstream it loaded is already running. So a
-revision 13 card carries a loader whose tree is revision 13's. The build makes
+QUUX card carries a loader whose tree is QUUX's. The build makes
 it beside the board's (`quux13-loader.sh`, from a U-Boot build hook in
 `external.mk`): the same U-Boot and firmware, made by the command U-Boot
-recorded for its own loader with revision 13's tree in place of the board's.
+recorded for its own loader with QUUX's tree in place of the board's.
 The script refuses to run if that recorded command does not reproduce the
 build's own loader byte for byte.
 
@@ -542,7 +542,7 @@ build's own loader byte for byte.
   machines' regions end below `0xB800_0000`, and the fixed loads end below
   `0xA000_0000`.
 - The Kria KR260 has no loader of this project's: its factory U-Boot runs
-  `boot.cmd`, whose loads all end below `0x5A00_0000`, where revision 13's
+  `boot.cmd`, whose loads all end below `0x5A00_0000`, where QUUX's
   region starts, and which pins `fdt_high` and `initrd_high` so that nothing
   is moved. It relocates itself above `0x7B80_0000`, clear of both regions.
   Its own tree is the firmware's, which reserves neither, and it writes
@@ -552,14 +552,14 @@ build's own loader byte for byte.
 **The pairing is the card's, and the served set's.** The loader fetches the
 kernel's tree from the folder it fetches the bitstream from, under the board
 tree's own name (`cadr.env`'s `cadr_card`, the served `uEnv.net`). So
-`mksd-buildroot.sh` with `REVISION=13` stages revision 13's tree under that
-name beside revision 13's bitstream, and revision 13's loader under the
+`mksd-buildroot.sh` with `REVISION=13` stages QUUX's tree under that
+name beside QUUX's bitstream, and QUUX's loader under the
 loader's name; on the Kria KR260, which has no loader of ours, the tree alone.
 It then reads both trees back, the one in the board's folder and the one
-inside the loader, and requires revision 13's node in each. A card
+inside the loader, and requires QUUX's node in each. A card
 normally carries one machine. The fabric cannot be asked which machine it is,
-so nothing on the board can check the pairing. A revision 13 bitstream under
-the CADR's tree hands Linux revision 13's main memory; the opposite pairing is
+so nothing on the board can check the pairing. A QUUX bitstream under
+the CADR's tree hands Linux QUUX's main memory; the opposite pairing is
 safe.
 
 `tools/mem_map_check.py` holds every copy of each region to the fabric's
@@ -575,7 +575,7 @@ loads and relocation against each machine's region.
 
 That was the directory for the stepping stone. It now holds the Buildroot tree
 and the card scripts beside those, and `uEnv.txt` has become `uEnv.txt.in`,
-which the staging fills in. Beside `cadr-reserved.dtsi` are QUUX revision 13's
+which the staging fills in. Beside `cadr-reserved.dtsi` are QUUX's
 reservation, `quux13-reserved.dtsi`, and `quux13-loader.sh`, which makes its
 loader (the section before this one).
 
@@ -922,7 +922,7 @@ the processor.
 ## What is in `boards/de25-nano/linux/`
 
     cadr-reserved.dtsi   the CADR's region at 0xB300_0000, for both trees
-    quux13-reserved.dtsi QUUX revision 13's region, for revision 13's trees
+    quux13-reserved.dtsi QUUX's region, for QUUX's trees
     buildroot_check.py   the pins, the boot's own arrangement, the
                          configurations after a build, and the programs
     buildroot/           the BR2_EXTERNAL tree, which holds no package
@@ -931,7 +931,7 @@ and inside that tree:
 
     configs/de25_nano_defconfig             what the image is, and why
     board/de25-nano/dts/intel/*_cadr.dts    the device tree, for both
-    board/de25-nano/dts/intel/*_quux13.dts  revision 13's, for both
+    board/de25-nano/dts/intel/*_quux13.dts  QUUX's, for both
     board/de25-nano/uboot/cadr_de25.env     the default environment
     board/de25-nano/uboot/uboot.fragment    over Altera's DE25 configuration
     board/de25-nano/linux/linux.fragment    over Altera's arm64 defconfig

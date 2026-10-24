@@ -29,7 +29,7 @@
 # theirs.  A memory with no block, or a block with no such port, fails too:
 # a check that finds nothing is not a pass.
 #
-# **AND REVISION 15'S** (`REVISION=15`, `boards/de25-nano/quux15_de25.sv`): its
+# **AND QUUX'S** (`MACHINE=quux`, `boards/de25-nano/quux15_de25.sv`): its
 # RAMs are `rtl/plumbing/agilex5/quux15_tdp.sv`'s word columns, each port
 # reading and writing at one address, and the rule is asked of the ports a
 # single write address reaches: the PDL buffer's held write (`pdlh_v`,
@@ -38,13 +38,8 @@
 # block-disk's channel (`chb_we`, `chb_a`).  The cache's lines and tags are
 # written at a fill's set or a word's, under conditions of the port's state,
 # and have no one write-address register to ask about; the core's own
-# checks, under `QUUX15_RDW_POISON`, hold where their ports write.
-#
-# **QUARTUS NAMES THE CADR'S RAMS AND QUUX'S ALIKE.**  The PDL buffer and
-# the control store are `processor|pdl_rtl_N` and `processor|imem_rtl_N` on
-# both machines, where Vivado keeps the generate block's name, so the
-# machine is taken from `MACHINE` and not from the netlist.  Only the
-# block-disk's store is QUUX's by name, and a CADR build must not have it.
+# checks, under `QUUX15_RDW_POISON`, hold where their ports write.  The
+# machine is taken from `MACHINE`.
 
 if {[llength $argv] != 1 || [lindex $argv 0] ni {synthesized final}} {
     puts "RAMS: FAILED --- usage: quartus_sta -t rams_check.tcl synthesized|final"
@@ -52,7 +47,6 @@ if {[llength $argv] != 1 || [lindex $argv 0] ni {synthesized final}} {
 }
 set snapshot [lindex $argv 0]
 set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
-set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
 if {$machine ni {cadr quux}} {
     puts "RAMS: FAILED --- MACHINE is '$machine', not cadr or quux"
     exit 1
@@ -123,47 +117,27 @@ proc rams_rule {what mems we wa} {
 }
 
 # {what} {memories} {write-enable register} {write-address register}
-# Block-disk's write port registers are its walk's, in a generate block of
-# each revision's own (`g_walk12`, `g_walk13`): the patterns take either.
-set quux_rules {
-    {QUUX's PDL buffer}        {*|processor|pdl_rtl_*}           {*|processor|pdlwrited*}          {*|processor|pwidx*}
-    {QUUX's control store}     {*|processor|imem_rtl_*}          {*|processor|iwe_q*}              {*|processor|iwa_q\[*}
-    {block-disk's block store} {*g_quux_disk.disk|blk_ram_rtl_*} {*g_quux_disk.disk|*chb_we*}      {*g_quux_disk.disk|*chb_a\[*}
-}
 # The CADR's PDL is known by the write pulse's edge register, as on the Zynq
 # boards; its control store by the same, with the PC as its address.
 set cadr_rules {
     {the CADR's PDL buffer}    {*|processor|pdl_rtl_*}           {*|processor|n_tpwp_q*}           {*|processor|pwidx*}
     {the CADR's control store} {*|processor|imem_rtl_*}          {*|processor|n_tpwpiram_q*}       {*|processor|pc\[*}
 }
-set quux_only {*g_quux_disk.disk|blk_ram_rtl_*}
 set quux15_rules {
-    {revision 15's PDL buffer}    {*u_core|pdl|*mem_rtl_*}        {*u_core|pdlh_v*}      {*u_core|pdlh_addr\[*}
-    {revision 15's control store} {*u_core|store|ram|*mem_rtl_*}  {*u_core|wb_imem_we*}  {*u_core|wb_imem_addr\[*}
-    {revision 15's A memory}      {*u_core|amem|*mem_rtl_*}       {*u_core|wb_a_we*}     {*u_core|wb_a_addr\[*}
+    {QUUX's PDL buffer}           {*u_core|pdl|*mem_rtl_*}        {*u_core|pdlh_v*}      {*u_core|pdlh_addr\[*}
+    {QUUX's control store}        {*u_core|store|ram|*mem_rtl_*}  {*u_core|wb_imem_we*}  {*u_core|wb_imem_addr\[*}
+    {QUUX's A memory}             {*u_core|amem|*mem_rtl_*}       {*u_core|wb_a_we*}     {*u_core|wb_a_addr\[*}
     {block-disk's block store}    {*u_core|walk|blk_ram_rtl_*}    {*u_core|walk|chb_we*} {*u_core|walk|chb_a\[*}
 }
 
-if {$machine eq "quux" && $revision in {15 16}} {
+if {$machine eq "quux"} {
     set n 0
     foreach {what mems we wa} $quux15_rules { rams_rule $what $mems $we $wa; incr n }
-    puts "RAMS: ok      revision $revision: all $n RAMs written at one write address were found,"
+    puts "RAMS: ok      QUUX: all $n RAMs written at one write address were found,"
     puts "RAMS:         and write where the RTL says"
-} elseif {$machine eq "quux"} {
-    set n 0
-    foreach {what mems we wa} $quux_rules { rams_rule $what $mems $we $wa; incr n }
-    puts "RAMS: ok      QUUX: all $n RAMs whose read and write share an address"
-    puts "RAMS:         chosen by the write enable were found, and write where the RTL says"
 } else {
-    foreach mem [dict keys $rams_blocks] {
-        if {[string match $quux_only $mem]} {
-            puts "RAMS: FAILED --- $mem, which only QUUX has, is in a CADR build:"
-            puts "RAMS: the machine built is not the one named."
-            exit 1
-        }
-    }
-    puts "RAMS: the CADR: QUUX's block store is not here; no RAM of the CADR shares an"
-    puts "RAMS: address chosen by the write enable, so its own write addresses are asked:"
+    puts "RAMS: the CADR: no RAM of the CADR shares an address chosen by the write"
+    puts "RAMS: enable, so its own write addresses are asked:"
     foreach {what mems we wa} $cadr_rules { rams_rule $what $mems $we $wa }
 }
 exit 0

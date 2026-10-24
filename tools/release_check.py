@@ -4,7 +4,7 @@
 """The release's zips, read back: which there are, what each carries, what it says.
 
     python3 tools/release_check.py <dir> --commit <sha> [--root .] [--dtc dtc]
-                                   [--cadr-system 1003] [--quux-system 2001]
+                                   [--cadr-system 1003] [--quux-system 2002]
                                    [--fault-commit <sha>]
                                    [--cadr-assets DIR] [--quux-assets DIR]
 
@@ -12,7 +12,7 @@
 directory of zips.  It reads only the zips and this tree's sources, with no
 board, no Vivado and no Quartus, and holds:
 
-  1. THE LIST.  Exactly six zips: the CADR and QUUX revision 13 for each of
+  1. THE LIST.  Exactly six zips: the CADR and QUUX for each of
      the Arty Z7-20, the DE25-Nano and the Kria KR260.  A missing one, a second
      copy of one, or any other zip under <dir> fails.
 
@@ -86,8 +86,8 @@ ZIPS = [("cadr", "arty-z7-20"), ("cadr", "de25-nano"),
 # What each board's card is.  `top` and `part` are the Zynq header's design
 # name and part; `dtsi` the folder of the board family's reservations;
 # `mode` the display mode, fixed per board (docs/display-output.md), and
-# `output` the connector it drives; `mw` the most main memory revision 13 has
-# on the board (cadr_board.h, CADR_BOARD_QUUX13_MAIN_WORDS_MAX).
+# `output` the connector it drives; `mw` the most main memory the board keeps
+# for QUUX (cadr_board.h, CADR_BOARD_QUUX13_MAIN_WORDS_MAX).
 BOARDS = {
     "arty-z7-20": dict(fabric="cadr.bit", fault="fault.bit", dtb="zynq-arty-z7-20.dtb",
                        loader="u-boot.img", top="cadr_arty", part="7z020clg400",
@@ -261,8 +261,8 @@ def check_readme(zipname, machine, board, commit, system, text):
     for s in ["System %s" % system, rel, rolling] + files + rolling_files:
         if s not in flat:
             bad(zipname, "README.TXT does not name %s" % s)
-    if machine == "quux" and "revision 13" not in flat:
-        bad(zipname, "README.TXT does not say QUUX revision 13")
+    if machine == "quux" and "QUUX revision 16" not in flat:
+        bad(zipname, "README.TXT does not say QUUX revision 16, the revision the card carries")
     if "stops and asks for a file" in flat:
         bad(zipname, "README.TXT says the machine stops without sys/; System %s boots "
             "on its own error table" % system)
@@ -337,7 +337,7 @@ def main():
     ap.add_argument("--root", default=".", help="this repository's root")
     ap.add_argument("--dtc", default=os.environ.get("DTC", "dtc"))
     ap.add_argument("--cadr-system", default="1003")
-    ap.add_argument("--quux-system", default="2001")
+    ap.add_argument("--quux-system", default="2002")
     ap.add_argument("--cadr-assets")
     ap.add_argument("--quux-assets")
     args = ap.parse_args()

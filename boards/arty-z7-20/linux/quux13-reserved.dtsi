@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// QUUX revision 13's memory, told to Linux and to U-Boot: the reservation
-// in revision 13's own device tree, which a card or a served set carries
-// beside revision 13's bitstream and no other.
+// QUUX's memory, told to Linux and to U-Boot: the reservation
+// in QUUX's own device tree, which a card or a served set carries
+// beside QUUX's bitstream and no other.
 //
-// `rtl/plumbing/cadr_ddr_map.sv` places revision 13's main memory, packed
+// `rtl/plumbing/cadr_ddr_map.sv` places QUUX's main memory, packed
 // storage, directly below the display; the display and the disk pack
 // program's records stay where the CADR's are.  This node reserves from main
 // memory to the end of the records, and no further:
@@ -15,14 +15,14 @@
 //   SPARE_BASE       = 0x1C10_0000, 128 KB, RECORDS_BYTES  the records
 //   QUUX13_RESERVED_END = 0x1C12_0000, the CADR's end too
 //
-// **THE CADR's NODE IS TAKEN OUT AND THIS ONE PUT IN.**  Revision 13's tree
+// **THE CADR's NODE IS TAKEN OUT AND THIS ONE PUT IN.**  QUUX's tree
 // is the board's own tree with this file after `cadr-reserved.dtsi`
 // (`zynq-arty-z7-20-quux13.dts`), so everything else about the board is
 // said once.  Linux has 0x0000_0000-0x11FF_FFFF and 0x1C12_0000-0x1FFF_FFFF,
 // 350.875 MB in two ranges; the CADR's and revision 12's trees reserve
 // 0x1B00_0000-0x1C11_FFFF and keep 494.875 MB.
 //
-// **AND U-BOOT's TREE FOR REVISION 13 IS THE SAME**, so a revision 13 card
+// **AND U-BOOT's TREE FOR QUUX IS THE SAME**, so a QUUX card
 // carries a u-boot.img of its own.  U-Boot relocates to the highest free
 // range that holds it (common/memtop.c, board/xilinx/common/board.c), which
 // here is the 62.9 MB above the records, and places the kernel's tree and the

@@ -696,12 +696,12 @@ static void attach(struct console *c, struct model *m)
 	c->ctx = m;
 }
 
-// QUUX revision 15 on the Kria: entry 21 with a 19 ns period, its face
+// QUUX on the Kria: entry 21 with a 19 ns period and revision 16, its face
 // without word 13, and a machine that boots on the keyboard's boot word.
-#define MODEL_REV15_ENTRY 0x5155260000F4ull
-static void model_rev15(struct model *m)
+#define MODEL_QUUX_ENTRY 0x515526000104ull
+static void model_quux(struct model *m)
 {
-	m->ro_entry21 = MODEL_REV15_ENTRY;
+	m->ro_entry21 = MODEL_QUUX_ENTRY;
 	m->no_boot_word = 1;
 	m->kbd_boots = 1;
 }
@@ -1851,16 +1851,17 @@ static void check_boot(void)
 	}
 }
 
-// **`boot` ON QUUX REVISION 15, WHOSE FACE HAS NO WORD 13.**  It boots on
+// **`boot` ON QUUX, WHOSE FACE HAS NO WORD 13.**  It boots on
 // the keyboard's cold boot word, written to the input page's KEY: the machine
 // halts (RUN cleared, as the console clears it) and `-BOOT` is pressed the
 // clock after (`quux15_core.sv`).  So `boot` there writes NOTHING to word 13
 // and exactly one word to KEY, and that word is the cold one, which the
 // microcode reads back after the PROM to choose cold from warm.  And on a
-// machine this program has no boot for --- a revision it has not met, or a
-// fabric that did not say which machine it is --- `boot` refuses and writes
+// machine this program has no boot for --- a revision of QUUX other than the
+// one it is built for, an older one among them, or a fabric that did not say
+// which machine it is --- `boot` refuses, naming the revision, and writes
 // nothing anywhere.
-static void check_boot_rev15(void)
+static void check_boot_quux(void)
 {
 	struct model m;
 	struct console c;
@@ -1875,7 +1876,7 @@ static void check_boot_rev15(void)
 	// STAT, so that `boot` must wait for it.
 	model_init(&m);
 	attach(&c, &m);
-	model_rev15(&m);
+	model_quux(&m);
 	m.in_lag = 3;
 	cons_halt(&c);
 	m.pc = 05163;
@@ -1885,23 +1886,23 @@ static void check_boot_rev15(void)
 	{
 		const char *out = capture_end();
 		CHECK(m.boot_word_writes == 0,
-		      "boot on revision 15 wrote word 13, which its face does not have (%u stores)",
+		      "boot on QUUX wrote word 13, which its face does not have (%u stores)",
 		      m.boot_word_writes);
 		CHECK(m.in_key_writes == 1 && m.in_last_written == cold,
-		      "boot on revision 15 did not write the cold boot word to KEY once: %u stores, "
+		      "boot on QUUX did not write the cold boot word to KEY once: %u stores, "
 		      "the last %08x", m.in_key_writes, m.in_last_written);
 		CHECK(m.in_other_writes == 0, "boot wrote %u other words of the input page",
 		      m.in_other_writes);
 		CHECK(m.kbd_boot_count == 1 && m.run == 1 && m.pc == 036000,
 		      "the machine was not booted: %u boots, RUN %d, PC %o", m.kbd_boot_count, m.run,
 		      m.pc);
-		CHECK(rc == 0, "boot on revision 15 answered %d", rc);
-		CHECK(r.how == CONS_BOOT_BY_KEYBOARD && r.revision == 15 && r.handed && r.in_prom &&
+		CHECK(rc == 0, "boot on QUUX answered %d", rc);
+		CHECK(r.how == CONS_BOOT_BY_KEYBOARD && r.revision == 16 && r.handed && r.in_prom &&
 		      r.running && r.key_after == (CONS_IN_KEY_HANDED | cold) && r.queued == 0,
-		      "revision 15's report: how %d, revision %u, handed %d, in the PROM %d, running %d, "
+		      "QUUX's report: how %d, revision %u, handed %d, in the PROM %d, running %d, "
 		      "KEY %08x, queued %u", r.how, r.revision, r.handed, r.in_prom, r.running,
 		      r.key_after, r.queued);
-		CHECK(strstr(out, "boot: QUUX revision 15 has no light panel's button; the keyboard's "
+		CHECK(strstr(out, "boot: QUUX has no light panel's button; the keyboard's "
 				  "cold boot word 0x00f9fc26 written to the input page's KEY") != NULL,
 		      "boot did not say which word it wrote where: [%s]", out);
 		CHECK(strstr(out, "KEY reads back 0x01f9fc26 with the queue empty, LOST 0 then 0 --- "
@@ -1912,30 +1913,9 @@ static void check_boot_rev15(void)
 		CHECK(strstr(out, "boot: RUNNING, the PC in the PROM (36000-37777) --- the boot PROM "
 				  "is running") != NULL,
 		      "boot did not say the PROM is running: [%s]", out);
-		CHECK(strstr(out, "word 13") == NULL, "boot on revision 15 talked of word 13: [%s]",
+		CHECK(strstr(out, "word 13") == NULL, "boot on QUUX talked of word 13: [%s]",
 		      out);
-	}
-
-	// 1b. REVISION 16, revision 15's machine with the Ethernet device (QUUX's
-	// Ethernet contract, section 10): the same boot, the keyboard's word.
-	{
-		struct model m16;
-		struct console c16;
-		struct cons_boot_report r16;
-		model_init(&m16);
-		attach(&c16, &m16);
-		model_rev15(&m16);
-		m16.ro_entry21 = 0x515526000104ull;
-		cons_halt(&c16);
-		capture_start();
-		const int rc16 = cons_boot_and_report(&c16, 2000, &r16);
-		cons_say_boot(&r16);
-		const char *out16 = capture_end();
-		CHECK(rc16 == 0 && r16.how == CONS_BOOT_BY_KEYBOARD && r16.revision == 16 &&
-		      m16.boot_word_writes == 0 && m16.in_key_writes == 1 && m16.kbd_boot_count == 1,
-		      "boot on revision 16 answered %d, how %d, revision %u, %u stores to word 13, %u to KEY, "
-		      "%u boots: [%s]", rc16, r16.how, r16.revision, m16.boot_word_writes, m16.in_key_writes,
-		      m16.kbd_boot_count, out16);
+		CHECK(strstr(out, "revision") == NULL, "boot on QUUX named a revision: [%s]", out);
 	}
 
 	// 2. A RUNNING machine, the same again: the second boot is a second
@@ -1946,7 +1926,7 @@ static void check_boot_rev15(void)
 	cons_say_boot(&r);
 	capture_end();
 	CHECK(rc == 0 && m.boot_word_writes == 0 && m.in_key_writes == 2 && m.kbd_boot_count == 2 &&
-	      m.pc == 036000, "the second boot on revision 15: answered %d, %u word 13 stores, %u KEY "
+	      m.pc == 036000, "the second boot on QUUX: answered %d, %u word 13 stores, %u KEY "
 	      "stores, %u boots, PC %o", rc, m.boot_word_writes, m.in_key_writes, m.kbd_boot_count,
 	      m.pc);
 
@@ -1957,7 +1937,7 @@ static void check_boot_rev15(void)
 	for (int drop = 0; drop < 2; ++drop) {
 		model_init(&m);
 		attach(&c, &m);
-		model_rev15(&m);
+		model_quux(&m);
 		capture_start();
 		rc = cons_boot_and_report(&c, 2000, &r);
 		capture_end();
@@ -1982,7 +1962,7 @@ static void check_boot_rev15(void)
 	// the PC where it was, so the PROM is NOT said to be running.
 	model_init(&m);
 	attach(&c, &m);
-	model_rev15(&m);
+	model_quux(&m);
 	m.kbd_boots = 0;
 	m.run = 1;
 	m.pc = 04321;
@@ -2001,7 +1981,7 @@ static void check_boot_rev15(void)
 	// 3. A WORD NOT HANDED OVER is said so, and is not a boot.
 	model_init(&m);
 	attach(&c, &m);
-	model_rev15(&m);
+	model_quux(&m);
 	m.in_stuck = 1;
 	m.pc = 01234;
 	capture_start();
@@ -2019,7 +1999,7 @@ static void check_boot_rev15(void)
 	// input page, and the machine where it was.
 	static const struct {
 		uint64_t entry;
-		int rev15, full, ident_wrong, unmapped;
+		int quux, full, ident_wrong, unmapped;
 		const char *line;
 	} t[] = {
 		{ 0x515506000114ull, 0, 0, 0, 0,
@@ -2028,24 +2008,35 @@ static void check_boot_rev15(void)
 		{ 0x5155060000B4ull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- QUUX revision 11: this program has no boot "
 		  "for it" },
+		// The older revisions, each named: 13's and 14's had a button, and
+		// 15's face is not the one this program drives.
+		{ 0x5155050000D4ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 13: this program has no boot "
+		  "for it" },
+		{ 0x5155060000E4ull, 0, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 14: this program has no boot "
+		  "for it" },
+		{ 0x5155260000F4ull, 1, 0, 0, 0,
+		  "boot: refused, nothing written --- QUUX revision 15: this program has no boot "
+		  "for it" },
 		{ 0x515504010000ull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- QUUX with MACHINE-ID 0, revision 12's, which is "
 		  "retired: this program has no boot for it" },
 		{ 0x123456789ABCull, 0, 0, 0, 0,
 		  "boot: refused, nothing written --- the fabric did not say which machine it is" },
-		{ MODEL_REV15_ENTRY, 1, 1, 0, 0,
+		{ MODEL_QUUX_ENTRY, 1, 1, 0, 0,
 		  "boot: refused, nothing written --- the keyboard's queue has no room, so the word "
 		  "would be dropped" },
-		{ MODEL_REV15_ENTRY, 1, 0, 1, 0,
+		{ MODEL_QUUX_ENTRY, 1, 0, 1, 0,
 		  "boot: refused, nothing written --- the input page reads 0x4e4f4e45, not \"INPT\"" },
-		{ MODEL_REV15_ENTRY, 1, 0, 0, 1,
+		{ MODEL_QUUX_ENTRY, 1, 0, 0, 1,
 		  "boot: refused, nothing written --- the input page is not mapped" },
 	};
 	for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
 		model_init(&m);
 		attach(&c, &m);
-		if (t[i].rev15)
-			model_rev15(&m);
+		if (t[i].quux)
+			model_quux(&m);
 		m.ro_entry21 = t[i].entry;
 		m.in_full = t[i].full;
 		if (t[i].ident_wrong)
@@ -2071,10 +2062,10 @@ static void check_boot_rev15(void)
 		      t[i].line);
 	}
 
-	// 5. THE MACHINES WITH A BUTTON keep it: the CADR and revisions 13 and
-	// 14 press word 13 with the key and write nothing to the input page.
+	// 5. THE MACHINE WITH A BUTTON keeps it: the CADR presses word 13 with
+	// the key and writes nothing to the input page.
 	static const uint64_t button[] = {
-		CONS_RO_NO_MEMORY, 0x5155050000D4ull, 0x5155060000E5ull,
+		CONS_RO_NO_MEMORY,
 	};
 	for (unsigned i = 0; i < sizeof button / sizeof button[0]; ++i) {
 		model_init(&m);
@@ -2113,14 +2104,14 @@ static void check_boot_rev15(void)
 		      cons_held(path) ? "on" : "OFF");
 		model_init(&m);
 		attach(&c, &m);
-		model_rev15(&m);
+		model_quux(&m);
 		cons_halt(&c);
 		capture_start();
 		rc = cons_boot_command(&c, 2000, path);
 		{
 			const char *out = capture_end();
 			CHECK(rc == 0 && cons_held(path) == 0 && m.kbd_boot_count == 1,
-			      "revision 15's boot answered %d, the hold %s, %u boots", rc,
+			      "QUUX's boot answered %d, the hold %s, %u boots", rc,
 			      cons_held(path) ? "STILL ON" : "off", m.kbd_boot_count);
 			CHECK(strstr(out, "the hold is off") != NULL,
 			      "the hold's release was not said: [%s]", out);
@@ -2987,14 +2978,12 @@ static void check_display_sleep_word(void)
 // words.
 // **`machine`: WHICH MACHINE THE FABRIC IS**, against canned values of the
 // register table's entry 21 and the stamp.  Every value is the check's: the
-// CADR's answer; revision 13 at the Arty Z7-20's K of 5 with an L that is not
-// K, so that crossed fields show; revision 13 on a board whose console reads
-// no stamp; an entry with QUUX's signature and no MACHINE-ID, which only
-// revision 12, retired, answered; revisions 14
-// and 15, whose words are 40 bits as revision 13's are; a revision this
-// program has not met; and a word that is neither machine's.  Each line is
-// held whole, so a field taken from the wrong bits, or a width or a revision
-// guessed, reads wrong.
+// CADR's answer; QUUX at a period of 17 ns, and at 8.5 ns on a board whose
+// console reads no stamp; an entry with QUUX's signature and no MACHINE-ID,
+// which only revision 12, retired, answered; the older revisions 13 to 15,
+// and 17, which the line names and reads nothing more into; and a word that
+// is neither machine's.  Each line is held whole, so a field taken from the
+// wrong bits, or a width or a revision guessed, reads wrong.
 static void check_machine_word(void)
 {
 	struct model m;
@@ -3007,28 +2996,28 @@ static void check_machine_word(void)
 	} t[] = {
 		{ CONS_RO_NO_MEMORY, 0xC0FFEE20u, 0,
 		  "machine: CADR, 32-bit words; build c0ffee20 (commit c0ffee2, tree clean)" },
+		{ 0x515522000104ull, 0x78F0F670u, 0,
+		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), "
+		  "40-bit words, period 17 ns; build 78f0f670 (commit 78f0f67, tree clean)" },
+		{ 0x515511000104ull, CONS_BUILD_NONE, 0,
+		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), "
+		  "40-bit words, period 8.5 ns; no build stamp" },
 		{ 0x5155050300D4ull, 0x78F0F670u, 0,
 		  "machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), "
-		  "40-bit words, microcycle K=5 L=3; build 78f0f670 (commit 78f0f67, tree clean)" },
-		{ 0x5155040000D4ull, CONS_BUILD_NONE, 0,
-		  "machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), "
-		  "40-bit words, microcycle K=4 L=0; no build stamp" },
+		  "a revision this program does not know; build 78f0f670 (commit 78f0f67, tree clean)" },
 		{ 0x515504010000ull, 0x1234ABC1u, 0,
 		  "machine: QUUX of no revision this program knows: MACHINE-ID 0 in the register "
 		  "table, which only revision 12, retired, answered, microcycle K=4 L=1; build 1234abc1 "
 		  "(commit 1234abc, tree modified)" },
 		{ 0x5155060000E5ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
-		  "40-bit words, microcycle K=6 L=0; build 0000000f, no git information" },
+		  "a revision this program does not know; build 0000000f, no git information" },
 		{ 0x515506000114ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 17, MACHINE-ID 51550114 (revision 17, processor type 4), "
-		  "words of a width not known here, period 3 ns; build 0000000f, no git information" },
+		  "a revision this program does not know; build 0000000f, no git information" },
 		{ 0x5155220000F4ull, 0x0E4E7450u, 0,
 		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
-		  "40-bit words, period 17 ns; build 0e4e7450 (commit 0e4e745, tree clean)" },
-		{ 0x5155110000F4ull, 0x0E4E7450u, 0,
-		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
-		  "40-bit words, period 8.5 ns; build 0e4e7450 (commit 0e4e745, tree clean)" },
+		  "a revision this program does not know; build 0e4e7450 (commit 0e4e745, tree clean)" },
 		{ 0x123456789ABCull, 0xC0FFEE20u, 1,
 		  "machine: NOT KNOWN --- entry 21 reads 123456789abc, neither QUUX's signature nor "
 		  "the CADR's answer; build c0ffee20 (commit c0ffee2, tree clean)" },
@@ -3050,27 +3039,21 @@ static void check_machine_word(void)
 		CHECK(m.ro_writes == 1 && m.ro_asked == ((CONS_RO_SEL_REGS << 14) | CONS_RO_QUUX_ID),
 		      "machine (%u) asked the window %u times, last for %05x", i, m.ro_writes, m.ro_asked);
 	}
-	// The decode alone, field by field, on the crossed case.
+	// The decode alone, field by field, on a crossed case: <23:16> not 0.
 	{
 		struct cons_machine_id id;
-		cons_machine_id_of(0x5155050300D4ull, 0x78F0F670u, &id);
-		CHECK(id.quux == 1 && id.known == 1 && id.revision == 13 && id.k == 5 && id.l == 3 &&
-		      id.machine_id == 0x515500D4u && id.processor_type == 4 && id.word_bits == 40 &&
+		cons_machine_id_of(0x515522030104ull, 0x78F0F670u, &id);
+		CHECK(id.quux == 1 && id.known == 1 && id.revision == 16 && id.k == 34 && id.l == 3 &&
+		      id.machine_id == 0x51550104u && id.processor_type == 4 && id.word_bits == 40 &&
 		      id.build.commit == 0x078F0F67u,
-		      "revision 13's entry decoded as rev %u K %u L %u id %08x type %u width %u",
+		      "QUUX's entry decoded as rev %u K %u L %u id %08x type %u width %u",
 		      id.revision, id.k, id.l, id.machine_id, id.processor_type, id.word_bits);
-		// Revision 14's own MACHINE-ID: its words are revision 13's.
+		// An older revision's MACHINE-ID: its revision named, its width not
+		// one this program knows.
 		cons_machine_id_of(0x5155050000E4ull, 0, &id);
-		CHECK(id.quux == 1 && id.revision == 14 && id.processor_type == 4 && id.word_bits == 40,
+		CHECK(id.quux == 1 && id.revision == 14 && id.processor_type == 4 && id.word_bits == 0,
 		      "revision 14's entry decoded as rev %u type %u width %u", id.revision,
 		      id.processor_type, id.word_bits);
-		// Revision 16's, the Ethernet device's (QUUX's Ethernet contract,
-		// section 10): revision 15's words, 40 bits, its period in K's place.
-		cons_machine_id_of(0x515522000104ull, 0, &id);
-		CHECK(id.quux == 1 && id.revision == 16 && id.machine_id == 0x51550104u &&
-		      id.processor_type == 4 && id.word_bits == 40 && id.k == 34,
-		      "revision 16's entry decoded as rev %u id %08x type %u width %u K %u", id.revision,
-		      id.machine_id, id.processor_type, id.word_bits, id.k);
 		cons_machine_id_of(CONS_RO_NO_MEMORY, CONS_BUILD_NONE, &id);
 		CHECK(id.quux == 0 && id.known == 1 && id.revision == 0 && id.machine_id == 0 &&
 		      id.word_bits == 32 && !id.build.stamped, "the CADR's answer decoded as QUUX's");
@@ -3081,7 +3064,7 @@ static void check_machine_word(void)
 	// **A STALE ECHO IS ASKED AGAIN, ONCE**, and two are no answer.
 	model_init(&m);
 	attach(&c, &m);
-	m.ro_entry21 = 0x5155050000D4ull;
+	m.ro_entry21 = 0x515522000104ull;
 	m.ro_stale = 1;
 	{
 		char *argv[] = {"machine"};
@@ -3089,7 +3072,7 @@ static void check_machine_word(void)
 		capture_start();
 		cons_machine_word(&c, 1, argv, &status);
 		const char *said = capture_end();
-		CHECK(status == 0 && m.ro_writes == 2 && strstr(said, "QUUX revision 13") != NULL,
+		CHECK(status == 0 && m.ro_writes == 2 && strstr(said, "QUUX revision 16") != NULL,
 		      "one stale echo: answered %d after %u asks: %s", status, m.ro_writes, said);
 		m.ro_stale = 2;
 		status = -1;
@@ -3101,7 +3084,8 @@ static void check_machine_word(void)
 		      "two stale echoes: answered %d: %s", status, said);
 	}
 	// **WITH A MACHINE NAMED**, 0 only when the fabric is that machine, and
-	// the line says what it is when it is not.
+	// the line says what it is when it is not.  `quux` alone is the QUUX this
+	// program is built for, and an older fabric is not it, named.
 	static const struct {
 		uint64_t entry;
 		int argc;
@@ -3110,6 +3094,11 @@ static void check_machine_word(void)
 		const char *says;
 	} e[] = {
 		{ 0x5155050000D4ull, 3, "quux", "13", 0, NULL },
+		{ 0x5155050000D4ull, 2, "quux", NULL, 1,
+		  "NOT THE MACHINE ASKED FOR --- asked for QUUX, and the fabric is QUUX revision 13" },
+		{ 0x5155220000F4ull, 2, "quux", NULL, 1,
+		  "asked for QUUX, and the fabric is QUUX revision 15" },
+		{ 0x515522000104ull, 2, "quux", NULL, 0, NULL },
 		{ 0x515522000104ull, 3, "quux", "16", 0,
 		  "machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), 40-bit words, "
 		  "period 17 ns" },
@@ -3117,15 +3106,15 @@ static void check_machine_word(void)
 		  "asked for QUUX revision 15, and the fabric is QUUX revision 16" },
 		{ 0x5155220000F4ull, 3, "quux", "16", 1,
 		  "asked for QUUX revision 16, and the fabric is QUUX revision 15" },
-		{ 0x5155050000D4ull, 2, "quux", NULL, 0, NULL },
 		{ CONS_RO_NO_MEMORY, 2, "cadr", NULL, 0, NULL },
-		{ 0x515504000000ull, 2, "quux", NULL, 0, NULL },
+		{ 0x515504000000ull, 2, "quux", NULL, 1,
+		  "asked for QUUX, and the fabric is QUUX of no revision known" },
 		{ CONS_RO_NO_MEMORY, 3, "quux", "13", 1,
 		  "NOT THE MACHINE ASKED FOR --- asked for QUUX revision 13, and the fabric is the CADR" },
 		{ 0x515504000000ull, 3, "quux", "13", 1,
 		  "asked for QUUX revision 13, and the fabric is QUUX of no revision known" },
-		{ 0x5155050000D4ull, 2, "cadr", NULL, 1,
-		  "asked for the CADR, and the fabric is QUUX revision 13" },
+		{ 0x515522000104ull, 2, "cadr", NULL, 1,
+		  "asked for the CADR, and the fabric is QUUX revision 16" },
 		{ CONS_RO_NO_MEMORY, 2, "quux", NULL, 1, "asked for QUUX, and the fabric is the CADR" },
 		{ 0x123456789ABCull, 2, "cadr", NULL, 1, "NOT KNOWN" },
 		{ CONS_RO_NO_MEMORY, 2, "lisp", NULL, 2, "machine [cadr|quux [REVISION]]" },
@@ -3163,7 +3152,7 @@ static void check_machine_word(void)
 // **QUUX's MAIN MEMORY, `main-memory-size <n>MW`**, as muir's `quux` takes
 // it: a whole number of megawords with the unit written, and every other
 // form refused with the one message, writing nothing; the range word 38's in
-// whole megawords, 1MW to 32MW on revision 13 at the Arty Z7-20's 512 boards
+// whole megawords, 1MW to 32MW at the Arty Z7-20's 512 boards
 // and to 64MW at the DE25-Nano's 1,024; the CADR's
 // `main-memory-boards` refused on QUUX naming this word, and this word refused
 // on the CADR; and a fabric whose machine cannot be read set nothing.  Which
@@ -3183,7 +3172,7 @@ static void check_size_word(void)
 	struct console c;
 	model_init(&m);
 	attach(&c, &m);
-	m.ro_entry21 = 0x5155050000D4ull;	/* revision 13, K = 5 */
+	m.ro_entry21 = 0x515522000104ull;	/* QUUX, 17 ns */
 	m.boards = 512u;
 	m.boards_default = 512u;
 	m.boards_max = 512u;
@@ -3199,8 +3188,8 @@ static void check_size_word(void)
 		      m.boards_last == (((uint32_t)CONS_BOARDS_KEY << 16) | ok[i].boards),
 		      "main-memory-size %s: answered %d, the fabric at %u boards: %s", ok[i].arg, status,
 		      m.boards, said);
-		char want[96];
-		snprintf(want, sizeof want, "main-memory-size: %uMW of main memory%s; revision 13 on this "
+		char want[128];
+		snprintf(want, sizeof want, "main-memory-size: %uMW of main memory%s; QUUX on this "
 			 "board takes 1MW to 32MW, 32MW by default", ok[i].boards / 16u,
 			 ok[i].boards == 512u ? ", the default" : "");
 		CHECK(strstr(said, want) != NULL, "main-memory-size %s said [%s], wanting [%s]", ok[i].arg,
@@ -3228,7 +3217,7 @@ static void check_size_word(void)
 		const unsigned writes = m.boards_writes;
 		say_size(&c, range[i], &status, &said);
 		char want[128];
-		snprintf(want, sizeof want, "main-memory-size %s: revision 13's main memory on this board "
+		snprintf(want, sizeof want, "main-memory-size %s: QUUX's main memory on this board "
 			 "is 1MW to 32MW", range[i]);
 		CHECK(status == 2 && m.boards_writes == writes && strstr(said, want) != NULL,
 		      "main-memory-size %s: answered %d: %s", range[i], status, said);
@@ -3267,12 +3256,13 @@ static void check_size_word(void)
 	// The DE25-Nano's room, 1,024 boards: 64MW taken, 65MW refused.
 	m.boards_max = 1024u;
 	say_size(&c, "64MW", &status, &said);
-	CHECK(status == 0 && m.boards == 1024u, "revision 13 at 1,024: 64MW answered %d: %s", status,
+	CHECK(status == 0 && m.boards == 1024u, "QUUX at 1,024: 64MW answered %d: %s", status,
 	      said);
 	say_size(&c, "65MW", &status, &said);
 	CHECK(status == 2 && m.boards == 1024u &&
-	      strstr(said, "revision 13's main memory on this board is 1MW to 64MW") != NULL,
-	      "revision 13 at 1,024: 65MW answered %d: %s", status, said);
+	      strstr(said, "QUUX's main memory on this board is 1MW to 64MW") != NULL,
+	      "QUUX at 1,024: 65MW answered %d: %s", status, said);
+	CHECK(strstr(said, "revision") == NULL, "main-memory-size named a revision: %s", said);
 	// A count that is no whole number of megawords is said in kilowords, as
 	// muir says it.
 	m.boards = 31u;
@@ -3334,9 +3324,9 @@ static void check_boards_range(void)
 	{
 		const unsigned writes = m.boards_writes;
 		CHECK(cons_set_boards(&c, 513u) == -1 && m.boards_writes == writes,
-		      "revision 13: cons_set_boards took 513");
+		      "QUUX: cons_set_boards took 513");
 		CHECK(cons_set_boards(&c, 512u) == 0 && m.boards == 512u,
-		      "revision 13: cons_set_boards 512 did not write it");
+		      "QUUX: cons_set_boards 512 did not write it");
 	}
 	// **A FABRIC OLDER THAN WORD 38 IS THE CADR'S**: 61 refused with 1 to 60.
 	m.range_unmapped = 1;
@@ -4098,7 +4088,7 @@ int main(int argc, char **argv)
 	check_parse_u32();
 	check_halt_and_start();
 	check_boot();
-	check_boot_rev15();
+	check_boot_quux();
 	check_held();
 	check_trace_keys();
 	check_trace_chaos();
@@ -4151,13 +4141,13 @@ int main(int argc, char **argv)
 	       "      machine and on a running one alike, counted and reported with the PC and\n"
 	       "      CYCLES either side; twelve values that are not the key press nothing, and\n"
 	       "      a modeled fabric that boots on any value is caught by the same twelve\n"
-	       "    boot on QUUX revision 15, which has no word 13: the keyboard's cold boot\n"
+	       "    boot on QUUX, which has no word 13: the keyboard's cold boot\n"
 	       "      word 0xF9FC26 to the input page's KEY and nothing to word 13, waited for\n"
 	       "      until KEY reads it back with the queue empty and LOST unchanged, the PC\n"
 	       "      then in the PROM at 36000; a full queue, a page that is not \"INPT\" or\n"
-	       "      one not mapped, a revision not met and a machine not known all refused\n"
-	       "      with nothing written, and the hold left on, MACHINE-ID 0, revision\n"
-	       "      12's, among them; the CADR and revisions 13 and 14 keep the button\n"
+	       "      one not mapped, another revision and a machine not known all refused\n"
+	       "      with nothing written, and the hold left on, MACHINE-ID 0 and the older\n"
+	       "      revisions 13 to 15, each named, among them; the CADR keeps the button\n"
 	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
 	       "      holding 0, -1, nothing or a word REFUSED with nothing signaled, since\n"
@@ -4215,11 +4205,12 @@ int main(int argc, char **argv)
 	       "      commit names where it started and not what it is.  The word comes\n"
 	       "      back off page 2 and `status` carries it, so one command answers it\n"
 	       "    WHICH MACHINE THE FABRIC IS, `machine`: the readout window's entry 21\n"
-	       "      and the stamp, against canned values --- the CADR's answer, revision\n"
-	       "      13 at K=5 with L not K, revision 13 with no stamp, QUUX's signature\n"
-	       "      with no MACHINE-ID, a revision not met and a word of neither machine,\n"
-	       "      each line held whole; a stale echo asked again once and two refused; with a\n"
-	       "      machine named, 0 only for that machine and revision\n"
+	       "      and the stamp, against canned values --- the CADR's answer, QUUX at\n"
+	       "      two periods, one with no stamp, QUUX's signature with no MACHINE-ID,\n"
+	       "      the older revisions named and a word of neither machine, each line\n"
+	       "      held whole; a stale echo asked again once and two refused; with a\n"
+	       "      machine named, 0 only for that machine and revision, quux alone the\n"
+	       "      QUUX this program is built for\n"
 	       "    WHETHER THE LAMPS BLINK, page 2's word 35: the key makes them steady and\n"
 	       "      its complement makes them blink, asked twice is still steady, and the\n"
 	       "      line says which in words; a word with no marker is an older fabric\n"

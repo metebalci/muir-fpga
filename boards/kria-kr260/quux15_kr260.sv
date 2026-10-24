@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// **QUUX REVISION 15 ON THE AMD KRIA KR260** (contract G3 revision 15,
-// §12.3): `rtl/machine/quux15_core.sv`, the pipelined machine, on this
-// board's processing system, at the period its fit closes.  Revisions 13 and
-// 14 and the CADR stay `cadr_kr260.sv`'s; this machine has another face to
-// the board, so it has its own top level, with that file's facts of the
-// board and the part kept as they are:
+// **QUUX ON THE AMD KRIA KR260** (contract G3 revision 15, §12.3;
+// revision 16): `rtl/machine/quux15_core.sv`, the pipelined machine, on this
+// board's processing system, at the period its fit closes.  The CADR
+// stays `cadr_kr260.sv`'s; this machine has another face to the board, so
+// it has its own top level, with that file's facts of the board and the
+// part kept as they are:
 //
 //   - **THE CLOCK IS THE CARRIER'S 25 MHz, ON C3, THROUGH AN `MMCME4_BASE`**,
 //     25 x 40 = 1000 MHz at the VCO, divided by `CLKOUT0_DIVIDE_F`: the
@@ -15,9 +15,8 @@
 //   - **THE PROCESSING SYSTEM IS `cadr_ps8.sv`'s `PS8`**, every port clocked
 //     by the machine's clock and live while `pl_resetn0` is high.
 //   - **MAIN MEMORY IS ON `S_AXI_HP0_FPD`**, 32M words of packed storage at
-//     `CADR_DDR_MAP_KR260`'s revision-13 base (`QUUX13_MAIN_BASE`), where
-//     revisions 13 and 14 keep theirs and the board's revision-13 device
-//     tree reserves it, the frame buffer at the display base: the machine's
+//     `CADR_DDR_MAP_KR260`'s QUUX base (`QUUX13_MAIN_BASE`), which the
+//     board's QUUX device tree reserves, the frame buffer at the display base: the machine's
 //     own 64-bit master
 //     (`quux15_axi_master.sv`, inside the core's port) behind
 //     `quux_axi_narrow128.sv` on the 128-bit port.  Its writes carry one
@@ -27,8 +26,7 @@
 //     counts, its reset, the diagnostic registers, the readout of the
 //     halted machine a checkpoint takes, the build stamp, main memory's
 //     size, the video controller's, the period and the real-time clock's
-//     start.  The machine comes out of reset running from its PROM, as
-//     revisions 13 and 14 do on this board.  Every
+//     start.  The machine comes out of reset running from its PROM.  Every
 //     other address on both master ports is answered with a constant
 //     (`cadr_gp0_default.sv`), since a read nothing answers hangs both Arm
 //     cores.
@@ -48,16 +46,16 @@
 //   - **THE KEYBOARD AND THE MOUSE ON `M_AXI_HPM0_FPD`**, the split's input
 //     page at 0xA000_3000, as `cadr_kr260.sv` has it: `cadr_input_cables.sv`,
 //     unchanged but for its mouse's step, which comes from the period, so
-//     that `cadr-usb-input` and `cadr-terminal` drive it as on revision 14.
+//     that `cadr-usb-input` and `cadr-terminal` drive it as on the CADR.
 //     Its word and the mouse's seven lines go to the core's register page
 //     (`quux15_input.sv`), whose busy stands in for the card's `KBD READY`;
 //     there is no I/O board, and so no `MOUSE READY`.
 //   - **THE FILE DEVICE'S PAGE AND THE REAL-TIME CLOCK'S SETTER ON
 //     `M_AXI_HPM0_FPD` AT 0xA000_4000** (`rtl/plumbing/quux_fd_face.sv`,
-//     IDENT "QF13" as revisions 13 and 14 have it: main memory packed
+//     IDENT "QF13", the page `quux-file-device` attaches to: main memory packed
 //     storage at the same base, the rings' bases 28 bits), the map onto the
 //     core's host side (`quux15_devices.sv`), so `quux-file-device` serves
-//     the file device and sets the clock as it does on revisions 13 and 14.
+//     the file device and sets the clock.
 //   - **THE DISPLAY OUTPUT ON `S_AXI_HP3_FPD` AND THE DISPLAYPORT'S LIVE
 //     VIDEO**, as `cadr_kr260.sv` has it: `rtl/plumbing/cadr_display_out.sv`
 //     reading the video controller's frame buffer out of DDR at the display
@@ -72,12 +70,11 @@
 //     reaches the picture.  The console face's words 33 to 36 drive it, as
 //     `cadr_console.sv`'s do, and its word 42 reads and clears its two
 //     sticky bits.
-//   - **NO NETWORK**: QUUX has no Chaosnet cable.  The core's interface
-//     (`quux15_chaos.sv`) is built and its cable tied off as a cable with
-//     nothing on it: a frame sent goes nowhere and is away at once, nothing
-//     arrives, and the address switches read 0.  No serial line, which
-//     QUUX drops with the I/O board, and no debug cable either (contract
-//     Q5): PMOD1's pads undriven.
+//   - **NO CHAOSNET**: QUUX has no Chaosnet cable and no Chaosnet interface
+//     (QUUX's Ethernet contract, section 8 R4).  The split's second page, the
+//     CADR's network page, is the Ethernet device's face, "QE16", at the pack
+//     side's base + 0x5000.  No serial line, which QUUX drops with the I/O
+//     board, and no debug cable either (contract Q5): PMOD1's pads undriven.
 //   - **TWO LAMPS**: UF1 the microcycle lamp (`cadr_lamp_microcycle.sv`),
 //     blinking with the committed microcycles, so it flickers while the
 //     machine runs and freezes when it stops, or steady at the console's
@@ -95,11 +92,9 @@ module quux15_kr260 #(
     // **THE PERIOD**, in nanoseconds: the MMCM's divide below, the one place
     // it is decided on this board.
     parameter int unsigned PERIOD_NS = 20,
-    // **THE REVISION**, QUUX's, 15 or 16 (QUUX's Ethernet contract, §10):
-    // MACHINE-ID's revision field, and on 16 the Ethernet device, its page
-    // at the pack side's base + 0x5000 for `quux-ethernet-device`.  One
-    // design for both, the flow choosing it.
-    parameter int unsigned REVISION = 15
+    // **THE REVISION**, QUUX's: 16, MACHINE-ID's revision field, the only one
+    // built (QUUX's Ethernet contract, §10).
+    parameter int unsigned REVISION = 16
 ) (
     input  var logic       clk25,      // the carrier's 25 MHz, pin C3
     output var logic       uf1,
@@ -116,8 +111,7 @@ module quux15_kr260 #(
   end
   // **MAIN MEMORY: 32M WORDS**, 512 units of 64K, packed storage filling
   // the board's reservation from `MAIN_BASE` to the display (contract G2 §3;
-  // `cadr_ddr_map.sv`'s `QUUX13_MAIN_WORDS_MAX`), as revisions 13 and 14
-  // have it on this board.  The console's word 37 says it.
+  // `cadr_ddr_map.sv`'s `QUUX13_MAIN_WORDS_MAX`).  The console's word 37 says it.
   localparam int unsigned MAIN_WORDS = 32'h0200_0000;
   if (MAIN_WORDS != cadr_ddr_map::QUUX13_MAIN_WORDS_MAX) begin : g_main_words
     $error("the Kria KR260's main memory is %0d words, and its reservation holds %0d",
@@ -135,8 +129,7 @@ module quux15_kr260 #(
   end
 
   // **THE BOARD NAME** (contract HD): feature words 20-24, which the band's
-  // herald prints, "Machine Type QUUX on Kria KR260"; `cadr_kr260.sv`'s for
-  // revision 13.
+  // herald prints, "Machine Type QUUX on Kria KR260".
   localparam logic [8*64-1:0] BOARD = "Kria KR260";
 
   // **THE TIMES IN CLOCKS, AT THE PERIOD** (R9): each a duration the module
@@ -216,11 +209,6 @@ module quux15_kr260 #(
   logic        kbd_strobe, kbd_busy;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
-  // The Chaosnet interface's cable, tied off: a frame sent is away at once.
-  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
-  logic [8:0]  chaos_tx_len;
-  logic [15:0] chaos_tx_word, chaos_csr;
-  logic [11:0] chaos_bits;
   logic [15:0] fd_prod;
   // The host's side of the file device and the clock (`quux_fd_face.sv`).
   logic        host_we;
@@ -260,15 +248,12 @@ module quux15_kr260 #(
   logic [7:0]  qm_wstrb;
   logic [1:0]  qm_bresp, qm_rresp;
 
-  // **REVISION 16's ETHERNET DEVICE** (`rtl/machine/quux16_ethernet.sv`),
-  // its host's side through `quux_ed_face.sv` on the split's second page,
-  // which on revision 16 is at the pack side's base + 0x5000: QUUX has no
-  // Chaosnet cable, so that page has nothing else to carry.  Below 16 the
-  // page is the network's, answered with a constant as before, and the
-  // host's side is idle.
-  localparam bit ETHERNET = REVISION >= 16;
-  if (REVISION != 15 && REVISION != 16) begin : g_revision
-    $error("REVISION is %0d; this board builds QUUX revision 15 or 16", REVISION);
+  // **THE ETHERNET DEVICE** (`rtl/machine/quux16_ethernet.sv`), its host's
+  // side through `quux_ed_face.sv` on the split's second page, at the pack
+  // side's base + 0x5000: QUUX has no Chaosnet cable, so that page has
+  // nothing else to carry.
+  if (REVISION != 16) begin : g_revision
+    $error("REVISION is %0d; this board builds QUUX revision 16", REVISION);
   end
   logic        eth_we;
   logic [4:0]  eth_widx, eth_ridx;
@@ -308,13 +293,6 @@ module quux15_kr260 #(
       .eth_we(eth_we), .eth_widx(eth_widx), .eth_wdata(eth_wdata), .eth_ridx(eth_ridx),
       .eth_rdata(eth_rdata), .eth_tx_prod(eth_tx_prod), .eth_rx_prod(eth_rx_prod),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines), .kbd_busy(kbd_busy),
-      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
-      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
-      .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
-      .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0),
-      .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(chaos_tx_go), .chaos_tx_abort(1'b0),
-      .chaos_cbl_busy(1'b0), .chaos_rx_start(1'b0),
-      .chaos_rx_stored(12'd0), .chaos_rx_store(1'b0), .chaos_bits(chaos_bits),
       .axi_one_write_id(axi_one_write_id), .axi_read_clocks(axi_read_clocks),
       .axi_write_clocks(axi_write_clocks),
       .spy_we(spy_we), .spy_eadr(spy_eadr), .spy_wdata(spy_wdata),
@@ -523,7 +501,7 @@ module quux15_kr260 #(
   logic [1:0]  gp0d_bresp, gp0d_rresp;
 
   cadr_gp0_split #(
-      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(ETHERNET ? 32'hA000_5000 : 32'hA000_1000),
+      .PACK_BASE(32'hA000_0000), .CHAOS_BASE(32'hA000_5000),
       .SER_BASE(32'hA000_2000), .INPUT_BASE(32'hA000_3000),
       .FD_BASE(32'hA000_4000), .HAS_FD(1'b1),
       .ID_W(16), .LEN_W(8)
@@ -589,39 +567,22 @@ module quux15_kr260 #(
   );
 
   // The pages not on this board yet, and every other address.
-  // The split's second page: on revision 16 the Ethernet device's face,
-  // "QE16", onto the core's Ethernet host side; below it the network's,
-  // which QUUX has not got, answered with a constant.
-  if (ETHERNET) begin : g_ed_face
-    quux_ed_face #(.IDENT(32'h5145_3136), .ID_W(16), .LEN_W(8)) u_ed_face (
-        .clk(clk), .rst(gp0_rst_s),
-        .s_awaddr(gp0c_awaddr), .s_awlen(gp0c_awlen), .s_awid(gp0c_awid),
-        .s_awvalid(gp0c_awvalid), .s_awready(gp0c_awready),
-        .s_wdata(gp0c_wdata), .s_wstrb(gp0c_wstrb), .s_wlast(gp0c_wlast),
-        .s_wvalid(gp0c_wvalid), .s_wready(gp0c_wready),
-        .s_bresp(gp0c_bresp), .s_bid(gp0c_bid), .s_bvalid(gp0c_bvalid), .s_bready(gp0c_bready),
-        .s_araddr(gp0c_araddr), .s_arlen(gp0c_arlen), .s_arid(gp0c_arid),
-        .s_arvalid(gp0c_arvalid), .s_arready(gp0c_arready),
-        .s_rdata(gp0c_rdata), .s_rresp(gp0c_rresp), .s_rid(gp0c_rid),
-        .s_rlast(gp0c_rlast), .s_rvalid(gp0c_rvalid), .s_rready(gp0c_rready),
-        .host_we(eth_we), .host_widx(eth_widx), .host_wdata(eth_wdata),
-        .host_ridx(eth_ridx), .host_rdata(eth_rdata)
-    );
-  end else begin : g_no_ed_face
-    cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_chaos (
-        .clk(clk), .rst(gp0_rst_s),
-        .s_awvalid(gp0c_awvalid), .s_awid(gp0c_awid), .s_awready(gp0c_awready),
-        .s_wlast(gp0c_wlast), .s_wvalid(gp0c_wvalid), .s_wready(gp0c_wready),
-        .s_bresp(gp0c_bresp), .s_bid(gp0c_bid), .s_bvalid(gp0c_bvalid), .s_bready(gp0c_bready),
-        .s_arlen(gp0c_arlen), .s_arid(gp0c_arid), .s_arvalid(gp0c_arvalid),
-        .s_arready(gp0c_arready), .s_rdata(gp0c_rdata), .s_rresp(gp0c_rresp),
-        .s_rid(gp0c_rid), .s_rlast(gp0c_rlast), .s_rvalid(gp0c_rvalid), .s_rready(gp0c_rready)
-    );
-    assign eth_we = 1'b0;
-    assign eth_widx = 5'd0;
-    assign eth_wdata = 32'd0;
-    assign eth_ridx = 5'd0;
-  end
+  // The split's second page: the Ethernet device's face, "QE16", onto the
+  // core's Ethernet host side.
+  quux_ed_face #(.IDENT(32'h5145_3136), .ID_W(16), .LEN_W(8)) u_ed_face (
+      .clk(clk), .rst(gp0_rst_s),
+      .s_awaddr(gp0c_awaddr), .s_awlen(gp0c_awlen), .s_awid(gp0c_awid),
+      .s_awvalid(gp0c_awvalid), .s_awready(gp0c_awready),
+      .s_wdata(gp0c_wdata), .s_wstrb(gp0c_wstrb), .s_wlast(gp0c_wlast),
+      .s_wvalid(gp0c_wvalid), .s_wready(gp0c_wready),
+      .s_bresp(gp0c_bresp), .s_bid(gp0c_bid), .s_bvalid(gp0c_bvalid), .s_bready(gp0c_bready),
+      .s_araddr(gp0c_araddr), .s_arlen(gp0c_arlen), .s_arid(gp0c_arid),
+      .s_arvalid(gp0c_arvalid), .s_arready(gp0c_arready),
+      .s_rdata(gp0c_rdata), .s_rresp(gp0c_rresp), .s_rid(gp0c_rid),
+      .s_rlast(gp0c_rlast), .s_rvalid(gp0c_rvalid), .s_rready(gp0c_rready),
+      .host_we(eth_we), .host_widx(eth_widx), .host_wdata(eth_wdata),
+      .host_ridx(eth_ridx), .host_rdata(eth_rdata)
+  );
   cadr_gp0_default #(.ID_W(16), .LEN_W(8)) u_gp0_ser (
       .clk(clk), .rst(gp0_rst_s),
       .s_awvalid(gp0s_awvalid), .s_awid(gp0s_awid), .s_awready(gp0s_awready),
@@ -632,7 +593,7 @@ module quux15_kr260 #(
       .s_rid(gp0s_rid), .s_rlast(gp0s_rlast), .s_rvalid(gp0s_rvalid), .s_rready(gp0s_rready)
   );
   // **THE KEYBOARD AND THE MOUSE**: the input page, its queue flushed by
-  // the machine's reset as on revision 14.  The mouse's step is muir's
+  // the machine's reset.  The mouse's step is muir's
   // 16,000 ns at this board's period, rounded up.
   localparam int unsigned MOUSE_STEP_T = (16_000 + PERIOD_NS - 1) / PERIOD_NS;
   cadr_input_cables #(.ID_W(16), .LEN_W(8), .MOUSE_STEP_T(MOUSE_STEP_T)) u_input (
@@ -653,8 +614,8 @@ module quux15_kr260 #(
       .card_csr({2'b00, kbd_busy, 5'b00000})
   );
   // The file device's page and the clock's setter, for Linux's server:
-  // revision 13's page, "QF13", as `cadr_kr260.sv` gives revisions 13 and
-  // 14, onto the core's host side.
+  // the page "QF13" `quux-file-device` attaches to, onto the core's host
+  // side.
   quux_fd_face #(.IDENT(32'h5146_3133), .ID_W(16), .LEN_W(8)) u_fd_face (
       .clk(clk), .rst(gp0_rst_s),
       .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
@@ -1092,8 +1053,6 @@ module quux15_kr260 #(
                     obs_ob, obs_oalow, obs_oahigh, obs_grant, obs_gaddr, obs_mdl, obs_mdword,
                     obs_reg, obs_raddr, obs_queue, obs_inflight, obs_halted, ro_word,
                     fd_doorbell, fd_prod, fd_enabled,
-                    chaos_tx_len, chaos_tx_valid, chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
-                    chaos_bits,
                     axi_one_write_id, axi_read_clocks, axi_write_clocks, qm_awid,
                     qm_awlen[7:4], qm_arlen[7:4], qm_awsize[2], qm_arsize[2],
                     hpm0_awaddr[39:32], hpm0_araddr[39:32], hpm1_awaddr[39:32], hpm1_araddr[39:32],

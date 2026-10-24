@@ -36,28 +36,23 @@
 # second eight-minute build.  Zero, or no value, is the plain board.  With
 # both, the directory is `build/de25-ddr-probe/`.
 #
-# **`MACHINE=quux` BUILDS THE EVOLVED CADR**, a bitstream of its own, with
-# `WORD_BITS=40` (below), into `build/de25-quux13/` with the same suffixes
-# after it, so that neither
-# machine's build removes the other's.  The processor's files it writes are
-# named `quux_de25.*` in place of `cadr_de25.*`, because those are the files
-# that leave the directory; the project and its `.sof` keep the top level's
-# name.  `cadr`, or no value, is MIT's machine and this flow as it was.
-#
-# **`REVISION=15` BUILDS QUUX REVISION 15**, `boards/de25-nano/quux15_de25.sv`
-# with `MACHINE=quux WORD_BITS=40`, always the whole board (`DDR=1 HDMI=1`),
-# into `build/de25-quux15-ddr-hdmi/`.  Its period is `PERIOD_NS`, in whole or
-# half nanoseconds, 25 unless asked, the board's: the I/O PLL
-# is asked for 2,000 / (2 x `PERIOD_NS`) MHz, the top level is given the
-# period in units of 0.5 ns, and `quux15_sta_check.tcl` refuses a build whose
-# machine clock is not the period asked.  Its boot PROM is PROM 2002
-# (`build/boot_prom.quux15.hex`) unless `PROM` names another image, as on the
-# Kria KR260 and the Arty Z7-20 (`quux15_bitstream.tcl`'s `PROM`).  Its
-# sources swap in `rtl/plumbing/agilex5/`'s versions of the core's true
+# **`MACHINE=quux` BUILDS QUUX**, the evolved CADR, a bitstream of its own:
+# `boards/de25-nano/quux15_de25.sv`, always the whole board (`DDR=1 HDMI=1`),
+# into `build/de25-quux-ddr-hdmi/`, so that neither machine's build
+# removes the other's.  It takes no `REVISION`: the tree builds QUUX at one
+# revision, and a value other than that one is refused.  Its period is
+# `PERIOD_NS`, in whole or half nanoseconds, 25 unless asked, the board's:
+# the I/O PLL is asked for 2,000 / (2 x `PERIOD_NS`) MHz, the top level is
+# given the period in units of 0.5 ns, and `quux15_sta_check.tcl` refuses a
+# build whose machine clock is not the period asked.  Its boot PROM is PROM
+# 2002 (`build/boot_prom.quux15.hex`) unless `PROM` names another image, as
+# on the Kria KR260 and the Arty Z7-20 (`quux15_bitstream.tcl`'s `PROM`).
+# Its sources swap in `rtl/plumbing/agilex5/`'s versions of the core's true
 # dual-port RAM, macro dispatch memory, dispatch memory and valid bits (the
 # Makefile's `QUUX15_DE25_SRC`), and `project.tcl` places its small RAMs.
 # Its checks are its own: the RAM summary below, `rams_check.tcl`'s rules for
-# revision 15, `quux15_sta_check.tcl`, and a size floor.
+# QUUX, `quux15_sta_check.tcl`, and a size floor.  `cadr`, or no value, is
+# MIT's machine and this flow as it was.
 #
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
@@ -112,80 +107,53 @@ esac
 if [ "${FAULT:-0}" = 1 ] && [ "$machine" != cadr ]; then
     refuse "FAULT=1 takes no MACHINE=$machine: the fault bitstream carries no machine"
 fi
-# **`WORD_BITS=40` IS QUUX, REVISION 13** (contract G2), whose processor
-# comes with its 40-bit word, into a directory of its own,
-# `build/de25-quux13/` with the same suffixes; 32, the default, is the
-# CADR's.  Revision 12, QUUX at 32 bits, is retired and refused.
-word_bits=${WORD_BITS:-32}
-case $word_bits in
-    32|40) ;;
-    *) refuse "WORD_BITS is '$word_bits'; it is 32, or 40 for QUUX revision 13" ;;
-esac
-if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
-    refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
+# **AND THE REVISION, WHICH QUUX DOES NOT TAKE.**  QUUX is built at the one
+# revision this tree has, 16, which its top level is handed; `REVISION` unset, or that same value, is taken, and any
+# other refused, as is a `REVISION` on the CADR.
+revision=
+if [ "$machine" = quux ]; then
+    case ${REVISION:-16} in
+        16) revision=16 ;;
+        *) refuse "REVISION is not taken: QUUX is built at the one revision this tree has; give no REVISION" ;;
+    esac
+elif [ -n "${REVISION:-}" ]; then
+    refuse "REVISION is QUUX's, and MACHINE=$machine"
 fi
-if [ "$machine" = quux ] && [ "$word_bits" != 40 ]; then
-    refuse "MACHINE=quux at WORD_BITS=$word_bits, which was revision 12, and revision 12 is retired: give WORD_BITS=40"
-fi
-# **AND THE REVISION**: QUUX at 40 bits is revision 13 unless the build is
-# asked for revision 14 by name, `REVISION=14` (contract G3 revision 14),
-# into `build/de25-quux14/` with the same suffixes, so that neither
-# revision's build removes the other's.
-revision=${REVISION:-13}
-case $revision in
-    13|14|15|16) ;;
-    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, 14, 15 or 16" ;;
-esac
-if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
-    refuse "REVISION=14 is QUUX's, and MACHINE=$machine"
-fi
-if [ "$revision" -ge 15 ] && [ "$machine" != quux ]; then
-    refuse "REVISION=$revision is QUUX's, and MACHINE=$machine"
-fi
-# **REVISION 16 IS REVISION 15'S TOP LEVEL** with the Ethernet device
-# (QUUX's Ethernet contract, §10): `quux15_de25.sv` at `REVISION` 16, its
-# flow, its period, its PROM 2002 and its microcode revision 15's, into
-# `build/de25-quux16-ddr-hdmi/`.
-# **REVISION 15'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked
-# for it and the timing check reads it back.  Ten to 63.5, the core's
-# `period` being seven bits of 0.5 ns.  Revisions 13 and 14 run at the tick.
-# 25 by default, the board's at revisions 15 and 16.
+# **QUUX'S PERIOD**, in nanoseconds, whole or a half: the PLL is asked for it
+# and the timing check reads it back.  Ten to 63.5, the core's `period`
+# being seven bits of 0.5 ns.  25 by default, the board's.  The CADR runs at
+# the tick.
 period_ns=${PERIOD_NS:-25}
 period_half=0
-if [ "$revision" -ge 15 ]; then
+if [ "$machine" = quux ]; then
     case $period_ns in
         [0-9]|[0-9][0-9]|[0-9].5|[0-9][0-9].5) ;;
         *) refuse "PERIOD_NS is '$period_ns'; it is a period in nanoseconds, whole or a half" ;;
     esac
     period_half=$(awk -v p="$period_ns" 'BEGIN { printf "%d", p * 2 }')
     if [ "$period_half" -lt 20 ] || [ "$period_half" -gt 127 ]; then
-        refuse "PERIOD_NS is $period_ns; revision 15 runs at 10 to 63.5 ns"
+        refuse "PERIOD_NS is $period_ns; QUUX runs at 10 to 63.5 ns"
     fi
-    say "revision $revision at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
+    say "QUUX at $period_ns ns: the PLL is asked for $(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }') MHz"
 fi
 
-# **THE BOOT PROM.**  The CADR's is MIT's; QUUX revision 13 boots from
-# PROM 2001 (contract G2 §2.8) and revision 14 from PROM 2002
-# (`make build/boot_prom.quux14.hex`), and `project.tcl` chooses theirs the
-# same way.  **REVISION 15'S IS PROM 2002 ASSEMBLED FOR IT**,
+# **THE BOOT PROM.**  The CADR's is MIT's.  **QUUX'S IS PROM 2002**,
 # `build/boot_prom.quux15.hex`, a 64-bit word a line, as on the Kria KR260
 # and the Arty Z7-20; `PROM` names another image, a test program's
 # (`golden/src/quux15.rs --prom`), and only then is another taken, which
-# `project.tcl` is handed.  `PROM` is revision 15's alone and refused on any
-# other build, where it would be ignored.  Revision 15 reads no sync PROM.
-# Synthesis's parameter table is read back below.
+# `project.tcl` is handed.  `PROM` is QUUX's alone and refused on the CADR,
+# where it would be ignored.  QUUX reads no sync PROM.  Synthesis's
+# parameter table is read back below.
 prom_image=build/boot_prom.hex
-[ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
-if [ "$revision" -ge 15 ]; then
+if [ "$machine" = quux ]; then
     prom_image=${PROM:-build/boot_prom.quux15.hex}
 elif [ -n "${PROM:-}" ]; then
-    refuse "PROM=$PROM names revision 15's boot PROM, and this build is not revision 15's: it boots from $prom_image"
+    refuse "PROM=$PROM names QUUX's boot PROM, and this build is the CADR's: it boots from $prom_image"
 fi
 say "the boot PROM is $prom_image"
 [ -s "$prom_image" ] || refuse "$prom_image is missing; \`make de25\` builds it first"
 # **AND ITS DIGEST**, said in the log and held to `PROM_SHA256` where the
-# flow gives one: `make de25` gives PROM 2002's with revision 15's own
-# image, so that a file of that name holding anything else is refused rather
+# flow gives one: `make de25` gives PROM 2002's with QUUX's own image, so that a file of that name holding anything else is refused rather
 # than fitted.
 prom_sha=$(sha256sum < "$prom_image" | cut -d ' ' -f 1)
 if [ -n "${PROM_SHA256:-}" ] && [ "$prom_sha" != "$PROM_SHA256" ]; then
@@ -247,7 +215,7 @@ case $mhz in
 esac
 out=build/de25
 if [ "$machine" = quux ]; then
-    out=$out-quux$revision
+    out=$out-quux
 fi
 if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
@@ -255,8 +223,8 @@ fi
 # **SYNTHESIS ONLY** (`DE25_SYN_ONLY=1`, `make de25-syn`): every step and
 # every check up to synthesis's own, then a stop before the fitter, in a
 # directory of its own so that a full build beside it is left alone.  It is
-# how `build/de25_syn.*.pass` asks that each machine and revision still
-# synthesizes, which a fit of another revision cannot say.
+# how `build/de25_syn.pass` asks that each machine still synthesizes, which
+# a fit of the other cannot say.
 syn_only=${DE25_SYN_ONLY:-0}
 case $syn_only in
     0|1) ;;
@@ -324,11 +292,11 @@ if [ "$depth" -gt 0 ]; then
     out=$out-probe
     say "the probe is in this build: $depth samples, into $out"
 fi
-# **REVISION 15 IS ALWAYS THE WHOLE BOARD**: `quux15_de25.sv` has the
-# processor, its memory and the display in its port list, and no probe.
-if [ "$revision" -ge 15 ]; then
-    [ "$ddr" -eq 1 ] && [ "$hdmi" -eq 1 ] || refuse "REVISION=15 is the whole board: give DDR=1 HDMI=1"
-    [ "$depth" -eq 0 ] || refuse "REVISION=15 takes no probe"
+# **QUUX IS ALWAYS THE WHOLE BOARD**: `quux15_de25.sv` has the processor,
+# its memory and the display in its port list, and no probe.
+if [ "$machine" = quux ]; then
+    [ "$ddr" -eq 1 ] && [ "$hdmi" -eq 1 ] || refuse "MACHINE=quux is the whole board: give DDR=1 HDMI=1"
+    [ "$depth" -eq 0 ] || refuse "MACHINE=quux takes no probe"
 fi
 if [ "$syn_only" -eq 1 ]; then
     [ "$fault" -eq 0 ] || refuse "DE25_SYN_ONLY=1 is the machine's question; the fault bitstream has no machine"
@@ -410,9 +378,9 @@ say "build stamp $userid"
 # IP's own default, and the generator chooses the counters and the VCO.  The
 # parameter names are the IP's, as `ip-deploy` records them in the variation
 # file.  `sta_check.tcl` then reads the period back from the timing analyzer.
-# **REVISION 15'S IS AT ITS PERIOD**: 2,000 / the period in 0.5 ns, MHz.
+# **QUUX'S IS AT ITS PERIOD**: 2,000 / the period in 0.5 ns, MHz.
 machine_mhz=100.0
-[ "$revision" -ge 15 ] && machine_mhz=$(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }')
+[ "$machine" = quux ] && machine_mhz=$(awk -v h="$period_half" 'BEGIN { printf "%.6f", 2000.0 / h }')
 step 1-ip-deploy "$qsys/ip-deploy" --component-name=altera_iopll \
     --output-name=cadr_de25_pll --output-directory="$out/ip" \
     --family="Agilex 5" --part=A5EB013BB23BE4SCS \
@@ -472,7 +440,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
-    WORD_BITS="$word_bits" REVISION="$revision" PERIOD="$period_half" PROM="$prom_image" DE25_HPS_BOOT="$hps_boot" \
+    REVISION="$revision" PERIOD="$period_half" PROM="$prom_image" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
@@ -531,8 +499,8 @@ if [ "$fault" -eq 1 ]; then
             || refuse "synthesis has no default slave at $slave; see $dir/$rpt"
     done
     say "the processor system and both bridges' default slaves are in, and no machine"
-elif [ "$revision" -ge 15 ]; then
-    # **REVISION 15'S RAMS, AS THE TRIAL OF ITS MACRO DISPATCH MEMORY AND ITS
+elif [ "$machine" = quux ]; then
+    # **QUUX'S RAMS, AS THE TRIAL OF ITS MACRO DISPATCH MEMORY AND ITS
     # TRUE DUAL-PORT RAM FOUND THEM** (MP8, the core's own RAMs on this part):
     #
     #   - the macro dispatch memory, `rtl/plumbing/agilex5/quux15_mdmem.sv`,
@@ -597,37 +565,14 @@ elif [ "$revision" -ge 15 ]; then
     say "the display output, its band buffers as memories, and the transmitter's configuration are in"
 else
 if [ "$ddr" -eq 1 ]; then copies=2; else copies=1; fi
-# Revision 14 has no map: its dispatch memory alone, and its TLB below.
-if [ "$revision" = 14 ]; then mlabs=dmem; else mlabs="dmem l1_map l2_map"; fi
-for memory in $mlabs; do
+for memory in dmem l1_map l2_map; do
     n=$(grep -c "^; u_machine|processor|${memory}_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
     [ "$n" -eq "$copies" ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting $copies; see $dir/$rpt"
 done
 if grep -q 'RAM logic "u_machine|processor|\(dmem\|l1_map\|l2_map\)" is uninferred' 4-syn.log; then
     refuse "synthesis built one of the three asynchronous memories from registers; see $dir/4-syn.log"
 fi
-if [ "$revision" = 14 ]; then
-    if grep -q 'u_machine|processor|\(l1_map\|l2_map\)' "$rpt"; then
-        refuse "a revision 14 build has a map in it; see $dir/$rpt"
-    fi
-    say "the dispatch memory is MLABs, $copies copies, and there is no map"
-    # **REVISION 14'S TLB IS ONE TRUE DUAL-PORT M20K MEMORY** (`project.tcl`).
-    n=$(grep -c "^; u_machine|processor|g_rev14_mmu\.mmu|tlb|tlb_mem_rtl_[0-9]*|[^;]*; M20K[^;]*; True Dual Port " "$rpt" || true)
-    [ "$n" -eq 1 ] || refuse "synthesis made revision 14's TLB into $n true dual-port M20K memories, wanting 1; see $dir/$rpt"
-    if grep -q 'RAM logic "u_machine|processor|g_rev14_mmu\.mmu|tlb|tlb_mem" is uninferred' 4-syn.log; then
-        refuse "synthesis built revision 14's TLB from logic; see $dir/4-syn.log"
-    fi
-    say "revision 14's TLB is one true dual-port M20K memory"
-else
-    say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
-fi
-# QUUX's MACRO DISPATCH MEMORY the same (revision 12): the machine's reader
-# and, with the console, the readout's.
-if [ "$machine" = quux ]; then
-    n=$(grep -c "^; u_machine|processor|g_quux_fused.macro_mem_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
-    [ "$n" -eq "$copies" ] || refuse "synthesis made QUUX's MACRO DISPATCH MEMORY into $n MLABs, wanting $copies; see $dir/$rpt"
-    say "QUUX's MACRO DISPATCH MEMORY is MLABs, $copies copies"
-fi
+say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
 
 # **AND THE DISK CONTROLLER'S BLOCK STORE IS M20K BLOCKS**, for the reason
 # `project.tcl` gives: left to itself synthesis builds its 196,608 bits out of
@@ -635,10 +580,9 @@ fi
 # refuses to place the design.  The store is dead on a build with nothing to
 # fill it, so this is asked of the memory board alone.
 if [ "$ddr" -eq 1 ]; then
-    # `disk` is in the CADR's generate block or QUUX's (`cadr_machine.sv`).
-    n=$(grep -c "^; u_machine|g_[a-z]*_disk\.disk|blk_ram_rtl_[0-9]*|[^;]*; M20K " "$rpt" || true)
-    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|g_*_disk.disk|blk_ram into $n M20K memories, wanting 1; see $dir/$rpt"
-    if grep -q 'RAM logic "u_machine|g_[a-z]*_disk\.disk|blk_ram" is uninferred' 4-syn.log; then
+    n=$(grep -c "^; u_machine|disk|blk_ram_rtl_[0-9]*|[^;]*; M20K " "$rpt" || true)
+    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|disk|blk_ram into $n M20K memories, wanting 1; see $dir/$rpt"
+    if grep -q 'RAM logic "u_machine|disk|blk_ram" is uninferred' 4-syn.log; then
         refuse "synthesis built the disk controller's block store from logic; see $dir/4-syn.log"
     fi
     say "the disk controller's block store is one true dual-port M20K memory"
@@ -714,16 +658,13 @@ elif grep -q "$disp_line" "$rpt" || grep -q "$adv_line" "$rpt"; then
 fi
 fi
 
-# **THE MACHINE IS THE ONE THIS BUILD WAS ASKED FOR**, as synthesis records
-# `cadr_machine`'s parameters under the instance `u_machine`: a string
-# parameter's row there is its name, its value and `String`.  A value that
-# stopped reaching the machine would build the CADR under the other name, and
-# nothing in the fit's size would say so.  The fault bitstream has no
-# `u_machine` to read, and its own checks above have already refused one, so
-# there the read-back is skipped rather than failed.
-# **REVISION 15'S TOP LEVEL AND CORE AS SYNTHESIS RECORDS THEM**: the top's
-# period, the core's cache and its PROM, so that a value that stopped
-# reaching either is refused rather than fitted.
+# **QUUX'S TOP LEVEL AND CORE AS SYNTHESIS RECORDS THEM**: the top's
+# period and revision, the core's cache and its PROM, so that a value that
+# stopped reaching either is refused rather than fitted; and the CADR's boot
+# PROM, by its file name, as synthesis records `cadr_machine`'s parameters
+# under the instance `u_machine`.  The fault bitstream has no machine to
+# read, and its own checks above have already refused one, so there the
+# read-back is skipped rather than failed.
 q15_param() {
     awk -v ent="$1" -v inst="$2" -v name="$3" '
         index($0, "; Parameter Settings for User Entity " ent " Instance: " inst " ") == 1 { inside = 1; next }
@@ -731,7 +672,7 @@ q15_param() {
         inside && $0 ~ "^; " name " *;" { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
     ' "$rpt" | awk '{ if ($0 ~ /^[01]+$/ && length($0) > 8) { n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n } else print }'
 }
-if [ "$fault" -eq 0 ] && [ "$revision" -ge 15 ]; then
+if [ "$fault" -eq 0 ] && [ "$machine" = quux ]; then
     got=$(q15_param quux15_de25 '|' PERIOD)
     [ -n "$got" ] || got=$(sed -n 's/^; PERIOD *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1 \
                            | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }')
@@ -744,50 +685,11 @@ if [ "$fault" -eq 0 ] && [ "$revision" -ge 15 ]; then
     got=$(q15_param quux15_de25 '|' REVISION)
     [ -n "$got" ] || got=$(sed -n 's/^; REVISION *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1 \
                            | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }')
-    [ "$got" = "$revision" ] || refuse "synthesis gave the top level REVISION '${got:-nothing}', wanting $revision; see $dir/$rpt"
-    say "synthesis gave the top level PERIOD $period_half, REVISION $revision, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
+    [ "$got" = "$revision" ] || refuse "synthesis gave the top level another REVISION than this tree builds; see $dir/$rpt"
+    say "synthesis gave the top level PERIOD $period_half and its REVISION, u_core CACHE_WORDS 16384 and PROM_HEX ${prom_image##*/}"
 elif [ "$fault" -eq 0 ]; then
-    got_machine=$(awk '
-        /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
-        inside && /^; Parameter Settings/ { exit }
-        inside && /^; MACHINE *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
-    ' "$rpt")
-    [ "$got_machine" = "$machine" ] \
-        || refuse "synthesis gave u_machine MACHINE '${got_machine:-nothing}', wanting $machine; see $dir/$rpt"
-    say "synthesis gave u_machine MACHINE $machine"
-    # And the word, the same way: `WORD_BITS` 40 is revision 13.
-    got_bits=$(awk '
-        /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
-        inside && /^; Parameter Settings/ { exit }
-        inside && /^; WORD_BITS *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
-    ' "$rpt")
-    # Quartus writes an integer parameter's value in binary, 32 digits.
-    case $got_bits in
-        *[!01]*|'') ;;
-        *) got_bits=$(printf '%s\n' "$got_bits" \
-               | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }') ;;
-    esac
-    [ "$got_bits" = "$word_bits" ] \
-        || refuse "synthesis gave u_machine WORD_BITS '${got_bits:-nothing}', wanting $word_bits; see $dir/$rpt"
-    say "synthesis gave u_machine WORD_BITS $word_bits"
-    # And QUUX's revision, the same way: 14 only when it was asked for.
-    if [ "$machine" = quux ]; then
-        got_rev=$(awk '
-            /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
-            inside && /^; Parameter Settings/ { exit }
-            inside && /^; REVISION *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
-        ' "$rpt")
-        case $got_rev in
-            *[!01]*|'') ;;
-            *) got_rev=$(printf '%s\n' "$got_rev" \
-                   | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }') ;;
-        esac
-        [ "$got_rev" = "$revision" ] \
-            || refuse "synthesis gave u_machine REVISION '${got_rev:-nothing}', wanting $revision; see $dir/$rpt"
-        say "synthesis gave u_machine REVISION $revision"
-    fi
-    # And the boot PROM, by its file name: a revision given the other's PROM
-    # never boots its band, and nothing in the fit would say so.
+    # The boot PROM, by its file name: a machine given another PROM never
+    # boots its band, and nothing in the fit would say so.
     got_prom=$(awk '
         /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
         inside && /^; Parameter Settings/ { exit }
@@ -832,7 +734,7 @@ step 6-sta "$bin/quartus_sta" cadr_de25
 say "6-sta-check"
 if [ "$fault" -eq 1 ]; then
     sta_script=$here/fault_sta.tcl
-elif [ "$revision" -ge 15 ]; then
+elif [ "$machine" = quux ]; then
     sta_script=$here/quux15_sta_check.tcl
 else
     sta_script=$here/sta_check.tcl
@@ -874,11 +776,11 @@ if [ "$fault" -eq 1 ]; then
     if [ "$alms" -gt 3000 ] || [ "$m20k" -gt 0 ]; then
         refuse "the fault bitstream fits in $alms ALMs and $m20k M20K blocks, which is not a design without a machine; see $dir/$summary"
     fi
-elif [ "$revision" -ge 15 ]; then
-    # **REVISION 15'S FLOOR**, half its trial fit (MP8: 30,600 ALMs and 156
-    # M20K at the 16K cache), so that a datapath optimized away is refused.
+elif [ "$machine" = quux ]; then
+    # **QUUX'S FLOOR**, half its trial fit (MP8: 30,600 ALMs and 156 M20K
+    # at the 16K cache), so that a datapath optimized away is refused.
     if [ "$alms" -lt 15000 ] || [ "$m20k" -lt 78 ]; then
-        refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not revision 15's machine; see $dir/$summary"
+        refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not QUUX's machine; see $dir/$summary"
     fi
 elif [ "$alms" -lt 1000 ] || [ "$m20k" -lt 40 ]; then
     refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not the machine; see $dir/$summary"

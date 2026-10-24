@@ -556,7 +556,7 @@ resets its sleep setting at once. Its fetch finishes the job it has in hand, a
 line or a band, and is reset only then. `tb/cadr_board_reset_tb.cpp` holds a
 read on each port and a write on `S_AXI_HP0` unanswered across the button.
 
-On QUUX revision 15 the memory port's master is inside the core
+On QUUX the memory port's master is inside the core
 (`rtl/machine/quux15_core.sv`), so the rule is kept in the core. BTN1, the
 DE25-Nano's KEY1 and the console face's RESET key are a request, which the core
 latches. From then on its memory port grants nothing new. Every write it has
@@ -571,7 +571,7 @@ Block-disk's transfer may be cut by it, its block partly moved.
 **The drain is bounded.** If the port has not gone quiet within 65,536 clocks,
 its other side has stopped answering. The core is then reset and held in reset
 until the port's own reset comes, and word 6 of the console face records it
-(`docs/console.md`, Revision 15's console face). The machine never runs on
+(`docs/console.md`, QUUX's console face). The machine never runs on
 after a cut drain. The port's own reset (`S_AXI_HP0`'s on the Arty Z7-20,
 `pl_resetn0` on the Kria KR260, the processor's reset on the DE25-Nano) and the
 clock's lock reset the core at once. Such a reset drops the writes the port
@@ -591,9 +591,9 @@ network.
 The pins are `D19` for BTN0 and `D20` for BTN1, `LVCMOS33`, from Digilent's
 `Arty-Z7-20-Master.xdc`.
 
-**On QUUX revision 15 BTN0 does nothing**, because revision 15 has no
+**On QUUX BTN0 does nothing**, because QUUX has no
 `-BOOT2`. The console and the keyboard's boot word boot it. BTN1 is the reset
-request above. The DE25-Nano's revision 15 does the same with its keys: KEY1
+request above. The DE25-Nano's QUUX does the same with its keys: KEY1
 is the request and KEY0 does nothing (`boards/de25-nano/quux15_de25.sv`).
 
 ## The switches
@@ -625,9 +625,9 @@ has the whole of how the two work together.
 The pin is `M20`, `LVCMOS33`, from Digilent's `Arty-Z7-20-Master.xdc`. SW1 is
 `M19` and is brought out so that the design's port list matches the board.
 
-**On QUUX revision 15 SW0 does nothing.** Revision 15 has no no-auto-boot. It
+**On QUUX SW0 does nothing.** QUUX has no no-auto-boot. It
 comes out of reset running, and the console's word 1 says so. The
-DE25-Nano's switches do nothing on revision 15 either.
+DE25-Nano's switches do nothing on QUUX either.
 
 ## The Pmod headers
 
@@ -720,7 +720,7 @@ counters said on those runs.
 ## What the LEDs say
 
 The six lamps read left to right as the machine's own progress. This is the
-CADR's assignment. QUUX revision 15's is at the end of this section.
+CADR's assignment. QUUX's is at the end of this section.
 
     LD0   MACHRUN            lit means the machine should be running
     LD1   the fabric clock   the slow blink, about 1.5 Hz at 100 MHz
@@ -906,7 +906,7 @@ that no memory means no progress. The fabric's answer is that no memory means
 slow progress. That is the first behavior anyone here observed on silicon that
 was predicted wrongly, and it was predicted wrongly in this file.
 
-**QUUX revision 15 keeps each lamp's meaning where it has the signal**
+**QUUX keeps each lamp's meaning where it has the signal**
 (`boards/arty-z7-20/quux15_arty.sv`):
 
     LD0   running            lit while the machine is not halted
@@ -914,10 +914,10 @@ was predicted wrongly, and it was predicted wrongly in this file.
     LD2   microcycles        a committed microcycle, as above
     LD3   disk activity      lit while block-disk moves a block
     LD4   ERRHALT            red at an error halt
-    LD5   dark               revision 15 has no PROM select to show
+    LD5   dark               QUUX has no PROM select to show
 
-Revision 15 has no `MACHRUN`, so LD0 does not dim while the machine waits on
-memory. The DE25-Nano's revision 15 gives its LEDR0 to LEDR5 the same six
+QUUX has no `MACHRUN`, so LD0 does not dim while the machine waits on
+memory. The DE25-Nano's QUUX gives its LEDR0 to LEDR5 the same six
 meanings, lights LEDR6 while the memory port is open and leaves LEDR7 dark
 (`boards/de25-nano/quux15_de25.sv`). Every hold and stretch is turned into
 clocks of the board's period (`docs/timing.md`, What is not MIT's timing at

@@ -30,7 +30,7 @@
 //     the color display     the display + 128 KB     the display + 128 KB
 //     the spare: the        + 17 MB, 128 KB          + 17 MB, 128 KB
 //     records, and no more
-//   QUUX revision 13's      its own reservation      its own reservation
+//   QUUX's      its own reservation      its own reservation
 //     memory                0x1200_0000 to           0xA000_0000 to
 //                           0x1C11_FFFF              0xB411_FFFF
 //     main memory, packed   0x1200_0000, 160 MB      0xA000_0000, 320 MB
@@ -87,7 +87,7 @@
 // 0x6300_0000 in the low 2 GB, clear of every address the factory U-Boot
 // uses, which loads below it and relocates itself above 0x7B80_0000 (`bdinfo`
 // on the board),
-// and QUUX revision 13's packed 160 MiB sit directly below its display at
+// and QUUX's packed 160 MiB sit directly below its display at
 // 0x5A00_0000, as on the Arty.  The tally is two words on EMIO, as on a
 // Zynq-7000 board: banks 3 and 4 of the GPIO block at 0xFF0A_0000, read
 // through DATA_3_RO and DATA_4_RO (UG1087; banks 0 to 2 are the MIO's).
@@ -268,11 +268,11 @@
 #define CADR_BOARD_DISPLAYPORT_BASE  CADR_BOARD_NUM(CADR_BOARD_DISPLAYPORT_HEX)
 #define CADR_BOARD_SERDES_BASE       CADR_BOARD_NUM(CADR_BOARD_SERDES_HEX)
 #endif
-// **QUUX REVISION 13's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3):
+// **QUUX's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3):
 // main memory in packed storage, word w at byte `CADR_BOARD_QUUX13_MAIN_BASE +
 // 5w` (G1 §4.1), with room for `CADR_BOARD_QUUX13_MAIN_WORDS_MAX` words
 // directly below the display; the display and the disk pack program's records
-// where the CADR's are.  Revision 13's device tree reserves from its main
+// where the CADR's are.  QUUX's device tree reserves from its main
 // memory to the records' end, which is where the CADR's reservation ends too.
 // The CADR's tree reserves from `CADR_BOARD_RESERVED_BASE` to the same end,
 // `CADR_BOARD_RESERVED_BYTES`.
@@ -308,13 +308,13 @@ _Static_assert(CADR_BOARD_RESERVED_BASE % 0x00100000u == 0u,
 	       "the reservation is on a 1 MB boundary");
 _Static_assert(CADR_BOARD_RESERVED_BASE <= 0xFFFFFFFFu - (CADR_BOARD_RESERVED_BYTES - 1u),
 	       "the reservation is below 4 GB, because every address here is 32 bits");
-// And revision 13's: its main memory fills the room below the display, on a
+// And QUUX's: its main memory fills the room below the display, on a
 // 1 MB boundary (so a 4 KB one, G1 4.1).
 _Static_assert((unsigned long long)CADR_BOARD_QUUX13_MAIN_BASE
 		       + 5ull * CADR_BOARD_QUUX13_MAIN_WORDS_MAX == CADR_BOARD_DISPLAY_BASE,
-	       "revision 13's main memory fills the room below the display, 5 bytes a word");
+	       "QUUX's main memory fills the room below the display, 5 bytes a word");
 _Static_assert(CADR_BOARD_QUUX13_MAIN_BASE % 0x00100000u == 0u,
-	       "revision 13's main memory is on a 1 MB boundary");
+	       "QUUX's main memory is on a 1 MB boundary");
 // And the faces: five 4 KB pages from the port's first, in the order the
 // fabric's split decodes them (`rtl/plumbing/cadr_gp0_split.sv`).
 _Static_assert(CADR_BOARD_CHAOS_BASE == CADR_BOARD_PACK_BASE + 0x1000u,

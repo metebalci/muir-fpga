@@ -33,10 +33,9 @@
 // **AND THE ETHERNET DEVICE'S PAGE WHERE ITS PROGRAM LOOKS** (QUUX's
 // Ethernet contract, section 10), at the address `quux-ethernet-device`
 // maps, `cadr_board.h`'s `CADR_BOARD_PACK_BASE` and `qed_face.h`'s
-// `QED_FACE_OFFSET`, both included here: built with `QUUX15_REVISION` 16 the
-// page reads IDENT "QE16" and a COUNTS write there reaches the core's
-// Ethernet host side as index 11 with its word; built at 15 the page is the
-// default slave's, "NONE", and the core's Ethernet side sees nothing.
+// `QED_FACE_OFFSET`, both included here: the page reads IDENT "QE16" and a
+// COUNTS write there reaches the core's Ethernet host side as index 11 with
+// its word.
 
 #include <cstdarg>
 #include <cstdio>
@@ -71,9 +70,6 @@ extern "C" {
 #include "qed_face.h"
 }
 #undef _Static_assert
-#ifndef QUUX15_REVISION
-#define QUUX15_REVISION 15
-#endif
 
 namespace {
 
@@ -339,16 +335,10 @@ int main(int argc, char **argv) {
   PortWrite(kPage + 0x12C, 0x01021A30u);
   Held(400);
   eth_writes -= eth_before;
-#if QUUX15_REVISION == 16
   Check(ident == 0x51453136u, "the Ethernet device's page at %08x reads %08x, wanting \"QE16\"", kPage, ident);
   Check(eth_writes == 1 && eth_idx == 11 && eth_word == 0x01021A30u,
         "a COUNTS write at %08x reached the core's Ethernet side %ld times, index %u, word %08x", kPage + 0x12C,
         eth_writes, eth_idx, eth_word);
-#else
-  Check(ident == 0x4E4F4E45u, "the page at %08x reads %08x on revision 15, wanting the default's \"NONE\"", kPage,
-        ident);
-  Check(eth_writes == 0, "a write at %08x reached the core's Ethernet side on revision 15", kPage + 0x12C);
-#endif
 
   delete top;
   if (fails) {
@@ -357,7 +347,7 @@ int main(int argc, char **argv) {
   }
   std::printf("quux15 reset hold, %s: ok, the core held while its memory port is in reset, let go %ld clocks after "
               "it, reset again %ld clocks after it; the RESET key a request, answered %ld clocks after the write, "
-              "and at the face's bound, %ld, when the core does not take it; revision %d's page at %08x reads "
-              "%08x\n", BOARD, let_go, caught, answered, bounded, QUUX15_REVISION, kPage, ident);
+              "and at the face's bound, %ld, when the core does not take it; the Ethernet device's page at %08x "
+              "reads %08x\n", BOARD, let_go, caught, answered, bounded, kPage, ident);
   return 0;
 }

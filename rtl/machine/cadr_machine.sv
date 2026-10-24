@@ -65,99 +65,13 @@ module cadr_machine #(
     // `color_tv.golden` was taken on.
     parameter int LMTV = 1,
 
-    // **WHICH MACHINE THIS IS**: "cadr", MIT's, or "quux", the evolved CADR.
-    // Every board's top level hands it down, and the make variable of the
-    // same name sets it.  **EVERY QUUX ADDITION IS BEHIND IT AND ELABORATES
-    // TO NOTHING FOR THE CADR**: the CADR's text stands in each `g_cadr`
-    // branch as it stood before QUUX existed, and `make check` holds it to
-    // muir's CADR.  What QUUX is, is muir's `Geometry::QUUX` and
-    // `docs/quux.md` at the pin, summarized under "QUUX" below.
-    parameter string MACHINE = "cadr",
-
-    // **QUUX'S MICROCYCLE, IN TICKS** (H1a): K, and L more for an `ILONG`
-    // instruction, muir's `TimingModel::Sync { cycle_ticks, ilong_ticks }`.
-    // A board's own, from its top level: the fit is what says its longest
-    // path settles in K ticks, and the board's constraint file states K.
-    // Nothing on the CADR reads either; `cadr_microcycle.sv` has the rest.
-    parameter int unsigned SYNC_K = 4,
-    parameter int unsigned SYNC_L = 0,
-
-    // **THE WORD'S WIDTH**, muir's `Geometry::word_bits`: 32 on the CADR and
-    // 40 on QUUX, revision 13 (contract G2 §2.1), whose processor comes with
-    // the word: `cadr_microcycle.sv` says what that is,
-    // and what of the machine around it is still revision 12's. The ports
-    // below that carry a word carry the whole of it, `R` among them; the
-    // console's registers and the bus audit take `<31:0>`.
-    parameter int unsigned WORD_BITS = 32,
-
-    // **QUUX'S HARDWARE REVISION AT 40 BITS**: 13, or 14 (contract G3
-    // revision 14 with its appendix A14; muir's `Geometry::QUUX_14`, its
-    // `MUIR_QUUX_REVISION=14`): the 32-bit virtual address space and its two
-    // windows, the page table walked by hardware behind a TLB in place of
-    // the two map levels, the PDL buffer redirect, the ephemeral-reference
-    // setter, the location counter at 34 bits and jump condition 12
-    // (`cadr_microcycle.sv`, `quux_mmu.sv`).  Each board's top gives it.
-    // Unread on the CADR.
-    parameter int unsigned REVISION = 13,
-    // **A TICK'S REAL LENGTH, IN PICOSECONDS**: the board's clock period,
-    // which QUUX's microsecond clock, interval timers and real-time clock
-    // count wall time by (`quux_clocks.sv`, `quux_rtc.sv`).  The grid's 10 ns
-    // by default; each board's top gives its own.  Nothing else reads it:
-    // every count the machine makes is in ticks, whatever a tick lasts.
-    parameter int unsigned TICK_PS = cadr_tick_pkg::TICK_NS * 1000,
-    // **REVISION 14'S TLB ENTRIES**, N (A14.4): a power of two from 1,024 to
-    // 32,768, 4,096 on every board (decisions.md:265), muir's `--tlb`; the
-    // index is `VA<9+k:10>` and the tag `VA<31:10+k>`, k = log2 N
-    // (`quux_tlb.sv`).  Each board's top gives it; unread below revision 14.
-    parameter int unsigned TLB_ENTRIES = 4096,
-
-    // **WHERE REVISION 13'S MAIN MEMORY IS IN DDR** (contract G1 §4.1): word
-    // w in packed storage at byte `QUUX13_MAIN_BASE + 5w`
-    // (`quux_mem_port.sv`).  The board's layout decides it,
-    // `cadr_ddr_map::QUUX13_MAIN_BASE`, which 0 here names and revision
-    // 13's device tree reserves; a testbench gives its own.
-    // Unread below revision 13.
-    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,
-
-    // **THE VIDEO CONTROLLER'S SIZE**, muir's `--video-size` and
-    // `Tv::set_video_size`: 1280 by 1024, muir's default and the size the
-    // Arty Z7-20's and the DE25-Nano's QUUX build, unless the board says
-    // otherwise; the Kria KR260 builds 1920 by 1080, its display's raster.
-    // muir's `check_video_size` is the rule, held below: a line a whole
-    // number of words, at most 1920 by 1080, so the buffer is at most 64,800
-    // words, inside `cadr_ddr_map::VIDEO_WORDS_MAX`.  The feature page's
-    // words 11 and 12 say it to the band.  Unread on the CADR.
-    parameter int unsigned VIDEO_WIDTH  = 1280,
-    parameter int unsigned VIDEO_HEIGHT = 1024,
-
-    // **THE BOARD NAME** (contract HD §6): what runs the machine, which
-    // revision 13's feature words 20-24 give to the band to print and never
-    // to branch on.  A string, given by each board's top level as a string
-    // literal, which SystemVerilog stores right-justified in these 64 bytes;
-    // `BOARD_NAME_WORDS` below lays it out as the page has it, at most 20
-    // printable ASCII characters (`040`-`176`), 4 to a word in `<31:0>`, the
-    // first in `<7:0>`, zero bytes after the last.  Elaboration refuses a
-    // longer name, a byte outside that range and a zero byte inside the
-    // name (`build/board_name_guard.pass` holds the refusals).  Empty, the
-    // default, is no name: the words read 0.  Unread below revision 13 and
-    // on the CADR.
-    parameter logic [8*64-1:0] BOARD_NAME = '0,
-
     // **WHETHER MAIN MEMORY IS DDR THAT ALWAYS ANSWERS**: 1 on a board whose
     // `mem_*` port reaches the processing system's memory, 0 on one with no
     // memory behind it (and the default, MIT's machine).  At 1 the NXM timer
     // does not end a processor cycle main memory has taken, however late the
     // bridge answers; past the last memory board it still does.  The reason,
-    // measured on the DE25-Nano, is `cadr_busint_xbus.sv`'s header.  Unread on
-    // QUUX, whose memory port has no timer on memory.
-    parameter bit MEMORY_ANSWERS = 1'b0,
-
-    // The physical word address, 28 bits on revision 13 (G1 §3.2), and the
-    // beats a line fill returns: two of revision 12's four words, and five
-    // of revision 13's packed storage.
-    localparam bit          PAGED      = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14,
-    localparam int unsigned PHYS_BITS  = PAGED ? 29 : WORD_BITS > 32 ? 28 : 22,
-    localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
+    // measured on the DE25-Nano, is `cadr_busint_xbus.sv`'s header.
+    parameter bit MEMORY_ANSWERS = 1'b0
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -347,8 +261,7 @@ module cadr_machine #(
     output var logic        clock_ready,
     output var logic [15:0] interval,
 
-    // --- how many 64K-word memory boards are fitted: 1 to 60, or on revision
-    // 13 1 to what the board's reservation holds, at most 1,024
+    // --- how many 64K-word memory boards are fitted: 1 to 60
     input  var logic [10:0] boards,
 
     // --- AND WHICH DISPLAY BOARDS ARE, which is the same kind of fact: what
@@ -376,16 +289,16 @@ module cadr_machine #(
     output var logic [13:0] opc,
     output var logic [31:0] st,
     output var logic [47:0] ir,
-    output var logic [WORD_BITS-1:0] a,
-    output var logic [WORD_BITS-1:0] m,
+    output var logic [31:0] a,
+    output var logic [31:0] m,
     output var logic [31:0] alu,
-    output var logic [WORD_BITS-1:0] r,
-    output var logic [WORD_BITS-1:0] ob,
-    output var logic [WORD_BITS-1:0] q,
+    output var logic [31:0] r,
+    output var logic [31:0] ob,
+    output var logic [31:0] q,
     output var logic [9:0]  dc,
     output var logic [25:0] lc,
-    output var logic [WORD_BITS-1:0] vma,
-    output var logic [WORD_BITS-1:0] md,
+    output var logic [31:0] vma,
+    output var logic [31:0] md,
     output var logic        vmaok,
     output var logic        jcond,
     output var logic        nop,
@@ -409,7 +322,7 @@ module cadr_machine #(
     output var logic        device,       // the decode put this cycle outside memory
     output var logic        dev_rq,       // -XBUS.RQ
     output var logic        dev_write,
-    output var logic [PHYS_BITS-1:0] phys,  // the address it is asking about
+    output var logic [21:0] phys,         // the address it is asking about
     // **THE WORD, WHICH THIS BOUNDARY USED TO DROP.**  `cadr_memory_path.sv`
     // has it and its own comment calls `phys` and `wdata` "the address and
     // the word"; the machine brought out the address and not the word, so a
@@ -588,24 +501,9 @@ module cadr_machine #(
     output var logic        mem_req,
     output var logic        mem_write,
     output var logic [31:0] mem_addr,
-    output var logic [WORD_BITS-1:0] mem_wdata,
+    output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
     input  var logic [31:0] mem_rdata,
-    // QUUX's line fill (contract Q6): four words at a 16-byte boundary, two
-    // 64-bit beats, back on `mem_rline` with the lowest address in bits
-    // 31:0.  The CADR never raises `mem_line`, and a board that builds only
-    // the CADR ties `mem_rline` to zero.  **REVISION 13'S** (contract G2 §3)
-    // is `mem_beats` beats, five of packed storage or four of the window's,
-    // and its writes of main memory five bytes, `mem_wide`, from any byte
-    // (`quux_mem_port.sv`, `rtl/plumbing/quux_axi_master.sv`).
-    output var logic        mem_line,
-    output var logic [2:0]  mem_beats,
-    output var logic        mem_wide,
-    input  var logic [RLINE_BITS-1:0] mem_rline,
-    // QUUX's memory port is idle and its write buffer empty: what the host
-    // waits for, after a halt, before it reads main memory (the contract's
-    // "a halt drains the write buffer").  Always up on the CADR.
-    output var logic        mem_drained,
 
     // --- AND WHAT THE PROCESSING SYSTEM ITSELF ANSWERED, which is for the
     // transaction audit below and reaches nothing else in this module.
@@ -624,124 +522,14 @@ module cadr_machine #(
     // the audit's word 8 is what tells that silence from a port answering
     // correctly.
     input  var logic        port_read_ack,
-    input  var logic        port_write_ack,
-
-    // --- QUUX's host side of revision 9 (contract Q9): the real-time clock
-    // and the file device as Linux's server reaches them, by index
-    // (`quux_file_device.sv` has the table): one write and one read a tick,
-    // the word a tick after its index.  `rtl/plumbing/quux_fd_face.sv` puts
-    // them on a page of the processor's port.  The CADR reads 0 and takes no
-    // write.
-    input  var logic        host_we,
-    input  var logic [3:0]  host_widx,
-    input  var logic [31:0] host_wdata,
-    input  var logic [3:0]  host_ridx,
-    output var logic [31:0] host_rdata
+    input  var logic        port_write_ack
 );
 
-  // A machine this file does not know stops elaboration, in every tool,
-  // rather than building the CADR under a name nobody meant.
-  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_unknown_machine
-    $error("cadr_machine: MACHINE is \"%s\", and it is \"cadr\" or \"quux\"", MACHINE);
-  end
-
-  // ------------------------------------------------------------------ QUUX
-  //
-  // **QUUX, THE EVOLVED CADR, AS muir'S `Geometry::QUUX` HAS IT AT THE PIN**,
-  // revision 4.  Each difference is built where the CADR's own part is, behind
-  // `MACHINE`, and each module says in its header what holds it:
-  //
-  //   the six-bit level-1 map entry, read in `MAP(MD)<29:24>` and written
-  //   from `VMA<31:27>` and `VMA<24>`, and the 2,048-entry level 2
-  //                                                  `cadr_microcycle.sv`
-  //   the MACHINE-ID in functional sources 16 and 36     `cadr_microcycle.sv`
-  //   the register page at `17777400`, with block-disk and the video
-  //   controller's mode on it                           `quux_feature_page.sv`
-  //   the 16K-word PDL buffer, its pointer and index 14 bits
-  //                                                  `cadr_microcycle.sv`
-  //   the boot PROM, version 2001, which is the image `PROM_HEX` names: every
-  //   QUUX build hands it `build/boot_prom.quux13.hex`
-  //   the video controller in place of the SIMPLE and LISPM TV, at the
-  //   board's `VIDEO_WIDTH` by `VIDEO_HEIGHT`, and no color board
-  //                                                      `quux_video.sv`
-  //   `MUL` and `DIV` in one instruction each, and the divider's hold
-  //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
-  //   the interval timers, source 15 and the interrupt
-  //                                                  `cadr_microcycle.sv`
-  //
-  // The values every part reads are decided once, here.
-  localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (13 << 4) | 4`: the signature, hardware revision 13,
-  // the 40-bit word (contract G2 §2.8), and processor type 4,
-  // `Geometry::QUUX.machine_id`.  The other value, revision 12's
-  // `(12 << 4) | 4` --- the fused return, the MACRO-DISPATCH register and the
-  // MACRO DISPATCH MEMORY (contract H8a) --- is a 32-bit word's, which only
-  // the CADR is now, and which never reads it.
-  // Revision 14's `(14 << 4) | 4`, `Geometry::QUUX_14.machine_id`.
-  localparam logic [31:0] MACHINE_ID = PAGED ? 32'h5155_00E4 : WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-  if (QUUX && REVISION != 13 && REVISION != 14) begin : g_bad_revision
-    $error("cadr_machine: REVISION is %0d; QUUX at 40 bits is revision 13 or 14", REVISION);
-  end
-  // The video controller at the board's size, `VIDEO_WIDTH` by
-  // `VIDEO_HEIGHT`, one bit a pixel, `VIDEO_WIDTH / 32` words a line, and
-  // muir's `check_video_size` held on it at elaboration.
-  // The board name's length: its literal is right-justified, so the
-  // characters are the bytes up to the highest one that is not zero.
-  function automatic int unsigned board_name_chars(input logic [8*64-1:0] s);
-    int unsigned n = 0;
-    for (int unsigned i = 0; i < 64; i++)
-      if (s[8*i +: 8] != 8'd0) n = i + 1;
-    return n;
-  endfunction
-  // Whether every character is printable ASCII, `040`-`176`; a zero byte
-  // inside the name is not.
-  function automatic bit board_name_printable(input logic [8*64-1:0] s);
-    bit ok = 1'b1;
-    for (int unsigned i = 0; i < board_name_chars(s); i++)
-      if (s[8*i +: 8] < 8'o40 || s[8*i +: 8] > 8'o176) ok = 1'b0;
-    return ok;
-  endfunction
-  // Feature words 20-24: character k of the name, counted from its first,
-  // at bits `8k + 7` to `8k`, so word 20 + k/4 holds it in `<8(k mod 4)+7 :
-  // 8(k mod 4)>`.
-  function automatic logic [159:0] board_name_words(input logic [8*64-1:0] s);
-    logic [159:0] w = '0;
-    int unsigned n = board_name_chars(s);
-    for (int unsigned k = 0; k < 20; k++)
-      if (k < n) w[8*k +: 8] = s[8*(n - 1 - k) +: 8];
-    return w;
-  endfunction
-  localparam int unsigned BOARD_NAME_CHARS = board_name_chars(BOARD_NAME);
-  localparam logic [159:0] BOARD_NAME_WORDS = board_name_words(BOARD_NAME);
-  if (BOARD_NAME_CHARS > 20) begin : g_board_name_long
-    $error("cadr_machine: the board name is %0d characters, over 20", BOARD_NAME_CHARS);
-  end
-  if (!board_name_printable(BOARD_NAME)) begin : g_board_name_bytes
-    $error("cadr_machine: the board name has a byte outside 040-176");
-  end
-
-  // At most 1920 by 1080 is at most 64,800 words, inside the display's
-  // `cadr_ddr_map::VIDEO_WORDS_MAX`, 65,536, whose room `build/mem_map.pass` holds.
-  if (VIDEO_WIDTH == 0 || VIDEO_HEIGHT == 0 || VIDEO_WIDTH % 32 != 0 ||
-      VIDEO_WIDTH > 1920 || VIDEO_HEIGHT > 1080) begin : g_video_size
-    $error("cadr_machine: the video controller cannot be %0d by %0d", VIDEO_WIDTH, VIDEO_HEIGHT);
-  end
-  // **REVISION 13'S FEATURE WORDS** (contract G2 §4.3, appendix A1.10;
-  // muir's `Geometry::feature_word` on `QUUX_13`): the level-1 map entry's 7
-  // bits and so 4,096 level-2 entries, 4,096 dispatch memory entries, and the
-  // video controller's buffer at the frame buffer window, `1760000000`; and
-  // the file device's main memory size in 28 bits (`quux_file_device.sv`).
-  // Revision 14 (A14.9): word 1 0, no level-1 map; word 2 the TLB's
-  // entries; word 13 the buffer at its device-window address.
-  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : 7;
-  localparam int unsigned FEATURE_DMEM    = 4096;
-  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : 32'o1760000000;
-  localparam int unsigned FD_MEM_BITS     = 28;
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
   logic        n_memrq, rdcyc;
-  logic [WORD_BITS-1:0] wdata, rdata;
+  logic [31:0] wdata, rdata;
   // The console's registers, which now live on the bus interface where a
   // console can write them, and reach the processor as signals.
   logic [3:0]  spy_eadr;
@@ -863,36 +651,8 @@ module cadr_machine #(
   logic xbus_intr;
   logic ub_int, ub_int_hand;
   assign xbus_intr = disk_intr || tv_intr;
-  // And on QUUX its interval timers, `Machine::interrupt`'s third term,
-  // which are the processor's own and so reach neither the Xbus nor the bus
-  // interface's interrupt status; `cadr_microcycle.sv` says when it is up.
-  // Zero on the CADR.
-  logic tick_irq;
-  // And QUUX's register page's own three, the keyboard, the mouse and the
-  // network (`quux_feature_page.sv`'s `irq`), each a term of
-  // `Machine::interrupt_at` on QUUX.  Zero on the CADR.
-  logic page_irq;
-  // QUUX's register page's wires into the memory path and the processor
-  // (`cadr_memory_path.sv`'s ports say what each is).
-  // The timers' three bits of word 100, their words 110-115, and
-  // `RESET-DEVICES`, word 104 <0>, between the page and the processor (contract Q11).
-  logic [2:0]  timer_pending;
-  logic        tm_we, page_reset_devices;
-  logic [2:0]  tm_idx;
-  logic [23:0] tm_wdata, tm_rdata;
-  logic [2:0]  page_err, mouse_buttons;
-  logic        page_err_clear, page_errstop_we, page_errstop;
-  logic        page_ch_land, page_ch_wr, chaos_ireq;
-  logic [2:0]  page_ch_which;
-  logic [15:0] page_ch_wdata, page_ch_rdata;
   logic        iob_n_boot1;
   logic [7:0]  iob_csr_face;
-  // The video controller's black-on-white, for the register page's readout
-  // below.
-  logic        video_bow;
-  // **ON QUUX THE UNIBUS INTERRUPT DOES NOT REACH THE PROCESSOR**, QUUX
-  // having no Unibus (contract Q5, `Machine::interrupt_at`'s
-  // `geometry.unibus`): its devices interrupt through the register page.
   // **`-XBUS INIT` AND `-UB INIT`: THE POWER-ON RESET, AND THE PROCESSOR'S
   // `PROG.UNIBUS.RESET`.**  On the board the bus interface's `RESET` (the
   // 74S10 at DBGIN 0A14) is made from `-LM UNIBUS RESET`, the processor's
@@ -900,12 +660,11 @@ module cadr_machine #(
   // `-BUS.RESET`), the debug cable's `-DEBUGEE RESET` and `UNIBUS INIT IN`,
   // and it reaches every board on the backplane.  muir's `Rtl` calls
   // `Machine::bus_reset` when the `INTERRUPT-CONTROL` write that raises the
-  // bit lands, on either machine, and each board clears once what its own
-  // reset pin clears: the display boards' vertical flag, the disk's command
-  // and errors (the CADR's controller and QUUX's block-disk), and the I/O
-  // board's interrupt enables, Chaosnet interface and serial line.  So the
-  // bit's rise is one tick of init here, the tick after the edge that takes
-  // the write.  `rst` asserts it too, and the top level makes `rst` of the
+  // bit lands, and each board clears once what its own reset pin clears:
+  // the display boards' vertical flag, the disk's command and errors, and
+  // the I/O board's interrupt enables, Chaosnet interface and serial line.
+  // So the bit's rise is one tick of init here, the tick after the edge that
+  // takes the write.  `rst` asserts it too, and the top level makes `rst` of the
   // board's reset, the console's pulse and the debug cable's reset.
   //
   // **AND THE INTERRUPT IS THE RESET BOARDS' AT THE WRITE'S OWN EDGE.**
@@ -913,12 +672,10 @@ module cadr_machine #(
   // bit, after the boards have cleared, where the boards here clear a tick
   // after the edge that ends it.  So in the microcycle that writes the bit
   // (`prog_unibus_reset_rising`) the terms those boards make are held off:
-  // the Xbus line's whole, the display's flag and the disk's done, and on
-  // QUUX the network's term of the register page.  This is `quux_clocks.sv`'s
-  // shape for a write that takes its own flag down.  In the one tick between
-  // that edge and the boards' clearing the terms are up again, and nothing
-  // takes them there: `SINTR` is taken at the processor's edge alone, a
-  // microcycle on.
+  // the Xbus line's whole, the display's flag and the disk's done.  In the
+  // one tick between that edge and the boards' clearing the terms are up
+  // again, and nothing takes them there: `SINTR` is taken at the
+  // processor's edge alone, a microcycle on.
   //
   // **THE UNIBUS LINE IS HELD OFF THE SAME WAY, LESS ITS HAND-WRITTEN TERM.**
   // `UB INT` is the I/O board's request taken under `ENABLE UB INTS`, or the
@@ -930,42 +687,19 @@ module cadr_machine #(
   // at the end of that microcycle where muir reads it gone: `quux_busreset`,
   // which enables the board's clock interrupt and `ENABLE UB INTS` before the
   // reset, failed on the one row.
-  //
-  // **ON QUUX, `PROG.UNIBUS.RESET` DRIVES NOTHING, AND `RESET-DEVICES` IS ITS
-  // `-XBUS INIT`** (revision 10, contract Q11: QUUX has no
-  // `PROG.UNIBUS.RESET`).  There `bus_init` is the power-on reset or the
-  // register page's `RESET-DEVICES`, a write of word 104 with <0> set
-  // (`quux_feature_page.sv`'s `reset_devices`, the tick after the page takes
-  // it), and it reaches every board it reached before: block-disk, the I/O
-  // board's interrupt enables, Chaosnet interface and serial line, the
-  // unfitted first display board, the file device (the Q9 amendment), and
-  // with the processor's `reset_devices` the interval timers.  The bit is
-  // still written and read back through `LC`.  Nothing is held off `SINTR`
-  // on QUUX: at `<28>`'s edge nothing is reset, and `RESET-DEVICES` lands
-  // after the edge that takes it and before the next, where muir's lands
-  // too (contract Q11, section 4, at K >= 4).  The CADR's reset is as it
-  // was.
   logic prog_unibus_reset, prog_unibus_reset_rising, prog_unibus_reset_q;
   logic bus_init, holdoff;
   always_ff @(posedge clk)
     prog_unibus_reset_q <= rst ? 1'b0 : prog_unibus_reset;
-  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q));
-  assign holdoff  = prog_unibus_reset_rising && !QUUX;
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+  assign holdoff  = prog_unibus_reset_rising;
 
   logic ub_int_line;
   assign ub_int_line = ub_int_hand || (ub_int && !holdoff);
-  assign sintr_o   = (xbus_intr && !holdoff) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !holdoff) || ub_int_line;
 
   cadr_microcycle #(
-      .PROM_HEX(PROM_HEX),
-      .TICK_PS(TICK_PS),
-      .MACHINE(MACHINE),
-      .MACHINE_ID(MACHINE_ID),
-      .SYNC_K(SYNC_K),
-      .SYNC_L(SYNC_L),
-      .WORD_BITS(WORD_BITS),
-      .REVISION(REVISION),
-      .TLB_ENTRIES(TLB_ENTRIES)
+      .PROM_HEX(PROM_HEX)
   ) processor (
       .clk         (clk),
       .rst         (rst),
@@ -987,30 +721,12 @@ module cadr_machine #(
       .spy_eadr    (spy_eadr),
       .spy_rdata   (spy_rdata),
       .sintr       (sintr_o),
-      .tick_irq    (tick_irq),
-      .timer_pending(timer_pending),
-      .tm_we       (tm_we),
-      .tm_idx      (tm_idx),
-      .tm_wdata    (tm_wdata),
-      .tm_rdata    (tm_rdata),
-      .reset_devices(page_reset_devices),
       .prog_unibus_reset_o(prog_unibus_reset),
       .prog_unibus_reset_rising(prog_unibus_reset_rising),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
-      .cached      (cached),
-      .pf_fetch    (pf_fetch),
-      .pf_vaddr    (pf_vaddr),
-      .pf_drop     (pf_drop),
-      .pf_nx_v     (pf_nx_v),
-      .pf_nx_vaddr (pf_nx_vaddr),
-      .pf_nx_phys  (pf_nx_phys),
-      .pf_nx_word  (pf_nx_word),
-      .pf_nx_fetch_v    (pf_nx_fetch_v),
-      .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
-      .mem_drained (mem_drained),
       .ub_md_req   (ub_md_req),
       .ub_md_data  (ub_md_data),
       .ub_md_ack   (ub_md_ack),
@@ -1048,39 +764,7 @@ module cadr_machine #(
       .clock_edge  (clock_edge),
       .ro_addr     (con_ro_addr),
       .ro_data     (proc_ro_data),
-      .ro_echo     (con_ro_echo),
-      .boards      (boards),
-      .ms_we       (ms_we),
-      .ms_idx      (ms_idx),
-      .ms_wdata    (ms_wdata),
-      .ms_rdata    (ms_rdata),
-      .sd_look     (sd_look),
-      .sd_phys     (sd_phys),
-      .sd_ready    (sd_ready),
-      .sd_walk_ready(sd_walk_ready),
-      .sd_grant_ready(sd_grant_ready),
-      .sd_ack_at   (sd_ack_at),
-      .sd_hit      (sd_hit),
-      .sd_word     (sd_word),
-      .sd_hit_live (sd_hit_live),
-      .sd_h1_live  (sd_h1_live),
-      .sd_word0_live(sd_word0_live),
-      .sd_word1_live(sd_word1_live),
-      .sd_commit   (sd_commit),
-      .sd_wr       (sd_wr),
-      .sd_wdata    (sd_wdata),
-      .sd_wbits    (sd_wbits),
-      .sd_until    (sd_until),
-      .sd_done     (sd_done),
-      .sd_fill_v   (sd_fill_v),
-      .sd_fill_word(sd_fill_word),
-      .sd_wdone    (sd_wdone),
-      .sd_relook   (sd_relook),
-      .wb_hold     (wb_hold),
-      .wb_rel_v    (wb_rel_v),
-      .wb_rel_now  (wb_rel_now),
-      .wb_rel      (wb_rel),
-      .wb_rel_q    (wb_rel_q)
+      .ro_echo     (con_ro_echo)
   );
 
   // The virtual address register, `Q` and `MD` for the console, captured at
@@ -1100,44 +784,10 @@ module cadr_machine #(
       .con_md  (con_md)
   );
 
-  // QUUX's memory port (contract Q6): the cycle is main memory's; block-disk
-  // answered a write of one of its registers, which is muir's
-  // `dma_written` and invalidates the cache at the next grant; the cache's
-  // counts; and the Xbus bridge's own seam, for the audit.
-  logic        cached, bd_written;
-  // Revision 12's cache-only prefetch, between the processor and the port.
-  logic        pf_fetch, pf_drop, pf_nx_v, pf_nx_fetch_v;
-  logic [(PAGED ? 32 : WORD_BITS > 32 ? 28 : 24)-1:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
-  // Revision 14's memory system's seams (`quux_mmu.sv`): the register
-  // page's words 220-227, and the walk's and the write-back's side seam
-  // into the memory port.
-  logic        ms_we;
-  logic [2:0]  ms_idx;
-  logic [31:0] ms_wdata, ms_rdata;
-  logic        sd_look, sd_ready, sd_hit, sd_commit, sd_wr, sd_fill_v, sd_wdone, wb_hold, wb_rel_v;
-  logic        sd_walk_ready, sd_grant_ready, sd_hit_live, sd_h1_live, sd_relook, wb_rel_now;
-  logic signed [10:0] sd_ack_at;
-  logic [28:0] sd_phys;
-  logic [39:0] sd_wdata, sd_word, sd_fill_word, sd_word0_live, sd_word1_live;
-  logic [29:0] sd_wbits;
-  logic signed [10:0] sd_until, sd_done, wb_rel, wb_rel_q;
-  logic [PHYS_BITS-1:0] pf_nx_phys;
-  logic [WORD_BITS-1:0] pf_nx_word;
-  logic [31:0] cache_hits, cache_misses;
-  logic        br_req, br_write, br_done;
-  logic [31:0] br_addr, br_wdata;
 
   cadr_memory_path #(
-      // QUUX has no color board: the color TV is a LISPM TV strapped
-      // elsewhere, and QUUX's bitstream has neither of the CADR's boards.
-      .LMTV(QUUX ? 0 : LMTV),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX),
-      .MACHINE(MACHINE),
-      .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
-      .SYNC_K(SYNC_K),
-      .WORD_BITS(WORD_BITS),
-      .REVISION(REVISION),
-      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
+      .LMTV(LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -1190,10 +840,7 @@ module cadr_machine #(
       .xbus_intr  (xbus_intr),
       .ub_int     (ub_int),
       .ub_int_hand(ub_int_hand),
-      // On QUUX the keyboard's cable reaches the register page and not the
-      // I/O board (`quux_input.sv`), as muir's terminal delivers to the page
-      // on QUUX; the board's `-BOOT*` is then idle and the page makes it.
-      .kbd_strobe (QUUX ? 1'b0 : kbd_strobe),
+      .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
       .n_boot_star(iob_n_boot1),
       .mouse_lines(mouse_lines),
@@ -1303,69 +950,7 @@ module cadr_machine #(
       .mem_addr   (mem_addr),
       .mem_wdata  (mem_wdata),
       .mem_done   (mem_done),
-      .mem_rdata  (mem_rdata),
-      .mem_line   (mem_line),
-      .mem_beats  (mem_beats),
-      .mem_wide   (mem_wide),
-      .mem_rline  (mem_rline),
-      .quux_invalidate(bd_written || fd_invalidate),
-      .cached     (cached),
-      .port_drained(mem_drained),
-      .cache_hits (cache_hits),
-      .cache_misses(cache_misses),
-      .pf_fetch   (pf_fetch),
-      .pf_vaddr   (pf_vaddr),
-      .pf_drop    (pf_drop),
-      .pf_nx_v    (pf_nx_v),
-      .pf_nx_vaddr(pf_nx_vaddr),
-      .pf_nx_phys (pf_nx_phys),
-      .pf_nx_word (pf_nx_word),
-      .pf_nx_fetch_v    (pf_nx_fetch_v),
-      .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
-      .br_req_o   (br_req),
-      .br_write_o (br_write),
-      .br_addr_o  (br_addr),
-      .br_wdata_o (br_wdata),
-      .br_done_o  (br_done),
-      .page_err       (page_err),
-      .page_err_clear (page_err_clear),
-      .page_errstop_we(page_errstop_we),
-      .page_errstop   (page_errstop),
-      .page_ch_land   (page_ch_land),
-      .page_ch_wr     (page_ch_wr),
-      .page_ch_which  (page_ch_which),
-      .page_ch_wdata  (page_ch_wdata),
-      .page_ch_rdata  (page_ch_rdata),
-      .chaos_ireq     (chaos_ireq),
-      .mouse_buttons  (mouse_buttons),
-      .video_bow_o    (video_bow),
-      .sd_look        (sd_look),
-      .sd_phys        (sd_phys),
-      .sd_ready       (sd_ready),
-      .sd_walk_ready  (sd_walk_ready),
-      .sd_grant_ready (sd_grant_ready),
-      .sd_ack_at      (sd_ack_at),
-      .sd_hit         (sd_hit),
-      .sd_word        (sd_word),
-      .sd_hit_live    (sd_hit_live),
-      .sd_h1_live     (sd_h1_live),
-      .sd_word0_live  (sd_word0_live),
-      .sd_word1_live  (sd_word1_live),
-      .sd_commit      (sd_commit),
-      .sd_wr          (sd_wr),
-      .sd_wdata       (sd_wdata),
-      .sd_wbits       (sd_wbits),
-      .sd_until       (sd_until),
-      .sd_done        (sd_done),
-      .sd_fill_v      (sd_fill_v),
-      .sd_fill_word   (sd_fill_word),
-      .sd_wdone       (sd_wdone),
-      .sd_relook      (sd_relook),
-      .wb_hold        (wb_hold),
-      .wb_rel_v       (wb_rel_v),
-      .wb_rel_now     (wb_rel_now),
-      .wb_rel         (wb_rel),
-      .wb_rel_q       (wb_rel_q)
+      .mem_rdata  (mem_rdata)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -1379,9 +964,8 @@ module cadr_machine #(
   // A CYCLE CANNOT BE ANSWERED TWICE, and the decode is what says so:
   // `cadr_xbus_decode.sv` makes `memory` and `device` mutually exclusive by
   // construction --- Xbus I/O space or not --- and inside `device` this module
-  // claims only 0o17377774..7 on the CADR, and block-disk 0o17777600..3 on
-  // QUUX, four of the four million addresses the decode is checked against;
-  // on QUUX the register page leaves those four to it (contract Q13).
+  // claims only 0o17377774..7, four of the four million addresses the decode
+  // is checked against.
   // Anything hung on the external port owes the same discipline, and
   // nothing here can enforce it for a slave it cannot see.
   //
@@ -1399,96 +983,15 @@ module cadr_machine #(
   // MEM<31:0> without a slave; with the poison it is caught on all 5,650
   // device writes as well.
   logic        disk_ack, disk_drives;
-  assign bd_written = QUUX && disk_ack && dev_write;
-  // And the file device's host completed a command, having written main
-  // memory behind the processor (`quux_file_device.sv`).
-  logic        fd_invalidate;
   logic [31:0] disk_rdata;
   logic        dev_ack_joined;
   logic [31:0] dev_rdata_joined;
   // The channel, which makes the disk controller the second master on this
   // bus.  `cadr_memory_path.sv` has the arbiter and says what it holds to.
-  // On revision 13 it moves whole words at 28-bit addresses (block-disk's
-  // pages, `quux_block_disk.sv`).
   logic        ch_req, ch_write, ch_done, ch_nxm;
-  logic [PHYS_BITS-1:0] ch_addr;
-  if (PAGED) begin : g_ch_addr_main
-    assign ch_addr[PHYS_BITS-1] = 1'b0;
-  end
-  logic [WORD_BITS-1:0] ch_wdata, ch_rdata;
+  logic [21:0] ch_addr;
+  logic [31:0] ch_wdata, ch_rdata;
 
-  // **ON QUUX THE DISK IS BLOCK-DISK AND NOTHING ELSE** (`quux_block_disk.sv`,
-  // muir's "the CADR's controller is refused on QUUX"): the same four
-  // registers, the same interrupt on the Xbus line and the same two seams,
-  // so everything around the instance is the one wiring.  Its registers are
-  // words 200-203 of the register page and its done interrupt is word 100
-  // `<3>` (contract Q13).  The instance is
-  // `disk` in both machines' generate blocks, which the constraint files
-  // name.
-  // Block-disk's registers for the register page's readout below.
-  logic [31:0] bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_since_done;
-  logic [6:0]  bd_ro_flags;
-  if (QUUX) begin : g_quux_disk
-  quux_block_disk #(.WORD_BITS(WORD_BITS)) disk (
-      .clk      (clk),
-      .rst      (rst),
-      // `-XBUS INIT` on the backplane: the power-on reset and
-      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).  `rst` is the harder
-      // of the two: it clears the disk address counters and the command list
-      // pointer, which `-XINIT` leaves standing.
-      .xbus_init(bus_init),
-      .drive_present  (drive_present),
-      .drive_read_only(drive_read_only),
-      .drive_timed    (drive_timed),
-      .sel      (device),
-      .dev_rq   (dev_rq),
-      .dev_write(dev_write),
-      .phys     (phys[21:0]),
-      .wdata    (wdata[31:0]),
-      .dev_ack  (disk_ack),
-      .rdata    (disk_rdata),
-      .drives   (disk_drives),
-      .intr     (disk_intr),
-      .store_we   (store_we),
-      .store_slot (store_slot),
-      .store_addr (store_addr),
-      .store_wdata(store_wdata),
-      .store_rdata(store_rdata),
-      .store_miss (store_miss),
-      .ch_req   (ch_req),
-      .ch_write (ch_write),
-      // Main memory alone, 28 bits; revision 14's bus address has `<28>`
-      // clear for it (A14.1).
-      .ch_addr  (ch_addr[(WORD_BITS > 32 ? 28 : 22)-1:0]),
-      .ch_wdata (ch_wdata),
-      .ch_done  (ch_done),
-      .ch_nxm   (ch_nxm),
-      .ch_rdata (ch_rdata),
-      .ch_active(ch_active),
-      .store_busy(store_busy),
-      .store_busy_slot(store_busy_slot),
-      .req_valid(req_valid),
-      .req_tag  (req_tag),
-      .req_post (req_post),
-      .ch_waiting(ch_waiting),
-      .store_deny(store_deny),
-      .ch_slot_o(ch_slot),
-      .ch_wrote (ch_wrote),
-      .ch_hit   (ch_hit),
-      .ro_cmd   (bd_ro_cmd),
-      .ro_clp   (bd_ro_clp),
-      .ro_da    (bd_ro_da),
-      .ro_lma   (bd_ro_lma),
-      .ro_flags (bd_ro_flags),
-      .ro_since_done(bd_ro_since_done)
-  );
-  end else begin : g_cadr_disk
-  assign bd_ro_cmd        = 32'd0;
-  assign bd_ro_clp        = 32'd0;
-  assign bd_ro_da         = 32'd0;
-  assign bd_ro_lma        = 32'd0;
-  assign bd_ro_since_done = 32'd0;
-  assign bd_ro_flags      = 7'd0;
   cadr_disk_controller disk (
       .clk      (clk),
       .rst      (rst),
@@ -1534,226 +1037,11 @@ module cadr_machine #(
       .ch_wrote (ch_wrote),
       .ch_hit   (ch_hit)
   );
-  end
 
-  // **QUUX'S REGISTER PAGE IS A SLAVE ON THE SAME SEAM**, beside the disk
-  // and joined the same way: the decode makes page 37777 a device on QUUX,
-  // and block-disk's four words, 200-203, and the video controller's mode,
-  // 210, are left out of the page's own match, so exactly one slave answers
-  // each word (contract Q13).
-  // The register page's readout, selector 12 (below, in the QUUX block).
-  logic [47:0] quux_ro_word;
-  logic [17:0] quux_ro_a1, quux_ro_a2;
-  logic [47:0] fd_ro_bases, fd_ro_resp_base, fd_ro_indexes, fd_ro_flags;
-  logic [13:0] in_ro_state;
-  logic [6:0]  in_ro_count;
-  logic [23:0] in_ro_fifo_q;
-  if (QUUX) begin : g_quux_feature_page
-    logic        feature_ack, feature_drives;
-    logic        page_n_boot, page_kbd_busy;
-    logic [31:0] feature_rdata;
-
-    quux_feature_page #(
-        .MACHINE_ID   (MACHINE_ID),
-        .TICK_PS      (TICK_PS),
-        .L1_BITS      (FEATURE_L1_BITS),
-        .DMEM_WORDS   (FEATURE_DMEM),
-        .SCREEN_WIDTH (VIDEO_WIDTH),
-        .SCREEN_HEIGHT(VIDEO_HEIGHT),
-        .SCREEN_WPL   (VIDEO_WIDTH / 32),
-        .SCREEN_BUFFER(VIDEO_BUFFER),
-        .BOARD_NAME_WORDS(BOARD_NAME_WORDS),
-        .WORD_BITS    (WORD_BITS),
-        .TLB_ENTRIES  (PAGED ? TLB_ENTRIES : 0)
-    ) feature_page (
-        .clk          (clk),
-        .rst          (rst),
-        .sel          (device),
-        .phys         (phys[21:0]),
-        .dev_write    (dev_write),
-        .dev_rq       (dev_rq),
-        .wdata        (wdata[31:0]),
-        .dev_ack      (feature_ack),
-        .drives       (feature_drives),
-        .rdata        (feature_rdata),
-        .timer_pending(timer_pending),
-        // Block-disk's done (`quux_block_disk.sv`).
-        .disk_irq     (disk_intr),
-        .chaos_ireq   (chaos_ireq),
-        .tm_we        (tm_we),
-        .tm_idx       (tm_idx),
-        .tm_wdata     (tm_wdata),
-        .tm_rdata     (tm_rdata),
-        .reset_devices(page_reset_devices),
-        .err          (page_err),
-        .err_clear    (page_err_clear),
-        .errstop      (errstop),
-        .errstop_we   (page_errstop_we),
-        .errstop_d    (page_errstop),
-        .ch_land      (page_ch_land),
-        .ch_wr        (page_ch_wr),
-        .ch_which     (page_ch_which),
-        .ch_wdata     (page_ch_wdata),
-        .ch_rdata     (page_ch_rdata),
-        .kbd_strobe   (kbd_strobe),
-        .kbd_code     (kbd_code),
-        .mouse_x      (mouse_x),
-        .mouse_y      (mouse_y),
-        .mouse_buttons(mouse_buttons),
-        .irq          (page_irq),
-        .n_boot_kbd   (page_n_boot),
-        .kbd_busy     (page_kbd_busy),
-        .ro_in_state  (in_ro_state),
-        .ro_in_count  (in_ro_count),
-        .ro_fifo_a    (quux_ro_a2[5:0]),
-        .ro_fifo_q    (in_ro_fifo_q),
-        .xbus_init    (bus_init),
-        // Main memory's words, the boards' count times 64K, as the file
-        // device's enable checks a ring against and the host's MEM_WORDS
-        // reads.
-        .mem_words    (FD_MEM_BITS'({boards, 16'd0})),
-        .drained      (mem_drained),
-        .fd_invalidate(fd_invalidate),
-        .host_we      (host_we),
-        .host_widx    (host_widx),
-        .host_wdata   (host_wdata),
-        .host_ridx    (host_ridx),
-        .host_rdata   (host_rdata),
-        .ro_fd_bases  (fd_ro_bases),
-        .ro_fd_resp_base(fd_ro_resp_base),
-        .ro_fd_indexes(fd_ro_indexes),
-        .ro_fd_flags  (fd_ro_flags),
-        .ms_we        (ms_we),
-        .ms_idx       (ms_idx),
-        .ms_wdata     (ms_wdata),
-        .ms_rdata     (ms_rdata)
-    );
-
-    // **THE REGISTER PAGE'S DEVICES ON THE READOUT, AT SELECTOR 12**: what a
-    // checkpoint carries of them as muir's `QuuxInput`, `BlockDisk`,
-    // `Machine::bus_error` and the video controller's `Tv::mode`.  On the audit's pipeline
-    // and for its reason: the address delayed by two, the word registered
-    // once, landing on the tick the echo names it (the audit's note below).
-    // Each word is taken whole in one tick.  The words:
-    //
-    //     0   the keyboard and the mouse: <43:38> the FIFO's head, <37:31> its
-    //         count, <30> overflowed, <29> the keyboard's enable, <28> the
-    //         mouse changed, <27> the mouse's enable, <26:24> the buttons,
-    //         <23:12> Y, <11:0> X
-    //     1-4 block-disk's command, command list pointer, disk address and
-    //         last memory address
-    //     5   block-disk's flags, <38:32> (`quux_block_disk.sv`'s `ro_flags`),
-    //         and <31:0> the ticks since its blocks' time ran out
-    //     6   <8> the video controller's black-on-white, <5:0> the bus
-    //         errors as word 101
-    //         reads them (`Machine::bus_error`)
-    //     7   the file device's rings: <47:24> the command ring's base,
-    //         <23:0> the response ring's; on revision 13 the command ring's
-    //         base alone, <27:0>
-    //     8   its indexes: <47:32> 164, <31:16> 165 and 170, <15:0> 171
-    //     9   <36> the host's busy, <35:28> handles open, <27:24> 163,
-    //         <23:20> 167, <3> index fault, <2> configuration refused,
-    //         <1> the interrupt enable, <0> enabled (muir's `FileDevice::save`)
-    //     10  on revision 13, the response ring's base, <27:0>
-    //     100-177  the keyboard FIFO's sixty-four words, by index
-    //
-    // and anything else `RO_NO_MEMORY`.  What holds it:
-    // `build/quux13_readout_window.quux.pass`.
-    always_ff @(posedge clk) begin
-      if (rst) begin
-        quux_ro_a1 <= 18'h3FFFF;
-        quux_ro_a2 <= 18'h3FFFF;
-      end else begin
-        quux_ro_a1 <= con_ro_addr;
-        quux_ro_a2 <= quux_ro_a1;
-      end
-    end
-    always_ff @(posedge clk) begin
-      if (quux_ro_a2[13:6] == 8'd1) begin
-        quux_ro_word <= {24'd0, in_ro_fifo_q};
-      end else begin
-        unique case (quux_ro_a2[13:0])
-          14'd0: quux_ro_word <= {4'd0, in_ro_state[13:8], in_ro_count, in_ro_state[3:0],
-                                  mouse_buttons, mouse_y, mouse_x};
-          14'd1: quux_ro_word <= {16'd0, bd_ro_cmd};
-          14'd2: quux_ro_word <= {16'd0, bd_ro_clp};
-          14'd3: quux_ro_word <= {16'd0, bd_ro_da};
-          14'd4: quux_ro_word <= {16'd0, bd_ro_lma};
-          14'd5: quux_ro_word <= {9'd0, bd_ro_flags, bd_ro_since_done};
-          14'd6: quux_ro_word <= {39'd0, video_bow, 2'd0, page_err[2], 1'b0, page_err[1],
-                                  2'd0, page_err[0]};
-          14'd7: quux_ro_word <= fd_ro_bases;
-          14'd8: quux_ro_word <= fd_ro_indexes;
-          14'd9: quux_ro_word <= fd_ro_flags;
-          // Revision 13's response ring's base, a word of its own.
-          14'd10: quux_ro_word <= (WORD_BITS > 32) ? fd_ro_resp_base : 48'hA5A5_5A5A_A5A5;
-          default: quux_ro_word <= 48'hA5A5_5A5A_A5A5;
-        endcase
-      end
-    end
-    logic unused_ro;
-    assign unused_ro = ^{quux_ro_a2[17:14], in_ro_state[7:4]};
-
-    // The keyboard's boot word boots from the page on QUUX, and the host's
-    // handshake reads the page's FIFO in `KBD READY`'s place.
-    assign n_boot1  = iob_n_boot1 && page_n_boot;
-    // The board's own `KBD READY`, which the cable never raises on QUUX.
-    assign csr_face = {iob_csr_face[7:6], page_kbd_busy, iob_csr_face[4:0]};
-    logic unused_kbd_ready;
-    assign unused_kbd_ready = iob_csr_face[5];
-
-    assign dev_ack_joined   = disk_ack || feature_ack || device_ack;
-    assign dev_rdata_joined = disk_drives    ? disk_rdata
-                            : feature_drives ? feature_rdata
-                                             : device_rdata;
-  end else begin : g_cadr_seam
   assign dev_ack_joined   = disk_ack || device_ack;
   assign dev_rdata_joined = disk_drives ? disk_rdata : device_rdata;
-  assign page_irq         = 1'b0;
   assign n_boot1          = iob_n_boot1;
   assign csr_face         = iob_csr_face;
-  assign page_err_clear   = 1'b0;
-  assign page_errstop_we  = 1'b0;
-  assign page_errstop     = 1'b0;
-  assign page_ch_land     = 1'b0;
-  assign page_ch_wr       = 1'b0;
-  assign page_ch_which    = 3'd0;
-  assign page_ch_wdata    = 16'd0;
-  // No register page, so no timer's word and no `RESET-DEVICES`.
-  assign tm_we              = 1'b0;
-  assign tm_idx             = 3'd0;
-  assign tm_wdata           = 24'd0;
-  assign page_reset_devices = 1'b0;
-  // Nor revision 14's words.
-  assign ms_we    = 1'b0;
-  assign ms_idx   = 3'd0;
-  assign ms_wdata = 32'd0;
-  logic unused_ms;
-  assign unused_ms = ^ms_rdata;
-  // The page's wires the CADR does not read, and its readout: selector 12
-  // reads `RO_NO_MEMORY` on the CADR, as every selector it does not map.
-  assign quux_ro_word = 48'hA5A5_5A5A_A5A5;
-  assign quux_ro_a1   = 18'h3FFFF;
-  assign quux_ro_a2   = 18'h3FFFF;
-  assign in_ro_state  = 14'd0;
-  assign in_ro_count  = 7'd0;
-  assign in_ro_fifo_q = 24'd0;
-  // Nothing of revision 9: the host reads 0 and nothing is invalidated.
-  assign host_rdata    = 32'd0;
-  assign fd_invalidate = 1'b0;
-  assign fd_ro_bases   = 48'd0;
-  assign fd_ro_resp_base = 48'd0;
-  assign fd_ro_indexes = 48'd0;
-  assign fd_ro_flags   = 48'd0;
-  logic unused_host;
-  assign unused_host = ^{host_we, host_widx, host_wdata, host_ridx, fd_ro_bases, fd_ro_indexes,
-                         fd_ro_flags, fd_ro_resp_base};
-  logic unused_page;
-  assign unused_page = ^{timer_pending, tm_rdata, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
-                         video_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
-                         bd_ro_since_done, quux_ro_a1, quux_ro_a2, in_ro_state, in_ro_count,
-                         in_ro_fifo_q};
-  end
 
   // ------------------------------------------------- the transaction audit
   //
@@ -1800,8 +1088,7 @@ module cadr_machine #(
 
   // **THE READOUT, JOINED INTO THE CONSOLE'S WINDOW AT A SELECTOR OF ITS
   // OWN.**  `cadr_microcycle.sv` maps 0 to 10 and answers `RO_NO_MEMORY` for
-  // anything else; 11 is the audit's, 12 QUUX's register page's and 13 to 15
-  // are still free.  That is
+  // anything else; 11 is the audit's and 12 to 15 are still free.  That is
   // how anything inside this module is read on a HALTED board, over
   // `M_AXI_GP1`, by `cadr-readout`, from anywhere, with nobody at the board
   // --- and the board's own event is hours in the past by the time anybody
@@ -1834,44 +1121,8 @@ module cadr_machine #(
     end
   end
 
-  // And selector 12, QUUX's register page (above): `RO_NO_MEMORY` on the CADR.
-  localparam logic [3:0] RO_QUUX_PAGE = 4'd12;
-  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT)     ? aud_word
-                     : (con_ro_echo[17:14] == RO_QUUX_PAGE) ? quux_ro_word
-                                                            : proc_ro_data;
+  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT) ? aud_word : proc_ro_data;
 
-  // **ON QUUX THE AUDIT WATCHES THE XBUS BRIDGE'S SEAM, NOT MAIN
-  // MEMORY'S** (contract Q6).  Main memory's cycles are the memory port's,
-  // through the cache: a read that hits makes no transaction, a miss makes a
-  // line fill, and a write reaches main memory from the buffer after the
-  // cycle has ended, so "one transaction per bus cycle" is not a property of
-  // that seam at all.  It is still a property of the bridge's, which carries
-  // the video controller's frame buffer and block-disk's transfers one word
-  // a cycle, and
-  // the port's answers to the bridge stand in for the PS7's handshakes.
-  // What holds the port's own traffic is `build/quux13_port.quux.*.pass`.
-  //
-  // The port's answers are taken a tick after the bridge sees them, as the
-  // PS7's handshakes always come after the request they answer: the bridge
-  // may be answered in the very tick it asks, where the audit counts the
-  // request owed only from the next.
-  logic aud_req, aud_mwrite, aud_done, br_done_q, br_rack_q, br_wack_q;
-  logic [31:0] aud_addr, aud_wdata;
-  logic aud_read_ack, aud_write_ack;
-  always_ff @(posedge clk) begin
-    br_done_q <= rst ? 1'b0 : br_done;
-    br_rack_q <= !rst && br_done && !br_done_q && !br_write;
-    br_wack_q <= !rst && br_done && !br_done_q &&  br_write;
-  end
-  assign aud_req       = QUUX ? br_req   : mem_req;
-  assign aud_mwrite    = QUUX ? br_write : mem_write;
-  assign aud_done      = QUUX ? br_done  : mem_done;
-  assign aud_addr      = QUUX ? br_addr  : mem_addr;
-  assign aud_wdata     = QUUX ? br_wdata : mem_wdata[31:0];
-  assign aud_read_ack  = QUUX ? br_rack_q : port_read_ack;
-  assign aud_write_ack = QUUX ? br_wack_q : port_write_ack;
-  logic unused_port_acks;
-  assign unused_port_acks = QUUX && ^{port_read_ack, port_write_ack, cache_hits, cache_misses};
 
   cadr_bus_audit audit (
       .clk         (clk),
@@ -1880,13 +1131,13 @@ module cadr_machine #(
       .cycle_write (aud_write),
       .cycle_memory(aud_memory),
       .cycle_phys  (aud_phys),
-      .mem_req     (aud_req),
-      .mem_write   (aud_mwrite),
-      .mem_done    (aud_done),
-      .mem_addr    (aud_addr),
-      .mem_wdata   (aud_wdata),
-      .port_read_ack (aud_read_ack),
-      .port_write_ack(aud_write_ack),
+      .mem_req     (mem_req),
+      .mem_write   (mem_write),
+      .mem_done    (mem_done),
+      .mem_addr    (mem_addr),
+      .mem_wdata   (mem_wdata),
+      .port_read_ack (port_read_ack),
+      .port_write_ack(port_write_ack),
       .boundary    (clock_edge),
       .vma         (vma[31:0]),
       .md          (md[31:0]),

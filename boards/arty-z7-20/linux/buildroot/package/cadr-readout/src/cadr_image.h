@@ -46,36 +46,29 @@
 // units of this size, sixteen a megaword (`ro_main_amount`).
 #define IMG_BOARD_WORDS 65536u
 
-// **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX`):
-// words of 40 bits --- A, M, the PDL buffer, Q, VMA, MD, L and main memory
-// --- read out whole, the tag in <39:32>; a dispatch memory of 4,096
-// entries; a level-1 map of 8,192 seven-bit entries and a level-2 map of
-// 4,096 28-bit ones; the location counter 30 bits; and the fixnum overflow
-// flag, the flag word's <35>.  `img_alloc_revision` sizes the arrays by
-// these, and the largest of each is what the arrays are declared for.
+// **QUUX'S WORDS AND ARRAYS** (muir's `Geometry`): words of 40 bits --- A,
+// M, the PDL buffer, Q, VMA, MD and main memory --- read out whole, the tag in
+// <39:32>; a dispatch memory of 4,096 entries; and the level-1 map's 8,192
+// entries and the level-2 map's 4,096 that its checkpoint carries, though
+// the machine has no map levels.  The names are those of the revision that
+// brought them, 13.  `img_alloc_revision` sizes the arrays by these, and the
+// largest of each is what the arrays are declared for.
 #define IMG_DMEM_WORDS_13 4096u
 #define IMG_L1_WORDS_13   8192u
 #define IMG_L2_WORDS_13   4096u
 #define IMG_WORD_BITS_13  40u
-// **WHICH REVISION**: the register table's entry 21, QUUX's signature over K
-// and L, carries MACHINE-ID's <15:0> in its own <15:0> on revision 13, 0x00D4
-// (`cadr_machine.sv`'s MACHINE_ID, revision 13 in <11:4>, the processor type
-// 4 in <3:0>); revision 12's bitstreams, retired, answered 0 there.  **The
-// fabric's side of this is not built yet**: it is what this program asks of it.
-#define IMG_QUUX_ID_13    0x00D4u
-// Revision 14's (contract G3 revision 14, appendix A14), 0x00E4: revision 13's
-// words, sizes and packed storage, no map levels, and the memory system's
-// words in the register table's entries 41 to 45 (A14.14).
-#define IMG_QUUX_ID_14    0x00E4u
-// Revision 15's (contract G3 revision 15, A15b.13), 0x00F4: the pipelined
-// core (`quux15_core.sv`) behind its own console face (`quux15_face.sv`),
-// revision 14's words, sizes and packed storage, the control store at 64
-// bits, and a register table of its own (`img_rg15`).  Entry 21's <31:24>
-// is the clock's period in units of 0.5 ns, not K, and <23:16> is 0.
-#define IMG_QUUX_ID_15    0x00F4u
-// Revision 16's (QUUX's Ethernet contract, section 10), 0x0104: revision 15's
-// core and words with the Ethernet device, whose state the devices' readout
-// gives from `IMG_DV15_ETH`.
+// **WHICH REVISION**: the register table's entry 21, QUUX's signature over the
+// clock's period, carries MACHINE-ID's <15:0> in its own <15:0>: the revision
+// in <11:4> over the processor type, 4, in <3:0>; revision 12's bitstreams,
+// retired, answered 0 there.  This program reads QUUX at revision 16, 0x0104
+// (QUUX's Ethernet contract, section 10): the pipelined core
+// (`quux15_core.sv`) behind its own console face (`quux15_face.sv`), the
+// control store at 64 bits, a register table of its own (`img_rg15`) and the
+// Ethernet device, whose state the devices' readout gives from
+// `IMG_DV15_ETH`.  Entry 21's <31:24> is the clock's period in units of
+// 0.5 ns, and <23:16> is 0.  An older revision is read only to be named.
+#define IMG_QUUX_ID_TYPE  4u
+#define IMG_QUUX_REVISION 16
 #define IMG_QUUX_ID_16    0x0104u
 
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
@@ -104,104 +97,39 @@ enum img_sel {
 
 // --- QUUX'S OWN, which the CADR's bitstream answers `RO_NO_MEMORY` at.
 //
-// The register table's entries 21 to 28, `cadr_microcycle.sv`'s `RG_QUUX_*`:
-// which machine this is, and the processor's clocks.  Entry 21 is QUUX's
-// signature over K and L, the microcycle the bitstream was built at; 22 the
-// microsecond clock; 23 + k interval timer k's count and 26 + k its
-// interrupt enable, mode and period (revision 10, contract Q11).
-enum img_quux_reg {
-	IMG_RG_QUUX_ID = 21, IMG_RG_QUUX_TIME = 22, IMG_RG_QUUX_COUNT = 23,
-	IMG_RG_QUUX_CONF = 26,
-	// Revision 12's fused return (contract H8a), `RG_QUUX_MACRO` and on:
-	// the MACRO-DISPATCH register; the memory's index; the base copies,
-	// `M-AP`'s in 27:14 and `A-LOCALP`'s in 13:0; what a fused return armed
-	// (`<8>` the operand address, `<7>` ARG, `<5:0>` delta, `<9>` M 31's
-	// word, `<10>` A 31 reading M 31's register); M 31's armed word; the
-	// fused returns, the operand addresses loaded and the prefetched words
-	// taken, counted; and the cache-only prefetch as the processor sees it:
-	// `<24>` held and its virtual word address, its physical word address,
-	// the word, and a fetch yet to be answered, `<24>` and its address.
-	IMG_RG_QUUX_MACRO = 29, IMG_RG_QUUX_MACRO_IX = 30, IMG_RG_QUUX_BASES = 31,
-	IMG_RG_QUUX_ARMED = 32, IMG_RG_QUUX_M31_W = 33, IMG_RG_QUUX_FUSED_N = 34,
-	IMG_RG_QUUX_OPR_N = 35, IMG_RG_QUUX_PF_N = 36, IMG_RG_QUUX_PF = 37,
-	IMG_RG_QUUX_PF_PHYS = 38, IMG_RG_QUUX_PF_WORD = 39, IMG_RG_QUUX_PF_FETCH = 40,
-	// Revision 14's memory system (A14.9, A14.14): `<18>` word 221's
-	// ephemeral-reference enable over word 220, the directory base, in
-	// `<17:0>`; words 222 and 223, the pointer-type register; word 224, the
-	// refused write-backs; and the redirect's copies, the head's 14 bits
-	// in `<45:32>` over the base's 32.
-	IMG_RG_QUUX_MS = 41, IMG_RG_QUUX_TYPES0 = 42, IMG_RG_QUUX_TYPES1 = 43,
-	IMG_RG_QUUX_REFUSED = 44, IMG_RG_QUUX_COPIES = 45
-};
+// The register table's entry 21: QUUX's signature over the clock's period
+// and MACHINE-ID's <15:0> (`IMG_RG15_ID`, below), where the CADR's
+// bitstream answers `RO_NO_MEMORY`.
+enum img_quux_reg { IMG_RG_QUUX_ID = 21 };
 #define IMG_QUUX_TIMERS 3
 #define IMG_QUUX_MARK 0x5155u
-// Selector 12, `cadr_machine.sv`'s register page readout: the keyboard and
-// mouse, block-disk, the page's bus errors and the video controller's black-on-white, the
-// file device's rings, indexes and flags (revision 9), and the keyboard
-// FIFO's words at 64 + their index.
-enum img_quux_page {
-	IMG_QP_INPUT = 0, IMG_QP_CMD = 1, IMG_QP_CLP = 2, IMG_QP_DA = 3,
-	IMG_QP_LMA = 4, IMG_QP_DISK = 5, IMG_QP_PAGE = 6,
-	IMG_QP_FD_BASES = 7, IMG_QP_FD_INDEXES = 8, IMG_QP_FD_FLAGS = 9,
-	// Revision 13's ring bases are 28 bits and two no longer fit one
-	// word: word 7 holds the command ring's in <27:0>, and word 10 the
-	// response ring's (contract G2 §4.3, appendix A1.10).  The fabric's
-	// side is not built yet.
-	IMG_QP_FD_RESP_BASE_13 = 10,
-	IMG_QP_FIFO = 64
-};
 
-// One of QUUX's three interval timers as its two words read, and the tick
-// of muir's clock (ticks since power-on) its count was taken at.
-struct quux_timer {
-	int en, sticky, live;
-	unsigned pre;		/* ticks left in the microsecond, less one */
-	uint32_t us;		/* microseconds left, counted down to one */
-	uint64_t m;		/* the tick the count was taken at */
-	int one_shot, ie;	/* its mode and its interrupt enable */
-	uint32_t period_us;	/* its period, as last written */
-};
-
-// What a QUUX bitstream says of itself that a CADR's does not.
+// What a QUUX bitstream says of itself that a CADR's does not, as the
+// devices' and the register table's readout give it (`ro_read_quux15`).
 struct quux_state {
-	unsigned k, l;		/* the microcycle: K ticks, and L more for ILONG */
-	// The checkpoint's instant: muir's clock, ticks of MIT's grid since
-	// power-on, off the microsecond clock and its prescaler, unwrapped
-	// against the console's TICKS.
-	uint64_t m;
-	struct quux_timer timer[IMG_QUUX_TIMERS];	/* timers 0, 1 and 2 */
 	// The keyboard and mouse, `QuuxInput`.
 	unsigned head, count;
 	int overflowed, kbd_enable, mouse_changed, mouse_enable;
 	unsigned buttons, x, y;
 	uint32_t fifo[IMG_QUUX_FIFO_WORDS];	/* by index; `count` from `head` */
-	// Block-disk.
-	uint32_t cmd, clp, da, lma;
-	int walking, walked, not_active, past_end, nxm, bad_command, present;
-	int32_t since_done;	/* ticks since the blocks' time ran out */
-	// The page's bus errors, as word 101 reads them, and the video controller's mode.
-	unsigned bus_error;
+	// Block-disk: a transfer in flight, and a pack on unit 0.
+	int walking, present;
+	// The video controller's mode.
 	int bow;
-	// The file device (revision 9), muir's `FileDevice::save`: its four
-	// flags, the rings' bases and sizes and the three indexes; and the
-	// handles open and the host's claim, which a checkpoint is refused on.
-	int fd_enabled, fd_ie, fd_refused, fd_fault, fd_busy;
+	// The file device, muir's `FileDevice::save`: its four flags, the
+	// rings' bases and sizes and the three indexes; and the handles open,
+	// which a checkpoint is refused on.
+	int fd_enabled, fd_ie, fd_refused, fd_fault;
 	unsigned fd_handles;
 	uint32_t fd_cmd_base, fd_cmd_log2, fd_resp_base, fd_resp_log2;
 	uint16_t fd_cmd_prod, fd_cmd_cons, fd_resp_cons;
-	// Revision 12's fused return, muir's `MacroDispatch`, and the prefetch,
-	// `MemoryPort`'s `prefetched` and `fetch_vaddr`; and three counts no
-	// checkpoint carries.
+	// The fused return, muir's `MacroDispatch`.
 	uint32_t macro_reg, macro_index, localp, ap;
 	uint32_t macro_entries[IMG_QUUX_MACRO_ENTRIES];
 	int opr_v, opr_arg, m31_v;
 	unsigned opr_delta;
 	uint64_t m31_w;
-	int pf_v, fetch_v;
-	uint32_t pf_vaddr, pf_phys, fetch_vaddr;
-	uint64_t pf_word;
-	uint32_t fused_n, opr_n, pf_n;
-	// Revision 14's memory system, muir's `tlb::Words` and `PdlCopies`.
+	// The memory system, muir's `tlb::Words` and `PdlCopies`.
 	uint32_t directory, refused, pdl_base;
 	int ephemeral;
 	uint64_t pointer_types;
@@ -244,10 +172,10 @@ struct cadr_audit {
 	unsigned port_reads, port_writes;
 };
 
-// --- REVISION 15'S WINDOW, `quux15_core.sv`'s readout ------------------
+// --- QUUX'S WINDOW, `quux15_core.sv`'s readout --------------------------
 //
 // The selectors are the console's (`img_sel`) for the memories, the control
-// store's 64 bits whole; the register table at selector 10 is revision 15's
+// store's 64 bits whole; the register table at selector 10 is QUUX's
 // own (`img_rg15`); selector 12 is the devices' (`img_dv15`), selector 14 the
 // halted pipeline's (`save_15`'s fields, `img_tl15`), and a write of
 // selector 15 takes the devices' snapshot, the instant and the timers, which
@@ -309,7 +237,7 @@ enum img_tl15 {
 	IMG_TL15_COUNT = 24
 };
 
-// What revision 15's window says that the others' do not.
+// What QUUX's window says that the CADR's does not.
 struct quux15_state {
 	unsigned period;		/* entry 21's <31:24>: units of 0.5 ns */
 	uint64_t lc;			/* <33:0> and <40> NEED-FETCH */
@@ -363,15 +291,13 @@ enum img_flag {
 	IMG_F_MBUSY_SYNC, IMG_F_RD_IN_PROGRESS, IMG_F_WMAPD, IMG_F_SPUSHD,
 	IMG_F_DESTSPCD, IMG_F_IMODD, IMG_F_VMAOK, IMG_F_MD_PENDING,
 	IMG_F_RUN, IMG_F_ERRSTOP, IMG_F_STATHENB,
-	// QUUX's memory port idle and its write buffer empty (contract Q6: a
-	// halt drains the buffer before anything outside the machine reads
-	// main memory).  Zero on the CADR, which has no buffer.
+	// Three bits the register table carried for the QUUX that shared the
+	// CADR's datapath: its memory port drained (contract Q6), a `MEMSTART`
+	// that was the stream's fetch (muir's `Rtl::memstart_fetch`) and its
+	// fixnum overflow flag.  Zero on the CADR; QUUX's pipeline has its own
+	// table (`img_rg15`).
 	IMG_F_MEM_DRAINED,
-	// QUUX's `MEMSTART` cycle is the stream's instruction fetch (revision
-	// 12's prefetch, muir's `Rtl::memstart_fetch`).  Zero on the CADR.
 	IMG_F_MEMSTART_FETCH,
-	// Revision 13's fixnum overflow flag, muir's `Machine::overflow`
-	// (appendix A1.3).  Zero on every other machine.
 	IMG_F_OVERFLOW
 };
 
@@ -379,11 +305,11 @@ struct cadr_image {
 	// --- what the readout window gives
 	uint64_t *prom;			/* IMG_PROM_WORDS, 48 bits each */
 	uint64_t *imem;			/* IMG_IMEM_WORDS, 48 bits each */
-	uint64_t *amem, *mmem, *pdl;	/* words: 32 bits, 40 on revision 13 */
+	uint64_t *amem, *mmem, *pdl;	/* words: 32 bits, 40 on QUUX */
 	uint32_t *spc;			/* 19 bits */
 	uint32_t *dmem;			/* 17 bits, `dmem_words` of them */
-	uint32_t *l1_map;		/* 5 bits, 6 on QUUX, 7 on revision 13 */
-	uint32_t *l2_map;		/* 24 bits, 28 on revision 13 */
+	uint32_t *l1_map;		/* 5 bits; none on QUUX, written zero */
+	uint32_t *l2_map;		/* 24 bits; none on QUUX, written zero */
 	uint16_t opcs[IMG_OPCS];	/* 14 bits, newest first */
 
 	// --- the register table
@@ -391,7 +317,6 @@ struct cadr_image {
 	uint64_t ir, iwr;
 	uint64_t l, q, vma, md, md_held;	/* words */
 	uint32_t st, lc, lvmo, phys_r;
-	uint8_t lc_hi;			/* revision 14's LC<33:32>, 0 before it */
 	uint8_t spcptr;
 	uint8_t speed, speed_a, mode_speed;
 	uint64_t flags;
@@ -404,9 +329,9 @@ struct cadr_image {
 	// --- Linux maps them at `cadr_ddr_map.sv`'s bases.  They are here so
 	// --- that a reader of this struct is not left wondering where they
 	// --- went, and `cadr-readout` does not fill them.
-	uint32_t *main;		/* boards * IMG_BOARD_WORDS; NULL on revision 13 */
+	uint32_t *main;		/* boards * IMG_BOARD_WORDS; NULL on QUUX */
 	unsigned boards;	/* the CADR's boards, or QUUX's amount in 64K-word units */
-	// --- revision 13's main memory is packed storage, 5 bytes a word
+	// --- QUUX's main memory is packed storage, 5 bytes a word
 	// --- (G1 4.1), and is NOT copied: `main13` is the bytes where they
 	// --- are --- on a board the DDR mapping itself, 160 MB at 32M words,
 	// --- which a copy beside a body of the same size would not leave room
@@ -422,16 +347,13 @@ struct cadr_image {
 	// --- muir's `tv::Tv::color_map` is part of the machine.
 	uint8_t tv_map[IMG_MAP_COLORS][IMG_MAP_CHANNELS];
 
-	// --- which machine, and the arrays' sizes on it: the CADR's, or on
-	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and the video controller's buffer;
-	// --- on revision 13 (`rev13`) the dispatch memory's 4,096, level 1's
-	// --- 8,192 and level 2's 4,096, and words of 40 bits.
-	// --- revision 14 (`rev14`) is revision 13's in all of these, `rev13`
-	// --- set too, but has no map levels: both are written zero and not read.
-	// --- revision 15 (`rev15`) is revision 14's in all of these, `rev13`
-	// --- and `rev14` set too; its own state is `q15`.
-	// `rev16` is revision 16's, which is revision 15's with the Ethernet
-	// device: `rev15` is set beside it.
+	// --- which machine, and the arrays' sizes on it: the CADR's, or
+	// --- QUUX's, the PDL buffer's 16K, the dispatch memory's 4,096, level
+	// --- 1's 8,192 and level 2's 4,096, written zero and never read, the
+	// --- video controller's buffer, and words of 40 bits; its own state is
+	// --- `q15`.  QUUX is revision 16, and the four flags, named for the
+	// --- revisions that brought what they select, are all set on it and
+	// --- all clear on the CADR.
 	int quux, rev13, rev14, rev15, rev16;
 	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
 	// --- QUUX's video controller's size, the bitstream's (console word
@@ -439,15 +361,14 @@ struct cadr_image {
 	// --- CADR.
 	unsigned video_width, video_height;
 	struct quux_state qx;	/* QUUX's alone; zero on the CADR */
-	struct quux15_state q15;	/* revision 15's alone */
+	struct quux15_state q15;	/* QUUX's window's */
 };
 
 // The CADR's machine.
 int img_alloc(struct cadr_image *img, unsigned boards);
-// Either machine's: `quux` non-zero is QUUX at `revision`, 13 to 16, with
-// revision 13's arrays at its sizes and no main memory, which is `main13`'s
-// to point at; QUUX at any other revision, revision 12 among them, retired,
-// is refused, -1.
+// Either machine's: `quux` non-zero is QUUX at `revision`, which must be
+// `IMG_QUUX_REVISION`, with its arrays at its sizes and no main memory, which
+// is `main13`'s to point at; QUUX at any other revision is refused, -1.
 int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision);
 // And with QUUX's video controller at `width` by `height`, which a QUUX
 // bitstream says on its console (`ro_video`); the two above take 1280 by

@@ -946,8 +946,7 @@ board's netlist answer, since every frame on the seam is past its destination
 word. It has two limits. A clear or Reset between the far end's commit and the
 first word on the seam comes before the stream, and the frame is taken whole;
 and what a read round the buffer shows of a dropped stream's words is held by
-nothing. Revision 15's Chaosnet interface carries the same rule
-(`rtl/machine/cadr_io_board.sv`, `rtl/machine/quux15_chaos.sv`). A busy
+nothing (`rtl/machine/cadr_io_board.sv`). A busy
 receiver here also does not abort the sender, because there is no sender on
 this side of the seam to abort: the retry that AIM-628 gives the sending
 interface is carried by the Linux program instead.

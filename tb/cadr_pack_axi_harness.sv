@@ -287,14 +287,6 @@ module cadr_pack_axi_harness #(
   logic [15:0] chaos_tx_word, chaos_csr;
   logic [11:0] chaos_bits;
 
-  // QUUX's line fill and its port's idle (contract Q6): the CADR this
-  // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained, h_mem_wide;
-  logic [2:0] h_mem_beats;
-  // QUUX's host side's word, read by nobody here.
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic [31:0] h9_host_rdata;
-  /* verilator lint_on UNUSEDSIGNAL */
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -389,7 +381,6 @@ module cadr_pack_axi_harness #(
       // registered as `boards/arty-z7-20/cadr_arty.sv` registers them.
       .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r_bus), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -404,10 +395,7 @@ module cadr_pack_axi_harness #(
       .ub_rdata_o(ub_rdata), .n_loadmd_o(n_loadmd), .rdcyc_o(rdcyc),
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
-      // QUUX's host side of revision 9: idle, as a board with no Linux leaves it.
-      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd0),
-      .host_rdata(h9_host_rdata)
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
 
   // THE PACK SIDE.  Reset is `rst` rather than `cadr_arty.sv`'s synchronized
@@ -499,7 +487,7 @@ module cadr_pack_axi_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, disp_color_map_q,
                     ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
                     ser_status, ser_syn_face,
                     chaos_tx_go, chaos_tx_len, chaos_tx_valid,

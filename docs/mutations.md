@@ -202,10 +202,10 @@ the RTL of a copy, then built through the board's real flow. Three have been:
 | `pdla = pdla_read`, the tool's fault written in the RTL | stopped after synthesis: the PDL buffer, 16 of 16 block RAMs | refused after synthesis: the PDL buffer, 512 of 512 blocks |
 | `chb_port = ch_word`, the block-disk store's mux dropped | stopped after synthesis: the block store, 8 of 8 block RAMs; the PDL buffer and the control store pass | refused after synthesis: the block store, 96 of 96 blocks; the PDL buffer and the control store pass |
 
-The second is also a record in `mutations/list.txt`,
+The second was also a record in `mutations/list.txt`,
 `quux-the-pdl-write-lands-at-the-read-address`, written with the select held
 low by a constant so that lint still sees every signal read. In RTL it is a
-behavior, and `quux13_features_quux` catches it.
+behavior, and `quux13_features_quux` caught it, while revision 13 was built.
 
 The second fault was a block RAM enabled while its address was still
 moving. QUUX's control store is read at the edge, at NPC, whose cone the

@@ -90,25 +90,19 @@
 // boot word halts the machine and then boots it, as the console's RUN and
 // `-BOOT` do (`kbd_boot`).
 //
-// **THE NETWORK** (contracts Q4 and Q13): the Chaosnet interface's words
-// 140-147 in `quux15_chaos.sv`, through `quux15_devices.sv`, the cable's
-// seam out (`chaos_*`), which `cadr_chaos_cable.sv` takes on a board; its
-// interrupt is word 100's `<6>`.  Revision 15 only: revision 16 has no
-// Chaosnet interface (QUUX's Ethernet contract, section 8 R4), its 140-157
-// are reserved and never reused, `<6>` is never set, and the seam's outputs
-// are 0.
-//
-// **REVISION 16** (QUUX's Ethernet contract, §10): MACHINE-ID's revision
-// field 16, which `ETHERNET` below is taken from, and feature word 15 reading
-// 7; the Ethernet device's words 240-257 and word 100's `<8>` in
-// `quux16_ethernet.sv`, through `quux15_devices.sv`, its host's side out
-// (`eth_*`), which `quux_ed_face.sv` takes on a board; the writes of 244 and
-// 250 held, as CMD_PROD's is, until every write before them is answered
-// (§2.5), one held write at a time, a second of the same word replacing
-// the first and one of another word waiting behind it (muir's
-// `register_write_now`); and the cache swept when RX_CONS lands, as at a
-// file device completion; and no Chaosnet interface (THE NETWORK, above).
-// Everything else is revision 15's.
+// **THE NETWORK** (QUUX's Ethernet contract): no Chaosnet interface
+// (section 8 R4); its 140-157 are reserved and never reused, and word 100's
+// `<6>` is never set.  The network is the Ethernet device (§10): MACHINE-ID's
+// revision field 16 and feature word 15 reading 7; the device's words
+// 240-257 and word 100's `<8>` in `quux16_ethernet.sv`, through
+// `quux15_devices.sv`, its host's side out (`eth_*`), which
+// `quux_ed_face.sv` takes on a board; the writes of 244 and 250 held, as
+// CMD_PROD's is, until every write before them is answered (§2.5), one held
+// write at a time, a second of the same word replacing the first and one of
+// another word waiting behind it (muir's `register_write_now`); and the cache
+// swept when RX_CONS lands, as at a file device completion.  Revision 16 is
+// revision 15 with that device and without the Chaosnet interface; the
+// pipeline and everything else here is revision 15's (contract G3).
 //
 // **WHAT IS NOT BUILT** --- a word that writes the PDL buffer and fetches
 // inside it in one clock, which would want the RAM's second port twice ---
@@ -120,9 +114,8 @@
 module quux15_core #(
     // The PROM image, a 64-bit word a line (`quux15_store.sv`).
     parameter string PROM_HEX = "",
-    // MACHINE-ID, functional source 16: `0x5155`, revision 15, processor 4;
-    // revision 16's, `{16'h5155, 12'd16, 4'd4}`, builds the Ethernet device.
-    parameter logic [31:0] MACHINE_ID = {16'h5155, 12'd15, 4'd4},
+    // MACHINE-ID, functional source 16: `0x5155`, revision 16, processor 4.
+    parameter logic [31:0] MACHINE_ID = {16'h5155, 12'd16, 4'd4},
     // Main memory's words: QUUX's 32 boards, 2M words.
     parameter int unsigned MAIN_WORDS = 32'h0020_0000,
     // The cache's words (`quux15_port.sv`): 4,096 sets of two 8-word lines.
@@ -253,11 +246,10 @@ module quux15_core #(
     input  var logic [31:0] host_wdata,
     input  var logic [3:0]  host_ridx,
     output var logic [31:0] host_rdata,
-    // Revision 16's Ethernet device's host (`quux16_ethernet.sv`): its side
-    // by index, `quux_ed_face.sv`'s, one write and one read a clock, a
-    // read's word the clock after its index; and 244 and 250 as the clock
-    // leaves them, what the host's side reads.  Below revision 16 the reads
-    // are 0 and the writes go nowhere.
+    // The Ethernet device's host (`quux16_ethernet.sv`): its side by index,
+    // `quux_ed_face.sv`'s, one write and one read a clock, a read's word the
+    // clock after its index; and 244 and 250 as the clock leaves them, what
+    // the host's side reads.
     input  var logic        eth_we,
     input  var logic [4:0]  eth_widx,
     input  var logic [31:0] eth_wdata,
@@ -272,32 +264,6 @@ module quux15_core #(
     input  var logic [23:0] kbd_code,
     input  var logic [6:0]  mouse_lines,
     output var logic        kbd_busy,
-    // The Chaosnet interface's cable (`quux15_chaos.sv`), the seam
-    // `cadr_chaos_cable.sv` takes: the address switches; START's frame out
-    // a word a clock; a frame in a word a clock and committed; the far
-    // end's word that the frame is away, that one was lost, that the cable
-    // is busy.
-    input  var logic [15:0] chaos_address,
-    output var logic        chaos_tx_go,
-    output var logic [8:0]  chaos_tx_len,
-    output var logic        chaos_tx_valid,
-    output var logic [15:0] chaos_tx_word,
-    output var logic        chaos_tx_clear,
-    output var logic        chaos_reset,
-    output var logic [15:0] chaos_csr,
-    input  var logic        chaos_rx_valid,
-    input  var logic [15:0] chaos_rx_word,
-    input  var logic        chaos_rx_done,
-    input  var logic [12:0] chaos_rx_bits,
-    input  var logic        chaos_rx_crc,
-    input  var logic        chaos_rx_lost,
-    input  var logic        chaos_tx_done,
-    input  var logic        chaos_tx_abort,
-    input  var logic        chaos_cbl_busy,
-    input  var logic        chaos_rx_start,
-    input  var logic [11:0] chaos_rx_stored,
-    input  var logic        chaos_rx_store,
-    output var logic [11:0] chaos_bits,
     // The master's declared constants inside r and w (A15b.5), which
     // the testbench's responder subtracts from the port's clocks.
     output var logic        axi_one_write_id,
@@ -1650,27 +1616,27 @@ module quux15_core #(
   // and the height in <15:0>, and one bit a pixel in <31:16> with the
   // words a line in <15:0> (muir's `Geometry::feature_word`).
   // Word 0 is MACHINE-ID; word 15 the optional devices, `<0>` the real-time
-  // clock, `<1>` the file device and on revision 16 `<2>` the Ethernet
-  // device.
-  localparam bit ETHERNET = MACHINE_ID[15:4] >= 12'd16;
+  // clock, `<1>` the file device and `<2>` the Ethernet device.
+  if (MACHINE_ID[31:16] != 16'h5155 || MACHINE_ID[15:4] != 12'd16 || MACHINE_ID[3:0] != 4'd4) begin : g_bad_id
+    $error("quux15_core: MACHINE_ID is %h; QUUX is revision 16, 51550104", MACHINE_ID);
+  end
   localparam logic [31:0] FEATURES [0:15] = '{
       MACHINE_ID, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
       32'h1, {16'(VIDEO_W), 16'(VIDEO_H)}, {16'd1, 16'(VIDEO_W / 32)}, 32'he0000000, 32'h1,
-      {29'd0, ETHERNET, 2'b11}, 32'h3, 32'h400};
+      32'h7, 32'h3, 32'h400};
   // The register-page words whose write waits for every write before it:
-  // CMD_PROD, and on revision 16 244 and 250 (muir's `waits_for_writes`).
+  // CMD_PROD, 244 and 250 (muir's `waits_for_writes`).
   function automatic logic held_word(input logic [7:0] k);
-    return k == 8'o164 || (ETHERNET && (k == 8'o244 || k == 8'o250));
+    return k == 8'o164 || k == 8'o244 || k == 8'o250;
   endfunction
   logic [31:0] posted_now;
-  // The words `quux15_devices.sv` answers, a clock after the grant.  On
-  // revision 16 140-147 are not among them: reserved, a constant 0 that
-  // takes no write, as 150-157 are (QUUX's Ethernet contract, section 8 R4).
+  // The words `quux15_devices.sv` answers, a clock after the grant.  140-147
+  // are not among them: reserved, a constant 0 that takes no write, as
+  // 150-157 are (QUUX's Ethernet contract, section 8 R4).
   function automatic logic dev_word(input logic [7:0] k);
     return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
         || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171)
-        || (k >= 8'o120 && k <= 8'o123) || (!ETHERNET && k >= 8'o140 && k <= 8'o147)
-        || (ETHERNET && k >= 8'o240 && k <= 8'o257);
+        || (k >= 8'o120 && k <= 8'o123) || (k >= 8'o240 && k <= 8'o257);
   endfunction
   // The words of the devices not built: none now.
   /* verilator lint_off UNUSEDSIGNAL */
@@ -1721,7 +1687,7 @@ module quux15_core #(
       .d_done(bd_done), .d_rdata(bd_rdata));
   assign obs_transfer = bd_walking || bd_busy;
 
-  quux15_devices #(.MAIN_WORDS(MAIN_WORDS), .ETHERNET(ETHERNET)) devices (
+  quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
       .clk(clk), .rst(core_rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
       .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_k(cprod_k), .prod_data(cprod_word),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
@@ -1742,14 +1708,6 @@ module quux15_core #(
       .bd_flight(bd_walking || bd_busy),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
       .kbd_boot(kbd_boot), .kbd_busy(kbd_busy),
-      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
-      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
-      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
-      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word), .chaos_rx_done(chaos_rx_done),
-      .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
-      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
-      .chaos_cbl_busy(chaos_cbl_busy), .chaos_rx_start(chaos_rx_start),
-      .chaos_rx_stored(chaos_rx_stored), .chaos_rx_store(chaos_rx_store), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(rm_snap), .ro_k(rm_addr_q[6:0]), .ro_dev(ro_dev), .bow(bow));
 

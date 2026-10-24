@@ -9,7 +9,7 @@
 #     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
 #     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 #     BIT=<the fabric's core.rbf> boards/arty-z7-20/linux/mksd-buildroot.sh
-#     REVISION=13 BIT=<QUUX revision 13's bitstream> ... boards/arty-z7-20/linux/mksd-buildroot.sh
+#     REVISION=13 BIT=<QUUX's bitstream, revision 16> ... boards/arty-z7-20/linux/mksd-buildroot.sh
 #
 # The sibling of boards/arty-z7-20/linux/mksd.sh, which stages the stepping stone from
 # Digilent's BSP and is left as it is.  This one takes what `make buildroot`
@@ -304,14 +304,16 @@ loader_env() {
   esac
 }
 # **A CARD CARRIES ONE MACHINE, AND ITS TREES GO WITH ITS BITSTREAM.**  The
-# CADR's device tree reserves the CADR's region; QUUX revision 13's reserves
-# its own region (docs/linux.md, "Each machine's
-# reservation").  The kernel's tree is fetched from the folder the bitstream is
-# fetched from, under the board tree's own name, so REVISION=13 stages
-# revision 13's tree under that name beside revision 13's bitstream, and
-# revision 13's loader, whose own tree is revision 13's too, under the loader's
-# name.  Nothing can ask the fabric which machine it is, so the pairing is this
-# script's: BIT is revision 13's when REVISION=13 says so.
+# CADR's device tree reserves the CADR's region; QUUX's reserves its own
+# region (docs/linux.md, "Each machine's reservation").  `REVISION=13` is the
+# setting that selects QUUX's card, named for the revision its trees and
+# loader were first made for (the `quux13` files); the card carries QUUX
+# revision 16.  The kernel's tree is fetched from the folder the bitstream is
+# fetched from, under the board tree's own name, so REVISION=13 stages QUUX's
+# tree under that name beside QUUX's bitstream, and QUUX's loader, whose own
+# tree is QUUX's too, under the loader's name.  Nothing can ask the fabric
+# which machine it is, so the pairing is this script's: BIT is QUUX's when
+# REVISION=13 says so.
 die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 REVISION=${REVISION:-}
 TREE_IMAGE=$BOARD_DTB
@@ -330,8 +332,8 @@ case "$REVISION" in
         RESERVED=quux13@a0000000
         ;;
       # The Kria KR260's loader is the factory U-Boot in its flash, which
-      # runs boot.scr and reads no tree of ours, so revision 13 changes only
-      # the kernel's tree: post-image.sh's revision 13 tree, staged under the
+      # runs boot.scr and reads no tree of ours, so QUUX's card changes only
+      # the kernel's tree: post-image.sh's QUUX tree, staged under the
       # board tree's name as on the other two.  boot.scr's loads all sit
       # below the region (boards/kria-kr260/linux/buildroot/board/kria-kr260/
       # boot.cmd).
@@ -339,25 +341,25 @@ case "$REVISION" in
         TREE_IMAGE=zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb
         RESERVED=quux13@5a000000
         ;;
-      *) die "REVISION=13 on $BOARD_NAME: QUUX revision 13 runs on the Arty Z7-20, the DE25-Nano and the Kria KR260" ;;
+      *) die "REVISION=13 on $BOARD_NAME: QUUX runs on the Arty Z7-20, the DE25-Nano and the Kria KR260" ;;
     esac
     ;;
-  *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR" ;;
+  *) die "REVISION=$REVISION: it is 13, the setting that selects QUUX's card, or unset for the CADR" ;;
 esac
 # **AND WHICH MACHINE THE BITSTREAM IS, WHICH THE FABRIC CANNOT BE ASKED
 # EITHER.**  MACHINE=quux is a card for a QUUX bitstream: `fpgarc` carries
 # `--machine quux` live, which every init script reads, the README says QUUX
 # and where its disk goes, and the zip is named quux-<board>.zip.  cadr, the
 # default, writes the line commented and names the zip cadr-<board>.zip.
-# Revision 13 is QUUX's, so REVISION=13 makes quux the default and refuses
-# cadr; and QUUX is revision 13, so MACHINE=quux without it is refused:
-# revision 12, whose card it would have been, is retired.
+# REVISION=13 selects QUUX's card, so it makes quux the default and refuses
+# cadr; and MACHINE=quux without it is refused, since nothing else names
+# QUUX's trees and loader.
 MACHINE=${MACHINE:-}
 [ -z "$REVISION" ] || MACHINE=${MACHINE:-quux}
 MACHINE=${MACHINE:-cadr}
 case "$MACHINE" in
   cadr) [ -z "$REVISION" ] || die "REVISION=$REVISION is QUUX's, and MACHINE=cadr" ;;
-  quux) [ -n "$REVISION" ] || die "MACHINE=quux is QUUX revision 13: give REVISION=13 (revision 12 is retired)" ;;
+  quux) [ -n "$REVISION" ] || die "MACHINE=quux: give REVISION=13 too, the setting that selects QUUX's card" ;;
   *) die "MACHINE=$MACHINE: it is cadr or quux" ;;
 esac
 # The board's four files, which the card's folder and the server's directory
@@ -867,12 +869,13 @@ fi  # a QUUX card's tree carries its microcode's error table
 # reader is Notepad.
 # **AND THE SYSTEM A RELEASE CARD IS FOR**, named with its muir-sys release
 # and the two files the user takes from it: the numbered release's, and the
-# rolling release's, whose names never change (docs/boot.md).  A revision 13
-# card is for System 2001, the CADR's for System 1003; `make release` says
-# which, as SYSTEM, and this writes the names from the number.
+# rolling release's, whose names never change (docs/boot.md).  A QUUX card,
+# revision 16, is for System 2002, the CADR's for System 1003; `make release`
+# says which, as SYSTEM, and this writes the names from the number.  The
+# README names the revision the card carries, 16, and not the setting's 13.
 readme_system() {
   if [ "$MACHINE" = quux ]; then
-    _what=disk.vhd.gz; _rolling=latest-quux; _who="QUUX revision $REVISION"
+    _what=disk.vhd.gz; _rolling=latest-quux; _who="QUUX revision 16"
   else
     _what=pack.img.gz; _rolling=latest-cadr; _who="the CADR"
   fi
@@ -1594,8 +1597,8 @@ fi
   # **EACH MACHINE'S OWN FLAG**: the CADR's main memory is boards, QUUX's an
   # amount in whole megawords, and each card names only its own machine's.
   if [ "$MACHINE" = quux ]; then
-    # The most is what the board keeps for revision 13, the DE25-Nano 64MW and
-    # the others 32MW.
+    # The most is the room the board keeps for QUUX's main memory, the
+    # DE25-Nano 64MW and the others 32MW.
     MEM_DEFAULT=32MW
     case "$BOARD_NAME" in de25-nano) MEM_MOST=64MW ;; *) MEM_MOST=32MW ;; esac
     printf "# ================================================= the main memory\r\n"

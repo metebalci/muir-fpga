@@ -108,9 +108,8 @@
 // granted, and nothing outstanding in either direction.
 //
 // **THREE PARAMETERS, AND THEIR DEFAULTS ARE ALL OF THE ABOVE.**  The CADR
-// and QUUX revisions 13 and 14 build this module with its defaults, and
-// everything said so far is what they get.  QUUX revision 15
-// (`quux15_f2sdram_port.sv`) sets the three, because two of the premises
+// builds this module with its defaults, and everything said so far is what it
+// gets.  QUUX (`quux15_f2sdram_port.sv`) sets the three, because two of the premises
 // above are false for its master: it posts up to sixteen word writes with
 // one AXI ID and fills lines of five beats, so the machine's cycles are no
 // longer single beats one at a time; and it has no memory timeout, so the

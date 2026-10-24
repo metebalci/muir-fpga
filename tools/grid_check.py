@@ -63,24 +63,16 @@ reads the registers out of its tree --- every variable a nonblocking
 assignment writes, named as Vivado and Quartus name it --- and holds the
 constraints to them two ways:
 
-  - every register pattern in `cadr_machine.xdc`'s and `quux_machine.xdc`'s
-    `filter [all_registers]` sets and `get_pins -quiet` lists, and every
-    `get_registers` and `get_pins` pattern of `cadr_de25.sdc` and
-    `quux_de25.sdc`, must match a register of one machine or the other (a
-    leaf written as `X` and `X[*]` is one name, matched by either);
+  - every register pattern in `cadr_machine.xdc`'s `filter [all_registers]`
+    sets and `get_pins -quiet` lists, and every `get_registers` and
+    `get_pins` pattern of `cadr_de25.sdc`, must match a register of the
+    machine (a leaf written as `X` and `X[*]` is one name, matched by
+    either);
   - and two instances of one module must be in the relaxed set or out of it
     register by register alike, since what decides it is the register's part
     in the module and not where the module is instantiated.  The Vivado set is
     evaluated from the filter's own text and the Quartus set by running the
     SDC files in `tclsh` with the collection commands stubbed.
-
-**AND REVISION 14'S EVERY-TICK REGISTERS OUT OF BOTH RELAXED SETS.**  The
-machines are elaborated three ways, the CADR and QUUX at revisions 13 and
-14, and every register of revision 14's memory system is classed in
-`REV14_CLASSED` as moving on a tick of its own or as held for the
-microcycle.  A `tick` register in either relaxed set fails, and so does a
-register of `quux_mmu.sv` or `quux_tlb.sv` that is not classed, so one
-added later cannot fall into the set unread.
 
 It does not see the names synthesis gives the block memories (`REF_NAME`,
 `get_keepers`), which the flows' own assertions ask of the fitted design.
@@ -148,7 +140,7 @@ def main():
     print(f"ok: the grid is {fabric} ns in the fabric, the testbenches and "
           f"{count} generator constants in {len(generators)} files, and "
           f"{constraints} constraint counts agree with it; {names} register "
-          f"names in the constraints each match some of the machines' "
+          f"names in the constraints each match some of the machine's "
           f"{regs} registers, and no module's instances are split by the "
           f"relaxed set")
 
@@ -256,47 +248,17 @@ def check_timing_model(root):
 
 # A statement that writes a count of ticks: a multicycle's setup or hold, or
 # one of the flows' two assertions, possibly inside a one-line `if`.
-# A count is a number, or, in the Arty's files, K written from the flow's
-# `sync_k`: `$sync_k` or `[expr {$sync_k - n}]` (`SYNC_EXPR`).
-COUNT = r"(\d+|\$sync_k|\[expr\s*\{\s*\$sync_k\s*[+-]\s*\d+\s*\}\])"
+COUNT = r"(\d+)"
 STATEMENT = re.compile(
     r"^\s*(?:if\s*\{[^}]*\}\s*\{\s*)?"
     r"(?:set_multicycle_path\s+-(setup|hold)\s+" + COUNT +
-    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing"
-    r"|assert_pin_timing|assert_through_timing)\s+\$tick\s+" + COUNT + ")")
-SYNC_EXPR = re.compile(r"^\[expr\s*\{\s*\$sync_k\s*([+-])\s*(\d+)\s*\}\]$")
+    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing)"
+    r"\s+\$tick\s+" + COUNT + ")")
 TAG = re.compile(
     r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*(\d+)\s*ticks?)?"
     r"(?:\s*\(shared with\s+([\d\s,and]+?)\s*ns\))?"
-    r"|(board ticks)"
-    r"|sync:\s*K(?:\s*([+-])\s*(\d+))?)\s*$")
+    r"|(board ticks))\s*$")
 
-# **QUUX'S MICROCYCLE, K TICKS, IS A BOARD'S AND NOT THE GRID'S** (H1a).  A
-# count of QUUX's is tagged `# sync: K`, or `# sync: K - 1` and the like.  On
-# the DE25-Nano it is a number, held to the SYNC_K of the board whose
-# constraints the file is: the default of that parameter in the board's top
-# level, which is what its bitstream is built at.  **ON THE ARTY Z7-20 THE K
-# IS THE FLOW'S**, revision 13's five (`SYNC_K13`), so there a count of K is
-# never a number: it is written from the flow's `sync_k`
-# (`vivado/tick.tcl`), `$sync_k` or `[expr {$sync_k - n}]`, and held here to
-# its tag, a hold one tick less; `build/machine_param.pass` holds the flow's
-# `sync_k` to the machine.  The Kria KR260's flow builds revision 13 from the same
-# `quux_machine.xdc` and reads its K from its own top level (`SYNC_K13`) the
-# same way, so its flow's counts are written from `sync_k` too.  A file that
-# is no board's may not use the tag.
-SYNC_BY_REVISION = ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/", "boards/kria-kr260/")
-SYNC_BOARDS = [
-    ("boards/de25-nano/", "boards/de25-nano/cadr_de25.sv"),
-]
-
-
-def board_sync_k(root, rel):
-    for prefix, top in SYNC_BOARDS:
-        if rel.startswith(prefix):
-            return one(root / top,
-                       r"^\s*parameter\s+int\s+unsigned\s+SYNC_K\s*=\s*(\d+)\s*,?\s*$",
-                       "the board's SYNC_K"), top
-    return None, None
 # A tag's groups: 1 the nanoseconds, 2 and 3 the sign and the number of
 # fabric ticks either side of them, 4 the instants it shares a count with,
 # 5 `board ticks`.
@@ -342,49 +304,7 @@ def check_constraints(root, grid):
             t = tags[0]
             kind = m.group(1) or m.group(3)
             text = m.group(2) or m.group(4)
-            is_sync = t.group(0).split("#", 1)[1].strip().startswith("sync:")
-            rel = str(path.relative_to(root))
-            if not text.isdigit():
-                # K written from `sync_k`: only under a `# sync:` tag, only in
-                # the Arty's files, and saying the tag's offset.
-                if not is_sync:
-                    fail(f"{where}: `{text}` is a count of K under a tag that is not `# sync:`")
-                if not rel.startswith(SYNC_BY_REVISION):
-                    fail(f"{where}: `{text}` in a file that is not the Arty's, whose K the "
-                         f"flow does not set")
-                e = SYNC_EXPR.match(text)
-                got = 0 if text == "$sync_k" else (int(e.group(2)) if e.group(1) == "+"
-                                                   else -int(e.group(2)))
-                off = int(t.group(7)) if t.group(6) else 0
-                tag_off = off if t.group(6) == "+" else -off
-                said = "K" + (f" {t.group(6)} {off}" if t.group(6) else "")
-                want = tag_off - 1 if kind == "hold" else tag_off
-                if got != want:
-                    fail(f"{where}: `{text}` beside {said}: it is K {got:+d}, and wants K "
-                         f"{want:+d}" + (", the hold one less" if kind == "hold" else ""))
-                found.append((where, kind, None, text, []))
-                continue
             count = int(text)
-            if is_sync and rel.startswith(SYNC_BY_REVISION):
-                fail(f"{where}: {count} ticks for a count of K in the Arty's files, where K is "
-                     f"the revision's: write it from `$sync_k`")
-            if is_sync:
-                k, top = board_sync_k(root, rel)
-                if k is None:
-                    fail(f"{where}: a `# sync:` count in a file that is no board's, so there "
-                         f"is no SYNC_K to hold it to")
-                off = int(t.group(7)) if t.group(6) else 0
-                want = k + (off if t.group(6) == "+" else -off)
-                said = "K" + (f" {t.group(6)} {off}" if t.group(6) else "")
-                if kind == "hold":
-                    if count != want - 1:
-                        fail(f"{where}: a hold of {count} beside {said}, which is {want} ticks "
-                             f"at {top}'s SYNC_K of {k}: the hold is one less, {want - 1}")
-                elif count != want:
-                    fail(f"{where}: {count} ticks for {said}, which is {want} at {top}'s "
-                         f"SYNC_K of {k}")
-                found.append((where, kind, None, count, []))
-                continue
             if t.group(5):
                 found.append((where, kind, None, count, []))
                 continue
@@ -425,95 +345,13 @@ def check_constraints(root, grid):
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TCLSH = os.environ.get("TCLSH", "tclsh")
-# Each machine as a board builds it: the CADR, QUUX at revision 13, and QUUX at
-# revision 14, whose memory system (`quux_mmu.sv`, `quux_tlb.sv`) only that
-# revision elaborates.
-MACHINES = ("cadr", "quux", "quux14")
-GENERICS = {"cadr": ['-GMACHINE="cadr"'],
-            "quux": ['-GMACHINE="quux"', "-GWORD_BITS=40"],
-            "quux14": ['-GMACHINE="quux"', "-GWORD_BITS=40", "-GREVISION=14"]}
-XDC_NAMED = ["rtl/plumbing/xilinx7/cadr_machine.xdc", "rtl/plumbing/xilinx7/quux_machine.xdc",
-             "rtl/plumbing/xilinx7/quux14_machine.xdc"]
-# The SDC files each machine's build reads, in the order `project.tcl` reads them.
-SDC_NAMED = {"cadr": ["boards/de25-nano/quartus/cadr_de25.sdc"],
-             "quux": ["boards/de25-nano/quartus/cadr_de25.sdc",
-                      "boards/de25-nano/quartus/quux_de25.sdc"],
-             "quux14": ["boards/de25-nano/quartus/cadr_de25.sdc",
-                        "boards/de25-nano/quartus/quux_de25.sdc"]}
-
-# **REVISION 14'S REGISTERS, EACH CLASSED BY WHEN IT MOVES** (contract G3
-# revision 14, F2).  The relaxed set is every register of the machine less a
-# list of names, so a register of revision 14 that moves on a tick of its own
-# and is left off that list is relaxed in silence: its paths get the
-# microcycle where the machine gives them one tick, and nothing in a trace
-# can see it.  So every register of the memory system's two modules is
-# classed here, read off the RTL, and a register added to either without a
-# class fails:
-#
-#   - `tick`: moves on a tick of its own, or is read by a register that does,
-#     and must be out of the relaxed set on both families' boards;
-#   - `held`: loaded at an instant the microcycle owns and read only by
-#     registers that keep its time, and may be in it.
-#
-# `quux_mmu.sv`: the generator's ticks (`g1`, `g2`, `since_start`), the hold
-# (`held`, `res_mid`), the walk's and the write-back's countdowns (`until_s`,
-# `b_t`) and the sweep's (`sweep_s`, `sweeping`, `sweep_i`), the walker's and
-# the write-back's machines and what they carry (`wstate`, `w_*`, `wk_*`,
-# `spec_*`, `bstate`, `b_*`, `st1`), the walk's results (`ra*`, `rb*`,
-# `walked_*`, `redirect_held`), the TLB's pending writes (`pa_*`, `pb_*`),
-# the redirect's pending read and its registers for the PDL buffer
-# (`rd_pend`, `redirect_in_q`, `redirect_idx_q`) and the guard's count and
-# its pulse (`refused`, `refuse_now`) all move on whatever tick the side seam
-# answers on, or on every tick.  Held: the register page's words 220-223
-# (`directory`, `ephemeral`, `pointer_types`), written at the page's answer
-# from a word the bus has held for eight ticks, the redirect's copies
-# (`pdl_base`, `pdl_head`), written by A memory's own pulse from `L` as A
-# memory is, and the edge's registers (`e_*`), loaded at an edge alone: the
-# TLB's forwards and the walk's entries the datapath reads, the writes
-# landing at the edge, and the write-back's grant.
-# `quux_tlb.sv`'s memory and its two outputs are the TLB's RAM, in the set
-# and given their own time by the flows (`quux_machine.xdc`,
-# `quux_de25.sdc`).  In `cadr_microcycle.sv`, the redirect's word and its
-# strobe (`redir_rd_q`, `redir_word`), taken a tick after the PDL buffer's
-# read.  And the memory port and its cache, out whole: every register of
-# `quux_mem_port.sv` and `quux_cache.sv` (the walk's countdowns `free_s`,
-# `buf_s`, `g_s`, `wbu_s`, `ack_s`, `ack_last_s`, the release `rel_q`,
-# `rel_pend` and `rel_ok_q`, the write's `s_wpend`, `s_wr_late_q` and `wbw`,
-# and `granted1` among them) out of the set.
-REV14 = "quux14"
-REV14_TICK = "tick"
-REV14_HELD = "held"
-REV14_CLASSED = {
-    "quux_mmu": {
-        **{n: REV14_HELD for n in ("directory", "ephemeral", "pointer_types",
-                                   "pdl_base", "pdl_head",
-                                   "e_fa_v", "e_fb_v", "e_fa_hit", "e_fb_hit", "e_fa_ent", "e_fb_ent",
-                                   "e_bpa_v", "e_bpb_v", "e_bpa", "e_bpb",
-                                   "e_or_v", "e_op_v", "e_or_idx", "e_op_idx", "e_or_w", "e_op_w",
-                                   "e_go", "e_ref", "e_bits", "e_frame")},
-        **{n: REV14_TICK for n in (
-            "g1", "g2", "since_start", "held", "res_mid", "until_s", "b_t",
-            "sweep_s", "sweeping", "sweep_i",
-            "wstate", "w_port", "w_b_queued", "w_va", "w_page_at", "w_first", "w_done",
-            "wk_page_v", "wk_page_at", "wk_page", "spec_v", "spec_port",
-            "bstate", "b_va", "b_ul", "b_frame", "b_bits", "b_page_at", "b_page", "st1",
-            "ra_v", "rb_v", "ra", "rb", "rb_va",
-            "walked_a", "walked_b", "redirect_held",
-            "pa_v", "pb_v", "pa_idx", "pb_idx", "pa_w", "pb_w",
-            "rd_pend", "redirect_in_q", "redirect_idx_q", "refused", "refuse_now",
-            "d_wa", "d_wb", "d_redir", "lv_dok", "lv_gok",
-            "f_v", "f_word", "f_dok", "f_gok", "f_load", "b_rel_n", "w_ua", "wb_rel_now_q")},
-    },
-    "quux_tlb": {n: REV14_HELD for n in ("tlb_mem", "a_q", "b_q")},
-}
-# Registers of modules shared with other revisions, named one by one.
-REV14_NAMED_TICK = {
-    "cadr_microcycle": ("g_quux_pdl.redir_rd_q", "redir_word"),
-    "quux_mem_port": ("free_s", "buf_s", "g_s", "wbu_s", "ack_s", "ack_last_s",
-                      "rel_q", "rel_pend", "s_wpend", "s_wr_late_q", "wbw", "granted1", "rel_ok_q"),
-}
-# Modules out of the relaxed set whole, register by register.
-REV14_OUT_WHOLE = ("quux_mem_port", "quux_cache")
+# The machine as a board builds it, and the constraints that name its
+# registers.
+MACHINES = ("cadr",)
+GENERICS = {"cadr": []}
+XDC_NAMED = ["rtl/plumbing/xilinx7/cadr_machine.xdc"]
+# The SDC files the machine's build reads, in the order `project.tcl` reads them.
+SDC_NAMED = {"cadr": ["boards/de25-nano/quartus/cadr_de25.sdc"]}
 
 # One register of one instance: the module it is in, its name inside the
 # module (a generate block's name before it, as both tools write it), and its
@@ -533,10 +371,9 @@ def walk(node, fn):
 
 
 def elaborate(root, machine, scratch):
-    """The registers of `cadr_machine` built as `machine`, QUUX at its 40-bit
-    word, out of Verilator's elaborated tree: parameters applied and generate
-    blocks chosen, so each machine has exactly the instances its bitstream
-    has."""
+    """The registers of `cadr_machine` built as `machine`, out of Verilator's
+    elaborated tree: parameters applied and generate blocks chosen, so the
+    machine has exactly the instances its bitstream has."""
     mdir = os.path.join(scratch, machine)
     cmd = [VERILATOR, "--json-only", "-Irtl/machine", "-Irtl/plumbing", "-Mdir", mdir,
            *GENERICS[machine],
@@ -591,8 +428,7 @@ def elaborate(root, machine, scratch):
         scope of the process that writes it.  Vivado names a register by the
         scope of the process that makes it, not of the declaration: a
         variable declared in the module and written in `g_x` is `g_x.v_reg`,
-        measured on a three-register design in Vivado 2026.1, and so is
-        QUUX's PDL buffer, `g_quux_pdl.pdl_reg_*` (M7e)."""
+        measured on a three-register design in Vivado 2026.1 (M7e)."""
         out = {}
 
         def rec(n, gen):
@@ -793,7 +629,7 @@ def check_names(root):
         regs = {m: elaborate(root, m, scratch) for m in MACHINES}
 
         # The Zynq boards'.  Each pattern of each filter, and each pin of each
-        # `get_pins -quiet` list, against both machines' registers.
+        # `get_pins -quiet` list, against the machine's registers.
         hits = collections.Counter()
         where = {}
         slow = None
@@ -859,7 +695,7 @@ def check_names(root):
     dead = sorted((where[k], k) for k, n in hits.items() if n == 0)
     if dead:
         fail("register names in the timing constraints that match no register of "
-             "either machine, so what they meant to keep out of (or put into) a set is "
+             "the machine, so what they meant to keep out of (or put into) a set is "
              "not there, in silence:\n" +
              "\n".join(f"  {rel}:{ln}: {kind} `{pat}`" for ln, (rel, kind, pat) in dead))
 
@@ -878,55 +714,7 @@ def check_names(root):
                      "\n".join(f"  {mod} `{loc}`: relaxed in {v[True][0]}, at the tick in "
                                f"{v[False][0]}" for (mod, loc), v in split[:12]) +
                      (f"\n  ... and {len(split) - 12} more" if len(split) > 12 else ""))
-    check_rev14(regs[REV14], xdc_slow[REV14], sdc_slow[REV14])
     return len(hits), sum(len(regs[m]) for m in MACHINES)
-
-
-def check_rev14(regs, xdc_slow, sdc_slow):
-    """Revision 14's every-tick registers are out of both relaxed sets, and
-    every register of its memory system is classed (`REV14_CLASSED`)."""
-    have = collections.defaultdict(set)
-    for x in regs:
-        have[x.module].add(x.local)
-    for mod, classes in REV14_CLASSED.items():
-        if mod not in have:
-            fail(f"{mod} has no register in cadr_machine at revision 14, so revision "
-                 f"14's classes of its registers hold nothing")
-        unclassed = sorted(have[mod] - set(classes))
-        if unclassed:
-            fail(f"{mod} has registers revision 14's classes do not name, so nothing says "
-                 f"whether the relaxed set may take them: {', '.join(unclassed)}; class each "
-                 f"in tools/grid_check.py's REV14_CLASSED, `tick` or `held`")
-        gone = sorted(set(classes) - have[mod])
-        if gone:
-            fail(f"{mod} at revision 14 has no register {', '.join(gone)}, which "
-                 f"REV14_CLASSED names")
-    for mod, names in REV14_NAMED_TICK.items():
-        gone = sorted(set(names) - have[mod])
-        if gone:
-            fail(f"{mod} at revision 14 has no register {', '.join(gone)}, which "
-                 f"REV14_NAMED_TICK names")
-    for mod in REV14_OUT_WHOLE:
-        if mod not in have:
-            fail(f"{mod} has no register in cadr_machine at revision 14")
-    tick = []
-    for x in regs:
-        if REV14_CLASSED.get(x.module, {}).get(x.local) == REV14_TICK \
-                or x.local in REV14_NAMED_TICK.get(x.module, ()) \
-                or x.module in REV14_OUT_WHOLE:
-            tick.append(x)
-    bad = [(tool, x) for x in tick
-           for tool, name, slow in (("rtl/plumbing/xilinx7/cadr_machine.xdc", x.vivado, xdc_slow),
-                                    ("boards/de25-nano/quartus/cadr_de25.sdc", x.quartus, sdc_slow))
-           if name in slow]
-    if bad:
-        fail("revision 14's every-tick registers in the relaxed set, which would give "
-             "their paths the microcycle where they have one tick:\n" +
-             "\n".join(f"  {tool}: {x.module} `{x.local}`" for tool, x in bad[:24]) +
-             (f"\n  ... and {len(bad) - 24} more" if len(bad) > 24 else ""))
-    print(f"ok: revision 14's {len(tick)} every-tick registers are out of both relaxed sets, "
-          f"and its memory system's {sum(len(c) for c in REV14_CLASSED.values())} registers "
-          f"are each classed")
 
 
 if __name__ == "__main__":

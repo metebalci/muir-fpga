@@ -143,49 +143,7 @@ module cadr_arty #(
     // boot, and a machine with none gives the NXM at those addresses ---
     // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
     // the fabric entirely, for a part with no room for it.
-    parameter int unsigned LMTV = 1,
-
-    // **WHICH MACHINE**: "cadr", MIT's, or "quux", the evolved CADR, each a
-    // bitstream of its own on this board.  Handed to `cadr_machine` as it
-    // stands, which refuses a name it does not know; the flow's `MACHINE`
-    // sets it, and `build/machine_param.pass` holds that it arrives.
-    parameter string MACHINE = "cadr",
-
-    // **QUUX'S MICROCYCLE ON THIS BOARD**: five ticks, 50 ns, at revision
-    // 13, and no more for an `ILONG` instruction (H1a, muir's
-    // `--timing-model sync --sync-cycle-ticks K`).  The fit is what entitles
-    // it: revision 13's map through both levels into the memory path's
-    // decode misses four by a nanosecond and meets five.  **THE MICROCYCLE
-    // IS LONGER AND THE TICK IS NOT**: the machine's
-    // clock stays at 100 MHz, so the microsecond clock, the timers and the
-    // sixty-cycle clock, which count ticks, still count true time.  The
-    // flow reads the K a build takes from here (`vivado/tick.tcl`) and
-    // states it in `quux_machine.xdc`'s counts.  The CADR reads none.
-    // **AND FOUR AT REVISION 14** (contract G3 revision 14, Q-G3f): the
-    // TLB's registered read takes the map chain's place, which is what kept
-    // revision 13 at five.  The fit at K=4 is what entitles it, and five
-    // the fallback if it misses (`docs/fits.md`).
-    parameter int unsigned SYNC_K13 = 5,
-    parameter int unsigned SYNC_K14 = 4,
-    parameter int unsigned SYNC_L = 0,
-
-    // **THE WORD'S WIDTH**, handed to `cadr_machine` as it stands: 32, or 40
-    // for QUUX revision 13 (contract G2), whose processor comes with the
-    // word (`rtl/machine/cadr_microcycle.sv`).  The flow's `WORD_BITS` sets
-    // it, 32 unless asked, and `build/machine_param.pass` holds that it
-    // arrives.  The probe takes each word's `<31:0>`.
-    parameter int unsigned WORD_BITS = 32,
-
-    // **QUUX'S HARDWARE REVISION AT 40 BITS**, handed to `cadr_machine` as
-    // it stands: 13, or 14 (contract G3 revision 14), the 32-bit virtual
-    // address, the TLB and the 29-bit physical address.  13 unless the flow
-    // is asked for 14 by name (`REVISION=14`); `build/machine_param.pass`
-    // holds that it arrives.  The CADR reads none.
-    parameter int unsigned REVISION = 13,
-    // **REVISION 14'S TLB ENTRIES**, N (A14.4): 4,096 on every board
-    // (decisions.md:265), in block RAM here, five RAMB36E1 by the flow's
-    // `RAM_STYLE` (`vivado/quux14_tlb_ram.xdc`).  Unread below revision 14.
-    parameter int unsigned TLB_ENTRIES = 4096
+    parameter int unsigned LMTV = 1
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -221,8 +179,7 @@ module cadr_arty #(
     // and listened to on a debuggee, and `cadr_dbg_cable.sv` hands out
     // `pin_t` --- high is not driven --- for exactly that.
     // `boards/arty-z7-20/cadr_arty.xdc` has the pins, from Digilent's own
-    // published file.  On QUUX, which has no debug cable, they are in the
-    // port list and nothing drives or reads them.
+    // published file.
     inout  wire  [7:0]     ja,
     // The HDMI transmitter's four differential pairs.  **THEY ARE IN THE
     // PORT LIST AND CONSTRAINED ON EVERY BOARD, NOT ONLY AN `HDMI` ONE**,
@@ -241,21 +198,6 @@ module cadr_arty #(
   //
   // 125 MHz in, 100 MHz out. The VCO must sit between 600 and 1200 MHz on a
   // -1 part: 125 x 8 is 1000, comfortably inside, and 1000 / 10 is the tick.
-  //
-  // **REVISION 14 OF QUUX TAKES A 15 ns TICK ON THIS BOARD**, 1000 / 15: its
-  // memory system's one-tick paths (the side seam's looks, its live answer
-  // into the walk's result, MD's next value into the TLB's forward) do not
-  // close at 10 ns on this part, and every count stays as it is, so nothing
-  // moves tick for tick.  The machine's wall clocks (the microsecond clock,
-  // the interval timers, the real-time clock) are handed the tick's length,
-  // `TICK_PS`, and keep wall time.  `tick.tcl` reads these two numbers and
-  // the build's machine and revision.
-  localparam real CLKOUT0_DIVIDE_BASE   = 10.000;
-  localparam real CLKOUT0_DIVIDE_QUUX14 = 15.000;
-  // The tick in picoseconds for the machine's wall clocks, from the same
-  // divider of the same 1,000 MHz.
-  localparam int unsigned TICK_PS = int'(1000.0 * ((MACHINE == "quux" && REVISION == 14)
-                                                   ? CLKOUT0_DIVIDE_QUUX14 : CLKOUT0_DIVIDE_BASE));
   logic clk_fb, clk_raw, clk, mmcm_locked;
 
   // The eleven clock outputs this design does not take are left empty on
@@ -274,8 +216,7 @@ module cadr_arty #(
       // are written against, so the fabric and its timing cannot describe
       // two different machines.  See the header for why every tick COUNT in
       // the design stays exactly as it was.
-      .CLKOUT0_DIVIDE_F((MACHINE == "quux" && REVISION == 14) ? CLKOUT0_DIVIDE_QUUX14
-                                                              : CLKOUT0_DIVIDE_BASE)
+      .CLKOUT0_DIVIDE_F(10.000)   // 100 MHz, one tick = 10 ns
   ) u_mmcm (
       .CLKIN1  (sysclk),
       .CLKFBIN (clk_fb),
@@ -393,22 +334,17 @@ module cadr_arty #(
 
   logic [13:0] pc, lpc, opc;
   logic [31:0] st, alu;
-  logic [WORD_BITS-1:0] a, m, r, ob, q, vma, md;
+  logic [31:0] a, m, r, ob, q, vma, md;
   logic [47:0] ir;
   logic [9:0]  dc;
   logic [25:0] lc;
-  // The bus address the machine asks about: 22 bits on the CADR, 28 at
-  // revision 13 and 29 at revision 14, the device window's `<28>` (A14.1).
-  localparam bit PAGED14 = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14;
-  logic [(PAGED14 ? 29 : WORD_BITS > 32 ? 28 : 22)-1:0] phys;
-  if (REVISION != 13 && !(REVISION == 14 && MACHINE == "quux")) begin : g_revision_refused
-    $error("cadr_arty: REVISION is %0d on %s; QUUX is built at revision 13 or 14", REVISION, MACHINE);
-  end
+  // The bus address the machine asks about.
+  logic [21:0] phys;
   logic [17:0] ub_addr;
   logic [15:0] ub_rdata;
   logic [2:0]  arb_stage;
   logic [31:0] mem_addr;
-  logic [WORD_BITS-1:0] mem_wdata;
+  logic [31:0] mem_wdata;
   // MEM<31:0> on its way to an Xbus slave. No slave exists, so nothing
   // reads it --- but it is an output of `cadr_machine` and the fold below
   // is what keeps it from being deleted along with whatever computes it.
@@ -425,13 +361,6 @@ module cadr_arty #(
   // driven from `g_ddr` where the `PS7` is and tied low where there is none.
   logic port_read_ack, port_write_ack;
   logic [31:0] mem_rdata;
-  // QUUX's line fill (contract Q6): the machine asks four words and the port
-  // hands the line back; and QUUX's memory port idle, which nothing on this
-  // board reads yet.  The CADR never asks a line.
-  logic         mem_line, mem_drained, mem_wide;
-  logic [2:0]   mem_beats;
-  // Two 64-bit beats of a line, and revision 13's five (`quux_axi_master.sv`).
-  logic [(WORD_BITS > 32 ? 320 : 128)-1:0] mem_rline;
   // The disk's two seams, likewise driven from one arm or the other: the
   // drive --- which units have a pack, the read-only switch, whether the
   // drive's time is charged --- and the block store's fill port. With `DDR`
@@ -492,15 +421,13 @@ module cadr_arty #(
   // Whether LD1 and LD2 blink or hold a level, page 2's word 35.
   logic        con_steady_lamps;
   // How many 64K-word memory boards the backplane has, page 2's word 37,
-  // muir's `--main-memory-boards`: the machine's address decode and QUUX's
-  // file device take it.  32 with no console.
-  // How many 64K-word memory boards the machine has, the console's word 37:
-  // its default and its most are the machine's (`cadr_ddr_map::mem_boards_*`).
-  localparam bit          REV13_BOARDS   = MACHINE == "quux" && WORD_BITS > 32;
-  localparam int unsigned BOARDS_DEFAULT = cadr_ddr_map::mem_boards_default(REV13_BOARDS);
+  // muir's `--main-memory-boards`: the machine's address decode takes it.
+  // 32 with no console.  Its default and its most are the machine's
+  // (`cadr_ddr_map::MEM_BOARDS_*`).
+  localparam int unsigned BOARDS_DEFAULT = cadr_ddr_map::MEM_BOARDS_DEFAULT;
   // Unused where a build has no console (the DE25-Nano without its memory).
   /* verilator lint_off UNUSEDPARAM */
-  localparam int unsigned BOARDS_MAX     = cadr_ddr_map::mem_boards_max(REV13_BOARDS);
+  localparam int unsigned BOARDS_MAX     = cadr_ddr_map::MEM_BOARDS_MAX;
   /* verilator lint_on UNUSEDPARAM */
   logic [10:0] con_mem_boards;
   logic [17:0] con_addr;
@@ -629,14 +556,6 @@ module cadr_arty #(
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
-  // **AND ON QUUX, THE REAL-TIME CLOCK AND THE FILE DEVICE** (revision 9):
-  // the machine's host side, which `rtl/plumbing/quux_fd_face.sv` puts on the
-  // fifth page of `M_AXI_GP0`, `0x4000_4000`, for Linux's server and the
-  // clock's setter.  Idle on the CADR and on a board with no processing
-  // system, which is a clock nobody sets and a file device nobody serves.
-  logic        host_we;
-  logic [3:0]  host_widx, host_ridx;
-  logic [31:0] host_wdata, host_rdata;
   logic        ser_tx_take, ser_tx_done, ser_rx_strobe, ser_plugged;
   logic [7:0]  ser_rx_data;
   logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
@@ -935,16 +854,6 @@ module cadr_arty #(
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
   localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
-  // **QUUX'S VIDEO CONTROLLER AND THE BOARD NAME** (contract HD): the size
-  // this board's QUUX gives its band in feature words 11 and 12, which its
-  // display output shows and its console's word 39 says to the programs on
-  // the processing system, and the name revision 13's feature words 20-24
-  // give.  One place each, so the four cannot disagree by an edit to one;
-  // `build/machine_param.pass` holds them equal.
-  localparam int unsigned VIDEO_W = 1280;
-  localparam int unsigned VIDEO_H = 1024;
-  localparam logic [8*64-1:0] BOARD = "Arty Z7-20";
-
   // **MAIN MEMORY ALWAYS ANSWERS** where the machine's `mem_*` reach DDR, so
   // the NXM timer must not end a cycle it has taken (`cadr_busint_xbus.sv`'s
   // header has the DE25-Nano measurement that needed it).  HP0 has been measured answering in at most 88 ticks, far inside the NXM
@@ -953,18 +862,10 @@ module cadr_arty #(
   localparam bit MEM_ANSWERS = (PORT != 0) && (PROVE == 0);
 
   cadr_machine #(
-      .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
       .MEMORY_ANSWERS(MEM_ANSWERS),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
-      .LMTV(LMTV),
-      .MACHINE(MACHINE),
-      .SYNC_K(PAGED14 ? SYNC_K14 : SYNC_K13),
-      .SYNC_L(SYNC_L),
-      .WORD_BITS(WORD_BITS),
-      .REVISION(REVISION),
-      .TLB_ENTRIES(TLB_ENTRIES),
-      .TICK_PS(TICK_PS)
+      .LMTV(LMTV)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
@@ -1012,8 +913,6 @@ module cadr_arty #(
       .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide),
-      .mem_rline(mem_rline), .mem_drained(mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -1102,9 +1001,7 @@ module cadr_arty #(
       // port's own handshakes, at the same boundary and off the same
       // registered copies `rtl/plumbing/cadr_mem_count.sv` counts, so the two
       // instruments cannot disagree about what the port did.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
-      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
-      .host_ridx(host_ridx), .host_rdata(host_rdata)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
 
   // --------------------------------------- the debug cable, on Pmod JA
@@ -1127,100 +1024,63 @@ module cadr_arty #(
   // this board is a debuggee and nothing else, which is what a CADR with one
   // cable in it is.
   //
-  // **THE CADR'S ALONE** (contract Q5): QUUX has no debug cable, so a QUUX
-  // build instantiates neither the connector nor the join, and JA's eight
-  // pads are left undriven, held low by `cadr_arty.xdc`'s pull-downs, which
-  // is the unplugged connector.  `build/machine_param.pass` counts the cells
-  // on both machines.
-  //
   // **AND IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason
   // the window and the DBGIN page give about theirs: modifier bit 1 resets
   // this machine over this very cable, and a carrier reset by it would forget
   // the request that asked for it.
-  if (MACHINE == "cadr") begin : g_dbg_cable
-    logic        cab_req, cab_wr;
-    logic [1:0]  cab_a;
-    logic [15:0] cab_dbd;
-    logic [7:0]  ja_o, ja_t;
+  logic        cab_req, cab_wr;
+  logic [1:0]  cab_a;
+  logic [15:0] cab_dbd;
+  logic [7:0]  ja_o, ja_t;
 
-    cadr_dbg_cable u_dbg_cable (
-        .clk(clk), .rst(rst),
-        // The role. `connect` is the console's word 14 and the `fpgarc` line
-        // behind it; `engaged` is whether this board took it, which is not the
-        // same question --- a board that can see a debugger on the forward
-        // group refuses, and `foreign` is how the console says why.
-        .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
-        .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
-        // Which way round the cable was made, and what the board found.
-        .wiring(dbg_wiring), .wire_state(dbg_wire_state),
-        // Frames heard and frames refused: the crosstalk instrument, page 0's
-        // word 15.
-        .frames(dbg_frames),
-        // This machine's own DBGOUT page: CC on this board, writing
-        // `0o766100`-`0o766137`, debugging the board at the far end.
-        .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
-        .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
-        .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
-        // And a second board's debugger arriving here, which joins the
-        // window's cable at the page below.
-        .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
-        .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
-        .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
-    );
+  cadr_dbg_cable u_dbg_cable (
+      .clk(clk), .rst(rst),
+      // The role. `connect` is the console's word 14 and the `fpgarc` line
+      // behind it; `engaged` is whether this board took it, which is not the
+      // same question --- a board that can see a debugger on the forward
+      // group refuses, and `foreign` is how the console says why.
+      .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
+      .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
+      // Which way round the cable was made, and what the board found.
+      .wiring(dbg_wiring), .wire_state(dbg_wire_state),
+      // Frames heard and frames refused: the crosstalk instrument, page 0's
+      // word 15.
+      .frames(dbg_frames),
+      // This machine's own DBGOUT page: CC on this board, writing
+      // `0o766100`-`0o766137`, debugging the board at the far end.
+      .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
+      .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
+      .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
+      // And a second board's debugger arriving here, which joins the
+      // window's cable at the page below.
+      .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
+      .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
+      .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
+  );
 
-    // The eight pads. `pin_t` is Xilinx's sense --- HIGH is not driven --- so
-    // the group this board does not own is high-impedance and the far end has
-    // it. Written as one continuous assignment a pad rather than eight `IOBUF`
-    // primitives, because a tri-state assignment is what every tool infers a
-    // buffer from and this file is meant to read as SystemVerilog.
-    for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
-      assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
-    end
-
-    // Two debuggers at one DBGIN page, which MIT's board cannot have and this
-    // one can. The near arm is the window and the far arm the connector, the
-    // first to assert holds until it lifts, and a tie goes to the window ---
-    // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
-    // presents zeros, so with nothing in JA this is the window's cable
-    // unchanged.
-    cadr_dbg_join u_dbg_join (
-        .clk(clk), .rst(rst),
-        .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
-        .a_dbd(dbd_to_machine),
-        .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
-        .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
-        .holder(dbg_holder)
-    );
-  end else begin : g_no_dbg_cable
-    // No connector and no join.  The machine's two ends of the cable stand
-    // as an unplugged connector leaves them: `-DEBUG IN REQ` up, which is
-    // `mdbg_req` low, and the DBGOUT page answered by the pull-ups, which is
-    // `dbgout_live` low and `dbgout_dbd_in` all ones.  The connector's own
-    // words read zero, which is what the console reports for a connector
-    // with nothing on it.
-    for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
-      assign ja[i] = 1'bz;
-    end
-    assign mdbg_req       = 1'b0;
-    assign mdbg_wr        = 1'b0;
-    assign mdbg_a         = 2'd0;
-    assign mdbg_dbd       = 16'd0;
-    assign dbg_holder     = 1'b0;
-    assign dbgout_ack     = 1'b0;
-    assign dbgout_dbd_in  = 16'hFFFF;
-    assign dbgout_live    = 1'b0;
-    assign dbg_engaged    = 1'b0;
-    assign dbg_foreign    = 1'b0;
-    assign dbg_peer_far   = 1'b0;
-    assign dbg_live       = 1'b0;
-    assign dbg_active     = 1'b0;
-    assign dbg_wire_state = 3'd0;
-    assign dbg_frames     = 24'd0;
-    logic unused_dbg_cable;
-    assign unused_dbg_cable = ^{ja, dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
-                                dbg_connect, dbg_wiring, dbg_in_req, dbg_in_wr,
-                                dbg_in_a, dbd_to_machine};
+  // The eight pads. `pin_t` is Xilinx's sense --- HIGH is not driven --- so
+  // the group this board does not own is high-impedance and the far end has
+  // it. Written as one continuous assignment a pad rather than eight `IOBUF`
+  // primitives, because a tri-state assignment is what every tool infers a
+  // buffer from and this file is meant to read as SystemVerilog.
+  for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
+    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
   end
+
+  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
+  // one can. The near arm is the window and the far arm the connector, the
+  // first to assert holds until it lifts, and a tie goes to the window ---
+  // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
+  // presents zeros, so with nothing in JA this is the window's cable
+  // unchanged.
+  cadr_dbg_join u_dbg_join (
+      .clk(clk), .rst(rst),
+      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+      .a_dbd(dbd_to_machine),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+      .holder(dbg_holder)
+  );
 
   // ----------------------------------------------------------- the memory
   //
@@ -1292,13 +1152,6 @@ module cadr_arty #(
     logic [31:0] port_addr, port_wdata;
     logic        port_done, port_error;
     logic [31:0] port_rdata;
-    logic         port_line;
-    logic [(WORD_BITS > 32 ? 320 : 128)-1:0] port_rline;
-    // What QUUX's master alone takes: a line's beats, a write's five bytes,
-    // and the whole word (revision 13's, `quux_axi_master.sv`).
-    logic [2:0]   port_beats;
-    logic         port_wide;
-    logic [WORD_BITS-1:0] port_word;
 
     // The adapter's AXI4 side, 32 bits wide.
     logic [31:0] awaddr, araddr, wdata;
@@ -1329,14 +1182,9 @@ module cadr_arty #(
       assign port_req   = mem_req;
       assign port_write = mem_write;
       assign port_addr  = mem_addr;
-      assign port_wdata = mem_wdata[31:0];
-      assign port_line  = mem_line;
-      assign port_beats = mem_beats;
-      assign port_wide  = mem_wide;
-      assign port_word  = mem_wdata;
+      assign port_wdata = mem_wdata;
       assign mem_done   = port_done;
       assign mem_rdata  = port_rdata;
-      assign mem_rline  = port_rline;
 
     end else begin : g_prove
 
@@ -1388,15 +1236,6 @@ module cadr_arty #(
       // one lamp that changes is LD4.
       assign mem_done  = 1'b0;
       assign mem_rdata = 32'd0;
-      // The witness asks no line, and the machine is given none; its words
-      // are four bytes.
-      assign port_line = 1'b0;
-      assign port_beats = 3'd0;
-      assign port_wide = 1'b0;
-      assign port_word = WORD_BITS'(port_wdata);
-      assign mem_rline = '0;
-      logic unused_rline;
-      assign unused_rline = ^port_rline;
 
       // LD4 IS A LAMP HERE AND NO LONGER THE OBSERVER. Red until something
       // has completed, and it BLINKS while the port is still dead, because
@@ -1420,108 +1259,22 @@ module cadr_arty #(
 
     end
 
-    // **ON QUUX ONE 64-BIT MASTER DRIVES THE PORT**, `rtl/plumbing/
-    // quux_axi_master.sv`: the CADR's adapter and widening in one, and the
-    // line fill QUUX's memory port asks on a cache miss (contract Q6), two
-    // full-width beats.  The CADR's is built on every board and keeps its
-    // instance names, which its constraints and their assertions name; on
-    // QUUX it is asked nothing, stands in IDLE and the tools remove it.
-    // QUUX's is built on QUUX alone (`g_qaxi`, below).
-    localparam bit QUUX_PORT = MACHINE == "quux";
-    logic        c_done, c_error, q_done, q_error;
-    logic [31:0] c_rdata, q_rdata;
-    logic [31:0] c_hp0_awaddr, c_hp0_araddr, q_hp0_awaddr, q_hp0_araddr;
-    logic [3:0]  c_hp0_awlen, c_hp0_arlen, q_hp0_awlen, q_hp0_arlen;
-    logic [1:0]  c_hp0_awsize, c_hp0_arsize, q_hp0_awsize, q_hp0_arsize;
-    logic [63:0] c_hp0_wdata, q_hp0_wdata;
-    logic [7:0]  c_hp0_wstrb, q_hp0_wstrb;
-    logic [1:0]  c_awburst, c_arburst, q_awburst, q_arburst;
-    logic        c_awvalid, c_wlast, c_wvalid, c_bready, c_arvalid, c_rready;
-    logic        q_awvalid, q_wlast, q_wvalid, q_bready, q_arvalid, q_rready;
-
-    assign port_done    = QUUX_PORT ? q_done  : c_done;
-    assign port_rdata   = QUUX_PORT ? q_rdata : c_rdata;
-    assign port_error   = QUUX_PORT ? q_error : c_error;
-    assign hp0_awaddr   = QUUX_PORT ? q_hp0_awaddr : c_hp0_awaddr;
-    assign hp0_awlen    = QUUX_PORT ? q_hp0_awlen  : c_hp0_awlen;
-    assign hp0_awsize   = QUUX_PORT ? q_hp0_awsize : c_hp0_awsize;
-    assign hp0_wdata    = QUUX_PORT ? q_hp0_wdata  : c_hp0_wdata;
-    assign hp0_wstrb    = QUUX_PORT ? q_hp0_wstrb  : c_hp0_wstrb;
-    assign hp0_araddr   = QUUX_PORT ? q_hp0_araddr : c_hp0_araddr;
-    assign hp0_arlen    = QUUX_PORT ? q_hp0_arlen  : c_hp0_arlen;
-    assign hp0_arsize   = QUUX_PORT ? q_hp0_arsize : c_hp0_arsize;
-    assign awburst      = QUUX_PORT ? q_awburst : c_awburst;
-    assign awvalid      = QUUX_PORT ? q_awvalid : c_awvalid;
-    assign wlast        = QUUX_PORT ? q_wlast   : c_wlast;
-    assign wvalid       = QUUX_PORT ? q_wvalid  : c_wvalid;
-    assign bready       = QUUX_PORT ? q_bready  : c_bready;
-    assign arburst      = QUUX_PORT ? q_arburst : c_arburst;
-    assign arvalid      = QUUX_PORT ? q_arvalid : c_arvalid;
-    assign rready       = QUUX_PORT ? q_rready  : c_rready;
-
-    // QUUX's master is built on QUUX alone, so that on the CADR the widening
-    // is the read beat's one reader and a read path crossed onto anything
-    // else leaves the beat unread, which the lint of the `DDR=1` board
-    // reports (`the-beat-that-came-back-is-the-one-that-went-out`).
-    if (QUUX_PORT) begin : g_qaxi
-      quux_axi_master #(.WORD_BITS(WORD_BITS)) u_qaxi (
-          .clk(clk), .rst(axi_rst),
-          .mem_req(port_req), .mem_write(port_write), .mem_line(port_line),
-          .mem_beats(port_beats), .mem_wide(port_wide),
-          .mem_addr(port_addr), .mem_wdata(port_word),
-          .mem_done(q_done), .mem_rdata(q_rdata), .mem_rline(port_rline),
-          .mem_error(q_error),
-          .m_awaddr(q_hp0_awaddr), .m_awlen(q_hp0_awlen), .m_awsize(q_hp0_awsize),
-          .m_awburst(q_awburst), .m_awvalid(q_awvalid), .m_awready(awready),
-          .m_wdata(q_hp0_wdata), .m_wstrb(q_hp0_wstrb), .m_wlast(q_wlast),
-          .m_wvalid(q_wvalid), .m_wready(wready),
-          .m_bresp(bresp), .m_bvalid(bvalid), .m_bready(q_bready),
-          .m_araddr(q_hp0_araddr), .m_arlen(q_hp0_arlen), .m_arsize(q_hp0_arsize),
-          .m_arburst(q_arburst), .m_arvalid(q_arvalid), .m_arready(arready),
-          .m_rdata(hp0_rdata), .m_rresp(rresp), .m_rlast(rlast),
-          .m_rvalid(rvalid), .m_rready(q_rready)
-      );
-    end else begin : g_no_qaxi
-      assign q_done = 1'b0;
-      assign q_rdata = 32'd0;
-      assign q_error = 1'b0;
-      assign port_rline = '0;
-      assign q_hp0_awaddr = 32'd0;
-      assign q_hp0_awlen = 4'd0;
-      assign q_hp0_awsize = 2'd0;
-      assign q_awburst = 2'd0;
-      assign q_awvalid = 1'b0;
-      assign q_hp0_wdata = 64'd0;
-      assign q_hp0_wstrb = 8'd0;
-      assign q_wlast = 1'b0;
-      assign q_wvalid = 1'b0;
-      assign q_bready = 1'b0;
-      assign q_hp0_araddr = 32'd0;
-      assign q_hp0_arlen = 4'd0;
-      assign q_hp0_arsize = 2'd0;
-      assign q_arburst = 2'd0;
-      assign q_arvalid = 1'b0;
-      assign q_rready = 1'b0;
-      logic unused_q;
-      assign unused_q = ^{port_line, port_beats, port_wide, port_word, QUUX_PORT};
-    end
-
     cadr_axi_master u_axi (
         .clk(clk), .rst(axi_rst),
-        .mem_req(!QUUX_PORT && port_req), .mem_write(port_write),
+        .mem_req(port_req), .mem_write(port_write),
         .mem_addr(port_addr), .mem_wdata(port_wdata),
-        .mem_done(c_done), .mem_rdata(c_rdata), .mem_error(c_error),
+        .mem_done(port_done), .mem_rdata(port_rdata), .mem_error(port_error),
         .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize),
-        .m_axi_awburst(c_awburst), .m_axi_awvalid(c_awvalid),
+        .m_axi_awburst(awburst), .m_axi_awvalid(awvalid),
         .m_axi_awready(awready),
-        .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(c_wlast),
-        .m_axi_wvalid(c_wvalid), .m_axi_wready(wready),
-        .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(c_bready),
+        .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast),
+        .m_axi_wvalid(wvalid), .m_axi_wready(wready),
+        .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(bready),
         .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize),
-        .m_axi_arburst(c_arburst), .m_axi_arvalid(c_arvalid),
+        .m_axi_arburst(arburst), .m_axi_arvalid(arvalid),
         .m_axi_arready(arready),
         .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast),
-        .m_axi_rvalid(rvalid), .m_axi_rready(c_rready)
+        .m_axi_rvalid(rvalid), .m_axi_rready(rready)
     );
 
     // The widening: `rtl/plumbing/cadr_axi_widen.sv`, and it is a module rather than
@@ -1534,9 +1287,9 @@ module cadr_arty #(
         .s_wdata(wdata), .s_wstrb(wstrb),
         .s_araddr(araddr), .s_arlen(arlen), .s_arsize(arsize),
         .s_rdata(rdata),
-        .m_awaddr(c_hp0_awaddr), .m_awlen(c_hp0_awlen), .m_awsize(c_hp0_awsize),
-        .m_wdata(c_hp0_wdata), .m_wstrb(c_hp0_wstrb),
-        .m_araddr(c_hp0_araddr), .m_arlen(c_hp0_arlen), .m_arsize(c_hp0_arsize),
+        .m_awaddr(hp0_awaddr), .m_awlen(hp0_awlen), .m_awsize(hp0_awsize),
+        .m_wdata(hp0_wdata), .m_wstrb(hp0_wstrb),
+        .m_araddr(hp0_araddr), .m_arlen(hp0_arlen), .m_arsize(hp0_arsize),
         .m_rdata(hp0_rdata)
     );
 
@@ -1954,9 +1707,9 @@ module cadr_arty #(
       gp0_rst_s    <= !gp0_rst_sync[2];
     end
 
-    // QUUX's fifth page, the clock and the file device (revision 9); on the
-    // CADR it is the default's.
-    cadr_gp0_split #(.HAS_FD(MACHINE == "quux")) u_gp0_split (
+    // The split's fifth page, QUUX's file device, is not built here
+    // (`HAS_FD` low): its addresses are the default slave's.
+    cadr_gp0_split u_gp0_split (
         .clk(clk), .rst(gp0_rst_s),
         .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
         .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
@@ -2109,50 +1862,23 @@ module cadr_arty #(
         .card_csr(csr_face)
     );
 
-    // QUUX's clock and file device, for Linux's server and the clock's
-    // setter.  The machine's side keeps every rule; this is the page.
-    // Revision 13's page says so by its IDENT, "QF13", which is how the
-    // server knows main memory is packed storage and the rings' bases 28
-    // bits (`docs/file-device.md`).
-    if (MACHINE == "quux") begin : g_fd_face
-      quux_fd_face #(.IDENT(32'h5146_3133)) u_fd_face (
-          .clk(clk), .rst(gp0_rst_s),
-          .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
-          .s_awvalid(gp0f_awvalid), .s_awready(gp0f_awready),
-          .s_wdata(gp0f_wdata), .s_wstrb(gp0f_wstrb), .s_wlast(gp0f_wlast),
-          .s_wvalid(gp0f_wvalid), .s_wready(gp0f_wready),
-          .s_bresp(gp0f_bresp), .s_bid(gp0f_bid), .s_bvalid(gp0f_bvalid),
-          .s_bready(gp0f_bready),
-          .s_araddr(gp0f_araddr), .s_arlen(gp0f_arlen), .s_arid(gp0f_arid),
-          .s_arvalid(gp0f_arvalid), .s_arready(gp0f_arready),
-          .s_rdata(gp0f_rdata), .s_rresp(gp0f_rresp), .s_rid(gp0f_rid),
-          .s_rlast(gp0f_rlast), .s_rvalid(gp0f_rvalid), .s_rready(gp0f_rready),
-          .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
-          .host_ridx(host_ridx), .host_rdata(host_rdata)
-      );
-    end else begin : g_no_fd_face
-      // The split never offers this port a transaction on the CADR
-      // (`HAS_FD`), so what it would answer is never asked.
-      assign gp0f_awready = 1'b0;
-      assign gp0f_wready  = 1'b0;
-      assign gp0f_bresp   = 2'b00;
-      assign gp0f_bid     = '0;
-      assign gp0f_bvalid  = 1'b0;
-      assign gp0f_arready = 1'b0;
-      assign gp0f_rdata   = 32'd0;
-      assign gp0f_rresp   = 2'b00;
-      assign gp0f_rid     = '0;
-      assign gp0f_rlast   = 1'b0;
-      assign gp0f_rvalid  = 1'b0;
-      assign host_we      = 1'b0;
-      assign host_widx    = 4'd0;
-      assign host_wdata   = 32'd0;
-      assign host_ridx    = 4'd0;
-      logic unused_fd_port;
-      assign unused_fd_port = ^{gp0f_awaddr, gp0f_awlen, gp0f_awid, gp0f_awvalid, gp0f_wdata,
-                                gp0f_wstrb, gp0f_wlast, gp0f_wvalid, gp0f_bready, gp0f_araddr,
-                                gp0f_arlen, gp0f_arid, gp0f_arvalid, gp0f_rready};
-    end
+    // The split never offers its fifth page's port a transaction without
+    // `HAS_FD`, so what it would answer is never asked.
+    assign gp0f_awready = 1'b0;
+    assign gp0f_wready  = 1'b0;
+    assign gp0f_bresp   = 2'b00;
+    assign gp0f_bid     = '0;
+    assign gp0f_bvalid  = 1'b0;
+    assign gp0f_arready = 1'b0;
+    assign gp0f_rdata   = 32'd0;
+    assign gp0f_rresp   = 2'b00;
+    assign gp0f_rid     = '0;
+    assign gp0f_rlast   = 1'b0;
+    assign gp0f_rvalid  = 1'b0;
+    logic unused_fd_port;
+    assign unused_fd_port = ^{gp0f_awaddr, gp0f_awlen, gp0f_awid, gp0f_awvalid, gp0f_wdata,
+                              gp0f_wstrb, gp0f_wlast, gp0f_wvalid, gp0f_bready, gp0f_araddr,
+                              gp0f_arlen, gp0f_arid, gp0f_arvalid, gp0f_rready};
 
     cadr_gp0_default u_gp0_rest (
         .clk(clk), .rst(gp0_rst_s),
@@ -2252,49 +1978,24 @@ module cadr_arty #(
     // has the argument --- and what it recovers is a wedged Unibus after
     // muir is killed with a request standing, not the machine, which an NXM
     // has already hit 4.25 us in.
-    //
-    // **THE CADR'S ALONE** (contract Q5), as the connector is.  On QUUX the
-    // split's debug page goes to a default slave of its own, so that a read
-    // there is answered with an error and never left standing, and the
-    // window's side of the machine's cable stands idle.
-    if (MACHINE == "cadr") begin : g_dbg_window
-      cadr_debug_window #(
-          .REG_BASE(32'h8000_1000)
-      ) u_debug_window (
-          .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
-          .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
-          .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
-          .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
-          .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
-          .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
-          .s_bready(gp1d_bready),
-          .s_araddr(gp1d_araddr), .s_arlen(gp1d_arlen), .s_arid(gp1d_arid),
-          .s_arvalid(gp1d_arvalid), .s_arready(gp1d_arready),
-          .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
-          .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready),
-          .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-          .dbd_out(dbd_to_machine),
-          .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
-      );
-    end else begin : g_no_dbg_window
-      cadr_gp0_default u_gp1_dbg_rest (
-          .clk(clk), .rst(gp1_rst),
-          .s_awvalid(gp1d_awvalid), .s_awid(gp1d_awid), .s_awready(gp1d_awready),
-          .s_wlast(gp1d_wlast), .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
-          .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
-          .s_bready(gp1d_bready),
-          .s_arlen(gp1d_arlen), .s_arid(gp1d_arid), .s_arvalid(gp1d_arvalid),
-          .s_arready(gp1d_arready),
-          .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
-          .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready)
-      );
-      assign dbg_in_req     = 1'b0;
-      assign dbg_in_wr      = 1'b0;
-      assign dbg_in_a       = 2'd0;
-      assign dbd_to_machine = 16'd0;
-      logic unused_dbg_window;
-      assign unused_dbg_window = ^{gp1d_awaddr, gp1d_awlen, gp1d_wdata, gp1d_wstrb, gp1d_araddr};
-    end
+    cadr_debug_window #(
+        .REG_BASE(32'h8000_1000)
+    ) u_debug_window (
+        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
+        .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
+        .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
+        .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
+        .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
+        .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
+        .s_bready(gp1d_bready),
+        .s_araddr(gp1d_araddr), .s_arlen(gp1d_arlen), .s_arid(gp1d_arid),
+        .s_arvalid(gp1d_arvalid), .s_arready(gp1d_arready),
+        .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
+        .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready),
+        .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+        .dbd_out(dbd_to_machine),
+        .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
+    );
 
     cadr_gp0_default u_gp1_rest (
         .clk(clk), .rst(gp1_rst),
@@ -2332,8 +2033,6 @@ module cadr_arty #(
     logic        disp_asleep, disp_sleep_fitted;
 
     cadr_console #(
-        .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
-        .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
         .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
     ) u_console (
         .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
@@ -2474,11 +2173,10 @@ module cadr_arty #(
       cadr_display_out #(
           .BASE(cadr_ddr_map::DISPLAY_BASE),
           .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
-          // QUUX shows the video controller, 1280 by 1024 at 40 words a line, filling the
-          // raster; the CADR its first board's 768 by 963 at 24.
-          .PIC_W         (MACHINE == "quux" ? VIDEO_W : 768),
-          .PIC_H         (MACHINE == "quux" ? VIDEO_H : 963),
-          .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : 24)
+          // The first board's 768 by 963 at 24 words a line.
+          .PIC_W         (768),
+          .PIC_H         (963),
+          .WORDS_PER_LINE(24)
       ) u_display (
           .clk(clk), .rst(disp_rst), .fabric_rst(rst),
           .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
@@ -2689,7 +2387,6 @@ module cadr_arty #(
     // whatever computes them, out of the bin.
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
-    assign mem_rline = '0;
     assign ddr_error = 1'b0;
     // And no port to answer anything, so the audit's port clause is silent by
     // construction. Its word 8 reads zero, which on this board is the truth.
@@ -2799,12 +2496,6 @@ module cadr_arty #(
     assign kbd_strobe     = 1'b0;
     assign kbd_code       = 24'd0;
     assign mouse_lines    = 7'h7F;
-    // And QUUX's host side, idle: a clock nobody sets and a file device
-    // nobody serves.
-    assign host_we        = 1'b0;
-    assign host_widx      = 4'd0;
-    assign host_wdata     = 32'd0;
-    assign host_ridx      = 4'd0;
 
   end
 
@@ -2925,7 +2616,7 @@ module cadr_arty #(
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
-                   mem_req, mem_write, mem_line, mem_beats, mem_wide, mem_drained, store_miss, ch_active,
+                   mem_req, mem_write, store_miss, ch_active,
                    machrun, errhalt, stathalt, n_boot, ddr_error,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
@@ -2951,10 +2642,7 @@ module cadr_arty #(
                    // reach nobody and are folded here.
                    con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
                    con_hdmi_out, con_hdmi_rotate,
-                   dbg_wire_state,
-                   // QUUX's host side, which the face reads on a QUUX board
-                   // with a processing system, and nobody on any other.
-                   host_rdata};
+                   dbg_wire_state};
     end
   end
 

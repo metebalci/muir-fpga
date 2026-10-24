@@ -122,17 +122,11 @@ set_false_path -to   $dbg_pads
 # its tick.  `sta_check.tcl` asserts what it reached --- these two registers of
 # the sender and no other register of the connector --- because a constraint
 # that reaches nothing looks exactly like one that works.
-#
-# **THE CADR'S ALONE** (contract Q5), in the top level's `g_dbg_cable`.  QUUX
-# has no debug cable, so on a QUUX build the collection is empty, the clause
-# is not written, and `sta_check.tcl` requires both of those.
 # grid: 60 ns
-set cable_frame [get_pins -nowarn {g_dbg_cable.u_dbg_cable|u_tx|tx_frame[*]|d
-                                   g_dbg_cable.u_dbg_cable|u_tx|tx_d[*]|d}]
-if {[get_collection_size $cable_frame] > 0} {
-    set_multicycle_path -setup 6 -to $cable_frame
-    set_multicycle_path -hold  5 -to $cable_frame
-}
+set cable_frame [get_pins -nowarn {u_dbg_cable|u_tx|tx_frame[*]|d
+                                   u_dbg_cable|u_tx|tx_d[*]|d}]
+set_multicycle_path -setup 6 -to $cable_frame
+set_multicycle_path -hold  5 -to $cable_frame
 
 # ------------------------------------------------ the machine's relaxed set
 #
@@ -161,64 +155,18 @@ set fast [add_to_collection [get_registers -nowarn {*u_phase_gen*}] \
                   vco_acc arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
                   deskewed ub_acked ub_loadmd tpclk_q
                   md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]]
-# And QUUX's registers that run every tick, which match nothing on the CADR:
-# `cadr_machine.xdc` names them and says why.  A generate block's name comes
-# before the leaf's here, so the patterns end at the leaf.  QUUX's clocks
-# are out whole here, the status a microcycle reads with them, and
-# `quux_de25.sdc` gives that status and the microsecond clock the time the
-# microcycle really leaves them.
-set quux_fast [get_registers -nowarn {u_machine|processor|g_quux_tick.clocks|*
-                                      u_machine|g_quux_feature_page.feature_page|taken
-                                      u_machine|g_quux_feature_page.feature_page|held
-                                      u_machine|g_quux_feature_page.feature_page|held[*]
-                                      u_machine|g_quux_feature_page.feature_page|input_regs|*
-                                      u_machine|processor|*div_t u_machine|processor|*div_t[*]
-                                      u_machine|processor|*div_start u_machine|processor|*div_start[*]
-                                      u_machine|processor|*muldiv|dv_*
-                                      u_machine|processor|*g_quux_hold.hold_mclk_q
-                                      u_machine|processor|*g_quux_hold.hold_rip
-                                      u_machine|processor|*g_quux_hold.rip_tail u_machine|processor|*g_quux_hold.rip_tail[*]
-                                      u_machine|processor|*div_md u_machine|processor|*div_strobed
-                                      u_machine|processor|*div_have
-                                      u_machine|processor|iwe_q
-                                      u_machine|processor|iwa_q u_machine|processor|iwa_q[*]
-                                      u_machine|processor|iwd_q u_machine|processor|iwd_q[*]
-                                      u_machine|processor|g_quux_pdl.redir_rd_q
-                                      u_machine|processor|redir_word u_machine|processor|redir_word[*]}]
-if {[get_collection_size $quux_fast] > 0} {
-    set fast [add_to_collection $fast $quux_fast]
-}
-# The disk is `disk` in `cadr_machine.sv`'s generate block for either
-# machine: the CADR's controller in `g_cadr_disk`, QUUX's block-disk in
-# `g_quux_disk`.  Each pattern matches the one that is built.
-# And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
-# grant, its countdowns and the cache's order and valid bits move on every
-# tick.  What the cache holds of the microcycle is given back its time in
-# `quux_de25.sdc`.  And revision 14's memory system, `quux_mmu.sv`, out
-# whole but for the register page's words, the redirect's copies, the TLB
-# and the edge's registers (`e_*`), with the redirect's word and its strobe:
-# `cadr_machine.xdc` says why.
-set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
+set out_whole [get_registers -nowarn {u_machine|disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
                                       u_machine|memory|iob|*
-                                      u_machine|memory|busint_regs|*
-                                      u_machine|memory|g_quux_video.video|*
-                                      u_machine|memory|g_quux_port.port|*
-                                      u_machine|processor|g_rev14_mmu.mmu|*}]
+                                      u_machine|memory|busint_regs|*}]
 set held [get_registers -nowarn [concat \
-    [cadr_leaves {u_machine|g_cadr_disk.disk|} {mine which}] \
-    [cadr_leaves {u_machine|g_quux_disk.disk|} {mine which}] \
+    [cadr_leaves {u_machine|disk|} {mine which}] \
     [list {u_machine|audit|first_*}] \
     [cadr_leaves {u_machine|audit|} {micro word}] \
     [cadr_leaves {u_machine|memory|tv|} {ctl fb which}] \
     [cadr_leaves {u_machine|memory|g_color_tv.tv_color|} {ctl fb which}] \
-    [cadr_leaves {u_machine|memory|g_quux_video.video|} {ctl fb}] \
     [cadr_leaves {u_machine|memory|iob|} {sel kbm clkgrp chgrp sergrp wr which}] \
-    [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}] \
-    [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {directory ephemeral pointer_types
-                                                         pdl_base pdl_head}] \
-    [list {u_machine|processor|g_rev14_mmu.mmu|e_*}] \
-    [list {u_machine|processor|g_rev14_mmu.mmu|tlb|*}]]]
+    [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}]]]
 set slow [remove_from_collection $machine $fast]
 set slow [remove_from_collection $slow $out_whole]
 set slow [add_to_collection $slow $held]
@@ -265,11 +213,8 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 set split_pr {u_machine|processor}
 set split_latch_addr [get_registers -nowarn [concat \
     [cadr_leaves "${split_pr}|" {ir pdl_ptr pdl_idx spcptr}]]]
-# Revision 14's `rw_fwd`, the redirect's held PDL word's select, is a latch
-# as the PDL buffer's output is (`cadr_machine.xdc`).
 set split_latch [get_keepers -nowarn [list "${split_pr}|amem_rtl_*" "${split_pr}|mmem_rtl_*" \
-                                           "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*" \
-                                           "${split_pr}|g_quux_pdl.rw_fwd"]]
+                                           "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*"]]
 set split_dmem [get_keepers -nowarn [list "${split_pr}|dmem_rtl_*"]]
 set split_cstore [get_keepers -nowarn [list "${split_pr}|imem_rtl_*" "${split_pr}|prom_mem_rtl_*"]]
 set split_md [get_registers -nowarn [cadr_leaves "${split_pr}|" {md}]]

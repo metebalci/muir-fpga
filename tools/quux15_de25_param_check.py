@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Whether revision 15's DE25-Nano top level hands its modules the board's
+"""Whether QUUX's DE25-Nano top level hands its modules the board's
 figures, read at the instances.
 
     python3 tools/quux15_de25_param_check.py <the top's sources>
@@ -148,12 +148,12 @@ def top_param(tree, name):
     return found[0] if len(found) == 1 else None
 
 
-def elaborate(period, sources, scratch, revision=15):
-    """The top's tree at `period`, or at its own when None, and at QUUX's
-    `revision`; None if it fails."""
+def elaborate(period, sources, scratch):
+    """The top's tree at `period`, or at its own when None; None if it
+    fails."""
     at = "PERIOD=%d" % period if period is not None else "the top's own PERIOD"
     base = [VERILATOR, "-Irtl/machine", "-Irtl/plumbing", "-DCADR_DDR_MAP_DE25_NANO",
-            "--top-module", TOP, "-GREVISION=%d" % revision] + (["-GPERIOD=%d" % period] if period is not None else [])
+            "--top-module", TOP] + (["-GPERIOD=%d" % period] if period is not None else [])
     rc, out = run(base[:1] + ["--lint-only", "-Wall"] + base[1:] + sources)
     if rc != 0:
         say(False, "%s: the lint failed:\n%s" % (at, out.strip()))
@@ -182,13 +182,13 @@ def own_period(sources, scratch):
     say(got == BINDING, what if got == BINDING else "%s --- it is tied to %s" % (what, got))
 
 
-def at_period(period, sources, scratch, revision=15):
-    tree = elaborate(period, sources, scratch, revision)
+def at_period(period, sources, scratch):
+    tree = elaborate(period, sources, scratch)
     if tree is None:
         return
     w, h = VIDEO
-    at = "REVISION=%d, PERIOD=%d" % (revision, period)
-    ethernet_page_check.figures(tree, TOP, "u_h2f_split", revision, at, say)
+    at = "PERIOD=%d" % period
+    ethernet_page_check.figures(tree, TOP, "u_h2f_split", at, say)
 
     # The period in units of 0.5 ns, at the core and at the face.
     got = pin_const(tree, "u_core", "period")
@@ -259,9 +259,10 @@ def main():
     scratch = tempfile.mkdtemp(prefix="quux15_de25_param.", dir="build")
     try:
         own_period(sources, scratch)
-        for r in (15, 16):
-            for p in PERIODS:
-                at_period(p, sources, scratch, r)
+        for p in PERIODS:
+            at_period(p, sources, scratch)
+        ethernet_page_check.refuses_another(run, [VERILATOR, "-Irtl/machine", "-Irtl/plumbing",
+                                                  "-DCADR_DDR_MAP_DE25_NANO", "--top-module", TOP], sources, say)
     finally:
         shutil.rmtree(scratch, True)
     if failures:

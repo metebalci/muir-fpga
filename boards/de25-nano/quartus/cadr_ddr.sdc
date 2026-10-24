@@ -41,21 +41,9 @@ set ddr_cycle [get_registers -nowarn {u_machine|processor|*
                                       u_machine|memory|spy_registers|*
                                       u_machine|memory|tv|fb
                                       u_machine|memory|g_color_tv.tv_color|fb}]
-# Only where it names something: QUUX's build removes the CADR's adapter.
-if {[get_collection_size $ddr_contract] > 0} {
-    # grid: 80 ns
-    set_multicycle_path -setup 8 -from $ddr_cycle -to $ddr_contract
-    set_multicycle_path -hold  7 -from $ddr_cycle -to $ddr_contract
-}
-
-# **AND NOTHING FOR QUUX'S ADAPTER**, `quux_axi_master.sv`: every word it
-# takes is one a register of QUUX's memory port loaded a tick before (the
-# cache's line fills and its write buffer's drain) or a block-disk transfer
-# word the channel loaded three ticks before, and the processor's own cycles
-# never reach it (contract Q7: no device bus, and the frame buffer is the
-# cache's).  So it keeps the tick, which `sta_check.tcl` asserts.  Nothing on
-# the CADR, which has not got the adapter.
-set qddr_port [get_registers -nowarn {u_machine|memory|g_quux_port.port|*}]
+# grid: 80 ns
+set_multicycle_path -setup 8 -from $ddr_cycle -to $ddr_contract
+set_multicycle_path -hold  7 -from $ddr_cycle -to $ddr_contract
 
 # ------------------------------------------ the debug cable's carrier latch
 #
@@ -104,10 +92,7 @@ set qddr_port [get_registers -nowarn {u_machine|memory|g_quux_port.port|*}]
 # CC halts the debuggee before it does anything else.  A two-tick arrival
 # inside a twenty-five-tick window is invisible to it.
 # grid: 60 ns
-# The CADR's alone, in the top level's `g_dbg_window` (contract Q5): on QUUX
-# there is no window and the collection is empty, which `sta_check.tcl`
-# requires.
-set cable_word [get_pins -nowarn {g_dbg_window.u_debug_window|sts_dbd[*]|d}]
+set cable_word [get_pins -nowarn {u_debug_window|sts_dbd[*]|d}]
 set_multicycle_path -setup 6 -to $cable_word
 set_multicycle_path -hold  5 -to $cable_word
 

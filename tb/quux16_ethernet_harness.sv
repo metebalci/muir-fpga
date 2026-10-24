@@ -4,7 +4,7 @@
 // QUUX revision 16's Ethernet device from both of its sides:
 // `rtl/plumbing/quux_ed_face.sv`, the page Linux reaches over the
 // processor's port, with revision 16's register-page devices behind it
-// (`rtl/machine/quux15_devices.sv` with `ETHERNET`, and so
+// (`rtl/machine/quux15_devices.sv`, and so
 // `rtl/machine/quux16_ethernet.sv`), as a board's top joins them through the
 // core.  The testbench drives the face over AXI through
 // `quux-ethernet-device`'s own `qed_face_fabric.c`, and the devices as the
@@ -120,13 +120,9 @@ module quux16_ethernet_harness #(
   logic [31:0] bd_st_cmd, microseconds, fd_rdata;
   logic [27:0] bd_st_clp, bd_st_da;
   logic [63:0] ro_dev;
-  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
-  logic [8:0]  chaos_tx_len;
-  logic [15:0] chaos_tx_word, chaos_csr;
-  logic [11:0] chaos_bits;
   /* verilator lint_on UNUSEDSIGNAL */
 
-  quux15_devices #(.MAIN_WORDS(MAIN_WORDS), .ETHERNET(1'b1)) dev (
+  quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) dev (
       .clk(clk), .rst(mach_rst), .timers_rst(1'b0), .period(7'd34), .rtc_start(32'd0),
       .rd_v(rd_v), .rd_k(rd_k), .rd_word(rd_word), .rd_built(rd_built), .rd_release(1'b1),
       .wr_v(wr_v), .wr_k(wr_k), .wr_data(wr_data), .wr_built(wr_built),
@@ -145,13 +141,6 @@ module quux16_ethernet_harness #(
       .bd_fin_lma(28'd0), .bd_fin_da(29'd0), .bd_fin_past_end(1'b0), .bd_fin_nxm(1'b0),
       .bd_flight(1'b0),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'h7F), .kbd_boot(kbd_boot), .kbd_busy(kbd_busy),
-      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
-      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
-      .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
-      .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0),
-      .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0), .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0),
-      .chaos_cbl_busy(1'b0), .chaos_rx_start(1'b0), .chaos_rx_stored(12'd0),
-      .chaos_rx_store(1'b0), .chaos_bits(chaos_bits),
       .microseconds(microseconds), .int_now(int_now),
       .snap(1'b0), .ro_k(7'd0), .ro_dev(ro_dev), .bow(bow)
   );
@@ -160,8 +149,8 @@ module quux16_ethernet_harness #(
   // 245 and 251 are made from.
   assign dbg_host_we   = host_we;
   assign dbg_host_widx = host_widx;
-  assign dbg_tx_cons   = dev.g_ethernet.eth_regs.tx_cons;
-  assign dbg_rx_cons   = dev.g_ethernet.eth_regs.rx_cons;
+  assign dbg_tx_cons   = dev.eth_regs.tx_cons;
+  assign dbg_rx_cons   = dev.eth_regs.rx_cons;
 
 endmodule
 

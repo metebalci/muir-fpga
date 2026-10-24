@@ -457,84 +457,6 @@ proc assert_clause_timing {period cycles what from to} {
     }
 }
 
-# A CLAUSE WRITTEN THROUGH A RAM'S PINS TOOK: `assert_clause_timing` with a
-# `-through`, for revision 14's TLB, whose address and whose words and
-# enables `quux_de25.sdc` gives different times though they end at the same
-# keepers.  `from` may be empty, for every path through the pins.
-proc assert_through_timing {period cycles what from through to} {
-    global failures
-    set want [expr {$period * $cycles}]
-    if {[get_collection_size $through] == 0 || [get_collection_size $to] == 0} {
-        puts "sta: FAIL: $what: the clause's collections are empty, so it reached nothing"
-        incr failures
-        return
-    }
-    if {$from eq ""} {
-        set paths [get_timing_paths -setup -through $through -to $to -npaths 200000 -nworst 1]
-    } else {
-        set paths [get_timing_paths -setup -from $from -through $through -to $to -npaths 200000 -nworst 1]
-    }
-    set hist {}
-    set over 0
-    set first ""
-    foreach_in_collection p $paths {
-        set rel [get_path_info $p -clock_relationship]
-        dict incr hist [format %.3f $rel]
-        if {$rel > $want + 0.001} {
-            incr over
-            if {$first eq ""} {
-                set first "[get_node_info -name [get_path_info $p -from]] -> [get_node_info -name [get_path_info $p -to]] at $rel ns"
-            }
-        }
-    }
-    set key [format %.3f $want]
-    set n [expr {[dict exists $hist $key] ? [dict get $hist $key] : 0}]
-    if {$over > 0} {
-        puts "sta: FAIL: $what: $over paths ask for more than $key ns; first: $first"
-        incr failures
-    } elseif {$n == 0} {
-        puts "sta: FAIL: $what: no path asks for $key ns, so the clause reached nothing; paths: [said $hist]"
-        incr failures
-    } else {
-        puts "sta: $what: $n paths at $key ns and none above it: the clause took"
-    }
-}
-
-# **REVISION 14'S TLB, PORT BY PORT** (contract G3 revision 14, A14.15): the
-# worst path out of each port and into each port's address, at this corner,
-# each port told apart by the address that reaches it, since a tool may swap
-# a true dual-port RAM's ports: the RTL's port A is the one its own pending
-# write's index, `pa_idx`, reaches, and port B the one `pb_idx` reaches.
-# Printed as
-# `sta: TLB` lines, which `build.sh` keeps in its log.
-proc sta_tlb_line {label paths} {
-    set n 0
-    foreach_in_collection p $paths {
-        puts [format "sta: TLB %-30s slack %7.3f of %7.3f ns, %2d levels, %s -> %s" $label \
-                  [get_path_info $p -slack] [get_path_info $p -clock_relationship] \
-                  [get_path_info $p -num_logic_levels] \
-                  [get_node_info -name [get_path_info $p -from]] [get_node_info -name [get_path_info $p -to]]]
-        incr n
-    }
-    if {$n == 0} { puts "sta: TLB $label: no path" }
-}
-proc sta_tlb_report {} {
-    set tlb $::quux_tlb
-    set pa [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {pa_idx}]]
-    set pb [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {pb_idx}]]
-    foreach pp {a b} {
-        set addr [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}addr*"]
-        set dout [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}dataout*"]
-        set ina [get_collection_size [get_timing_paths -setup -npaths 1 -from $pa -through $addr -to $tlb]]
-        set inb [get_collection_size [get_timing_paths -setup -npaths 1 -from $pb -through $addr -to $tlb]]
-        set rtl [expr {($ina && !$inb) ? "A" : (($inb && !$ina) ? "B" : "?")}]
-        puts "sta: TLB the M20K's port [string toupper $pp] is the RTL's port $rtl (port A's pending index $ina, port B's $inb)"
-        sta_tlb_line "port $rtl out, worst" [get_timing_paths -setup -npaths 1 -through $dout]
-        sta_tlb_line "port $rtl out, every-tick regs" [get_timing_paths -setup -npaths 1 -through $dout -to $::split_every_tick]
-        sta_tlb_line "port $rtl address in, worst" [get_timing_paths -setup -npaths 1 -through $addr -to $tlb]
-    }
-}
-
 # The same leaf patterns `cadr_de25.sdc` names registers by.
 if {[llength [info procs cadr_leaves]] == 0} {
     proc cadr_leaves {prefix names} {
@@ -543,11 +465,6 @@ if {[llength [info procs cadr_leaves]] == 0} {
         return $patterns
     }
 }
-
-# QUUX drops the Unibus adapter, its map and the debug interface (muir's
-# contract Q5), so the collections that name them are empty there, and are
-# required to be.
-set sta_quux [expr {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"}]
 
 # THE THREE COLLECTIONS THEMSELVES, as `cadr_de25.sdc` left them.  An empty
 # one is a clause that reached nothing, whatever the paths below then say.
@@ -566,12 +483,7 @@ foreach {sta_what sta_var} {{the relaxed set} slow {its tick-rate exclusions} fa
     }
     set n [get_collection_size [set ::$sta_var]]
     puts "sta: $sta_what: $n"
-    if {$sta_quux && $sta_var eq "ub_strobe"} {
-        if {$n != 0} {
-            puts "sta: FAIL: $sta_what: $n on QUUX, which has no Unibus map"
-            incr failures
-        }
-    } elseif {$n == 0 && $sta_var ne "bus_word"} {
+    if {$n == 0 && $sta_var ne "bus_word"} {
         puts "sta: FAIL: $sta_what is empty"
         incr failures
     }
@@ -619,11 +531,8 @@ if {[get_collection_size $probe] == 0} {
     assert_instance_timing $tick 8 g_probe.u_probe {stable_q}
 }
 
-# MIT'S DEBUG CABLE ON JP1, which is in EVERY CADR build of this board and not
+# MIT'S DEBUG CABLE ON JP1, which is in EVERY build of this board and not
 # only a memory one: a board is always a debuggee.  Two things are asked of it.
-# **QUUX HAS NO DEBUG CABLE** (contract Q5), so on a QUUX build the opposite is
-# asked: the collection is empty, and no register of the connector, the join
-# or the window is in the design at all.
 #
 # **THE COLLECTION IS NOT EMPTY**, because `cadr_de25.sdc`'s clause names two
 # registers of one instance and a renamed register would leave it reaching
@@ -634,37 +543,22 @@ if {[get_collection_size $probe] == 0} {
 # collection's size: the connector's two receivers count ticks --- the strobe's
 # synchronizer, the frame counter, the gap counter and the dead man --- and a
 # counter given six ticks is a counter that no longer counts.  The receivers
-# are under `g_dbg_cable.u_dbg_cable|u_rx_fwd` and `...|u_rx_ret`, so they are
+# are under `u_dbg_cable|u_rx_fwd` and `...|u_rx_ret`, so they are
 # inside the instance this asks about and are swept up by its `rest`.
 if {![info exists ::cable_frame]} {
     puts "sta: FAIL: cadr_de25.sdc left no collection named cable_frame"
     incr failures
 } else {
     set n [get_collection_size $::cable_frame]
-    if {$sta_quux && $n != 0} {
-        puts "sta: FAIL: the debug cable's frame pins: $n on QUUX, which has no debug cable"
-        incr failures
-    } elseif {$sta_quux} {
-        puts "sta: the debug cable's frame pins: 0, QUUX having no debug cable"
-    } elseif {$n == 0} {
+    if {$n == 0} {
         puts "sta: FAIL: the debug cable's frame pins: 0, so the clause reached nothing"
         incr failures
     } else {
         puts "sta: the debug cable's frame pins: $n"
     }
 }
-if {!$sta_quux} {
-    # grid: 60 ns
-    assert_instance_timing $tick 6 g_dbg_cable.u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
-} else {
-    set sta_cable [get_registers -nowarn {*u_dbg_cable|* *u_dbg_join|* *u_debug_window|*}]
-    if {[get_collection_size $sta_cable] > 0} {
-        puts "sta: FAIL: [get_collection_size $sta_cable] registers of the debug cable's connector, join or window on QUUX, which has none"
-        incr failures
-    } else {
-        puts "sta: no register of the debug cable's connector, join or window: QUUX has none"
-    }
-}
+# grid: 60 ns
+assert_instance_timing $tick 6 u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
 # **AND THOSE REGISTERS ARE THE ONE THING OUTSIDE THE MACHINE THE SCOPED
 # INVARIANT BELOW LETS THROUGH**, on the same footing as the debug window's
 # `sts_dbd` and the memory adapter's address and data registers.  The sender
@@ -684,7 +578,7 @@ if {!$sta_quux} {
 # clause's own collection, so it cannot be wider either: `cable_frame` holds
 # one `|d` pin for each register the clause relaxes, and an exemption naming
 # more registers than that has grown past the argument it stands on.
-set cable_exempt [get_registers -nowarn [cadr_leaves {g_dbg_cable.u_dbg_cable|u_tx|} {tx_frame tx_d}]]
+set cable_exempt [get_registers -nowarn [cadr_leaves {u_dbg_cable|u_tx|} {tx_frame tx_d}]]
 if {[info exists ::cable_frame]
     && [get_collection_size $cable_exempt] != [get_collection_size $::cable_frame]} {
     puts "sta: FAIL: the connector's exemption names [get_collection_size $cable_exempt] registers\
@@ -727,7 +621,7 @@ if {![info exists ::dbg_pads]} {
 # default slaves' reset cut at their first register and nowhere else.
 set ddr_exempt [get_registers -nowarn {u_memory|u_axi|m_axi_awaddr[*] u_memory|u_axi|m_axi_araddr[*]
                                        u_memory|u_axi|m_axi_wdata[*]
-                                       g_dbg_window.u_debug_window|sts_dbd[*]}]
+                                       u_debug_window|sts_dbd[*]}]
 if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     puts "sta: the memory port is not in this build"
 } else {
@@ -758,13 +652,6 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
             continue
         }
         set n [get_collection_size [set ::$sta_var]]
-        # QUUX has no debug interface, so the machine drives no word to latch.
-        if {$sta_quux && $sta_var eq "cable_word"} { set sta_want 0 }
-        # And QUUX's port drives the bridge through its own adapter, whose
-        # requests are its memory port's, registered a tick before the
-        # adapter takes them and not the Xbus's with 80 ns of setup: the
-        # CADR's adapter the clause names is removed on a QUUX build.
-        if {$sta_quux && $sta_var eq "ddr_contract"} { set sta_want 0 }
         if {$n != $sta_want} {
             puts "sta: FAIL: $sta_what: $n, wanting $sta_want"
             incr failures
@@ -772,83 +659,49 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
             puts "sta: $sta_what: $n"
         }
     }
-    if {!$sta_quux} {
-        # The adapter's address and data at the bus's 80 ns from the
-        # processor's registers and at the tick from everything else, so each
-        # is reached at two requirements and is left out of the instance
-        # question: no other register of the adapter at eight.
-        set a_all [get_registers -nowarn {u_memory|u_axi|*}]
-        set a_named [get_registers -nowarn [concat \
-            [cadr_leaves {u_memory|u_axi|} {m_axi_awaddr m_axi_araddr m_axi_wdata}]]]
-        set a_rest [remove_from_collection $a_all $a_named]
-        set a_req [requirements [data_pins $a_rest]]
-        set a_want [format %.3f [expr {$tick * 8}]]
-        if {[get_collection_size $a_all] == 0} {
-            puts "sta: FAIL: the CADR's adapter, u_memory|u_axi, has no registers"
-            incr failures
-        } elseif {[dict exists $a_req $a_want]} {
-            puts "sta: FAIL: [dict get $a_req $a_want] other registers of the CADR's adapter ask for $a_want ns"
-            incr failures
-        } else {
-            puts "sta: the CADR's adapter: [get_collection_size $a_rest] registers besides its address and data, none at $a_want ns"
-        }
-        # And `cadr_ddr.sdc`'s clause from the processor alone: the eight
-        # from its registers, and one tick from the disk's channel, the
-        # Unibus map's window and the arbiter, which pass through the same
-        # bridge without the bus's time.
-        # grid: 80 ns
-        assert_clause_timing $tick 8 "the processor's cycle into the adapter" \
-            $::ddr_cycle $a_named
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the disk's channel into the adapter" \
-            [get_registers -nowarn {u_machine|g_cadr_disk.disk|*}] $a_named
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the Unibus map's window into the adapter" \
-            [get_registers -nowarn {u_machine|memory|busint_regs|*}] $a_named
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the Xbus arbiter into the adapter" \
-            [get_registers -nowarn {u_machine|memory|ch_own u_machine|memory|mp_own u_machine|memory|owner_d[*]}] $a_named
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
-            [get_registers -nowarn {u_machine|memory|g_cadr_busint.busint|*}] $a_named
+    # The adapter's address and data at the bus's 80 ns from the
+    # processor's registers and at the tick from everything else, so each
+    # is reached at two requirements and is left out of the instance
+    # question: no other register of the adapter at eight.
+    set a_all [get_registers -nowarn {u_memory|u_axi|*}]
+    set a_named [get_registers -nowarn [concat \
+        [cadr_leaves {u_memory|u_axi|} {m_axi_awaddr m_axi_araddr m_axi_wdata}]]]
+    set a_rest [remove_from_collection $a_all $a_named]
+    set a_req [requirements [data_pins $a_rest]]
+    set a_want [format %.3f [expr {$tick * 8}]]
+    if {[get_collection_size $a_all] == 0} {
+        puts "sta: FAIL: the CADR's adapter, u_memory|u_axi, has no registers"
+        incr failures
+    } elseif {[dict exists $a_req $a_want]} {
+        puts "sta: FAIL: [dict get $a_req $a_want] other registers of the CADR's adapter ask for $a_want ns"
+        incr failures
     } else {
-        # QUUX's adapter, `cadr_ddr.sdc`: no clause, so no register of it at
-        # the bus's 80 ns, its address and data among them, and its words at
-        # the tick from the port's registers and from block-disk's.
-        set q_all [get_registers -nowarn {u_memory|u_qaxi|*}]
-        set q_named [get_registers -nowarn [concat \
-            [cadr_leaves {u_memory|u_qaxi|} {a_q wd_q beats_q wide_q line}]]]
-        set q_req [requirements [data_pins $q_all]]
-        set q_want [format %.3f [expr {$tick * 8}]]
-        if {[get_collection_size $q_all] == 0} {
-            puts "sta: FAIL: QUUX's adapter, u_memory|u_qaxi, has no registers"
-            incr failures
-        } elseif {[dict exists $q_req $q_want]} {
-            puts "sta: FAIL: [dict get $q_req $q_want] registers of QUUX's adapter ask for $q_want ns"
-            incr failures
-        } else {
-            puts "sta: QUUX's adapter: [get_collection_size $q_all] registers, none at $q_want ns"
-        }
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
-            $::qddr_port $q_named
-        # And the block-disk's transfer words and the arbiter that hands
-        # them the bus: one tick, which a clause written to the adapter
-        # would have made eight.
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "block-disk's words into QUUX's adapter" \
-            [get_registers -nowarn {u_machine|g_quux_disk.disk|*}] $q_named
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the Xbus arbiter into QUUX's adapter" \
-            [get_registers -nowarn {u_machine|memory|ch_own u_machine|memory|owner_d[*]}] $q_named
+        puts "sta: the CADR's adapter: [get_collection_size $a_rest] registers besides its address and data, none at $a_want ns"
     }
+    # And `cadr_ddr.sdc`'s clause from the processor alone: the eight
+    # from its registers, and one tick from the disk's channel, the
+    # Unibus map's window and the arbiter, which pass through the same
+    # bridge without the bus's time.
+    # grid: 80 ns
+    assert_clause_timing $tick 8 "the processor's cycle into the adapter" \
+        $::ddr_cycle $a_named
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the disk's channel into the adapter" \
+        [get_registers -nowarn {u_machine|disk|*}] $a_named
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the Unibus map's window into the adapter" \
+        [get_registers -nowarn {u_machine|memory|busint_regs|*}] $a_named
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the Xbus arbiter into the adapter" \
+        [get_registers -nowarn {u_machine|memory|ch_own u_machine|memory|mp_own u_machine|memory|owner_d[*]}] $a_named
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
+        [get_registers -nowarn {u_machine|memory|busint|*}] $a_named
     # And the debug cable's carrier: `sts_dbd` at the cable's six ticks and no
     # other register of the window, which is `cadr_ddr.sdc`'s split for it and
     # the reason that clause names the `|d` pins.
-    if {!$sta_quux} {
-        # grid: 60 ns
-        assert_instance_timing $tick 6 g_dbg_window.u_debug_window {sts_dbd}
-    }
+    # grid: 60 ns
+    assert_instance_timing $tick 6 u_debug_window {sts_dbd}
     # And a cut that reached its registers leaves no timed path out of them.
     if {[info exists ::ddr_to_hps] && [get_collection_size $::ddr_to_hps] > 0} {
         set timed [get_collection_size [get_timing_paths -setup -from $::ddr_to_hps -npaths 100]]
@@ -891,40 +744,20 @@ assert_constraints_scoped $exempt
 # At a 10 ns grid this count is shared: the bus's setup below is eight ticks
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here.  The instance assertions are the sharp half.
-if {!$sta_quux} {
-    # grid: 75 ns (shared with 80 ns)
-    assert_multicycle_applied $tick 8
-} else {
-    # QUUX's relaxed set is K ticks, `quux_de25.sdc`.
-    # sync: K
-    assert_multicycle_applied $tick 4
-}
+# grid: 75 ns (shared with 80 ns)
+assert_multicycle_applied $tick 8
 # The display board's word, relaxed at its `d` pins only.  Its three held
 # decodes are in the relaxed set, at the same eight ticks, and are left out of
 # both halves.
 # grid: 80 ns
-# QUUX's display is the video controller, which keeps no word relaxed at its pins,
-# and the CADR's board is not fitted there, so the clause has nothing to reach.
-if {!([info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux")} {
-    assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
-    # The color TV is the same module a second time, held the same two ways.
-    # grid: 80 ns
-    assert_instance_timing $tick 8 u_machine|memory|g_color_tv.tv_color {color_map pointer} {ctl fb which}
-}
+assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
+# The color TV is the same module a second time, held the same two ways.
+# grid: 80 ns
+assert_instance_timing $tick 8 u_machine|memory|g_color_tv.tv_color {color_map pointer} {ctl fb which}
 # The bus interface's register block: the Unibus map and its write buffer at
 # the register strobe.
-if {!$sta_quux} {
-    # grid: 150 ns
-    assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
-} else {
-    set sta_n [get_collection_size [get_registers -nowarn [cadr_leaves {u_machine|memory|busint_regs|} {wr_buf ub_map}]]]
-    if {$sta_n != 0} {
-        puts "sta: FAIL: QUUX keeps $sta_n registers of the Unibus map and its write buffer"
-        incr failures
-    } else {
-        puts "sta: QUUX has no Unibus map and no write buffer"
-    }
-}
+# grid: 150 ns
+assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
 # And the split paths `cadr_de25.sdc` narrows below the relaxed set, asked of
 # the collections it wrote them against.  The maps' and the dispatch memory's
 # writes have no clause on this board, and that file says why.
@@ -937,126 +770,32 @@ foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_ever
         puts "sta: $sta_var: [get_collection_size [set ::$sta_var]]"
     }
 }
-if {!$sta_quux} {
-    # grid: 75 ns - 1 tick
-    assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
-    # grid: 60 ns + 1 tick
-    assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
-    # grid: 60 ns - 1 tick
-    assert_clause_timing $tick 5 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
-    # grid: 60 ns - 1 tick
-    assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
-    # grid: 60 ns
-    assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
-    # grid: 0 ns + 2 ticks
-    assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_md_writes
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
-    # The registers that place the maps' and the dispatch memory's write in a hung
-    # microcycle are the tick's own, out of the relaxed set by name.
-    set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
-    # REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
-    # every tick whether the output flips on the next, and the NXM timer counts
-    # the flip and takes the timeout from it that tick.  A rename puts it back
-    # in the set, at eight.
-    set sta_vco [get_registers -nowarn [cadr_leaves {u_machine|memory|g_cadr_busint.busint|} {vco_acc}]]
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "REQTIM's oscillator" $sta_vco $::slow
-}
-# QUUX's clauses, `quux_de25.sdc`, at K = 4: every one the CADR's file has,
-# re-issued at QUUX's counts, each asked the same two ways.
-if {$sta_quux} {
-    if {![info exists ::quux_divider]} {
-        puts "sta: FAIL: quux_de25.sdc was not read, so QUUX's clauses are not in"
-        incr failures
-    } else {
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
-        # sync: K - 1
-        assert_clause_timing $tick 3 "out of the scratchpad latches" $::split_latch $::slow
-        # sync: K - 1
-        assert_clause_timing $tick 3 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
-        # sync: K
-        assert_clause_timing $tick 4 "the control store's word" $::split_cstore $::slow
-        # grid: 0 ns + 2 ticks
-        assert_clause_timing $tick 2 "into the every-tick registers" $::split_latch_addr $::split_every_tick
-        # sync: K - 2
-        assert_clause_timing $tick 2 "the second hop of the every-tick registers" $::split_every_tick $::slow
-        # sync: K
-        assert_clause_timing $tick 4 "MD into the writes' address" $::split_md $::split_md_writes
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
-        # sync: K - 1
-        assert_clause_timing $tick 3 "the latches into QUUX's divider" $::split_latch $::quux_divider
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" $::split_md_held $::quux_divider
-        # And what a microcycle reads of QUUX's clocks: the microsecond clock
-        # the whole microcycle.  Source 17's status, which had a tick less,
-        # is gone at revision 10, and so is `L` into the flags a page read
-        # takes: destination 3 writes only M (contract Q11), and nothing of
-        # `OB` reaches the timers.
-        # sync: K
-        assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" $::quux_usec_s $::slow
-        # QUUX's memory port: none of its tick registers relaxed, the address
-        # the cache holds at the microcycle, and nothing out of the cache
-        # relaxed: its word reaches MD in the tick after the lookup's.
-        # At revision 14 the cache's held address is also the side seam's,
-        # at the tick, so its relaxed paths are asked by their source, VMA.
-        if {[info exists ::env(REVISION)] && $::env(REVISION) eq "14"} {
-            # sync: K
-            assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port {} \
-                {cache|idx_q cache|tag_q cache|off_q}
-            # sync: K
-            assert_clause_timing $tick 4 "VMA into the cache's held address" \
-                [get_registers -nowarn [cadr_leaves {u_machine|processor|} {vma}]] \
-                [get_registers -nowarn [cadr_leaves {u_machine|memory|g_quux_port.port|cache|} {idx_q tag_q off_q}]]
-        } else {
-            # sync: K
-            assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port \
-                {cache|idx_q cache|tag_q cache|off_q}
-        }
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the cache's word into MD" $::quux_cache_held \
-            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md md_held}]]
-    }
-}
-# **REVISION 14'S CLAUSES** (`quux_de25.sdc`, the TLB's), asked the same two
-# ways: the TLB's word to the next edge and into the every-tick registers,
-# the edge's registers' K and K - 2; the edge's registers into it at K and
-# `md_held` at the tick; the side seam's looks into the cache at the tick;
-# and the memory system's registers at the tick but for what it holds of the
-# microcycle.  `REVISION` is the build's, from `build.sh`.
-if {$sta_quux && [info exists ::env(REVISION)] && $::env(REVISION) eq "14"} {
-    if {![info exists ::quux_tlb] || [get_collection_size $::quux_tlb] == 0} {
-        puts "sta: FAIL: revision 14 has no TLB keepers, so quux_de25.sdc's TLB clauses are on nothing"
-        incr failures
-    } elseif {![info exists ::quux_side_look] || [get_collection_size $::quux_side_look] == 0} {
-        puts "sta: FAIL: no net of the memory system's sd_look and sd_phys (side_net|kept), so"
-        puts "sta: FAIL: quux_de25.sdc's clause for the side seam's looks into the cache is on nothing;"
-        puts "sta: FAIL: the flow reads rtl/plumbing/agilex5/quux_keep_net.sv, which keeps them"
-        incr failures
-    } else {
-        puts "sta: revision 14's TLB: [get_collection_size $::quux_tlb] keepers;\
-              the side seam's looks through [get_collection_size $::quux_side_look] nets"
-        # sync: K
-        assert_clause_timing $tick 4 "the TLB's word to the next edge" $::quux_tlb $::slow
-        # sync: K - 2
-        assert_clause_timing $tick 2 "the TLB's word into the every-tick registers" $::quux_tlb $::split_every_tick
-        # sync: K
-        assert_clause_timing $tick 4 "the edge's registers into the TLB" \
-            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {ir vma md}]] $::quux_tlb
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "MD_HELD into the TLB" $::split_md_held $::quux_tlb
-        # grid: 0 ns + 1 tick
-        assert_through_timing $tick 1 "the side seam's looks into the cache" "" $::quux_side_look $::quux_cache_held
-        # sync: K
-        assert_instance_timing $tick 4 u_machine|processor|g_rev14_mmu.mmu \
-            {directory ephemeral pointer_types pdl_base pdl_head e_*}
-        sta_tlb_report
-    }
-}
+# grid: 75 ns - 1 tick
+assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
+# grid: 60 ns + 1 tick
+assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
+# grid: 60 ns
+assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
+# grid: 0 ns + 2 ticks
+assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_md_writes
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
+# The registers that place the maps' and the dispatch memory's write in a hung
+# microcycle are the tick's own, out of the relaxed set by name.
+set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
+# REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
+# every tick whether the output flips on the next, and the NXM timer counts
+# the flip and takes the timeout from it that tick.  A rename puts it back
+# in the set, at eight.
+set sta_vco [get_registers -nowarn [cadr_leaves {u_machine|memory|busint|} {vco_acc}]]
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "REQTIM's oscillator" $sta_vco $::slow
 # The transaction audit has no register on a board with no console to read
 # it, and `cadr_machine.xdc`'s clause for it is then empty by construction, as
 # the Zynq flow says of its own memory-off board.

@@ -7,7 +7,7 @@
 #     SYSTEM=1003 BIT=<the released bitstream> FAULT_BIT=<its fault bitstream> \
 #         boards/arty-z7-20/linux/mksd-release.sh
 #
-#     MACHINE=quux REVISION=13 SYSTEM=2001 BIT=<QUUX revision 13's bitstream> \
+#     MACHINE=quux REVISION=13 SYSTEM=2002 BIT=<QUUX's bitstream, revision 16> \
 #     FAULT_BIT=<the board's fault bitstream> boards/arty-z7-20/linux/mksd-release.sh
 #
 #     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
@@ -107,14 +107,14 @@ case "$MACHINE" in
 	quux) OUT=${OUT:-build/sd/release/quux-$BOARD_NAME} ;;
 	*) echo "mksd-release: MACHINE=$MACHINE: it is cadr or quux" >&2; exit 1 ;;
 esac
-# **AND WHICH REVISION OF QUUX**, passed straight through: REVISION=13 stages
-# revision 13's device tree and loader beside its bitstream
-# (mksd-buildroot.sh, "A card carries one machine").  Unset is the CADR, or
-# QUUX revision 12.
+# **AND QUUX'S CARD**, passed straight through: REVISION=13, the setting that
+# selects QUUX's card, stages QUUX's device tree and loader beside its
+# bitstream, revision 16 (mksd-buildroot.sh, "A card carries one machine").
+# Unset is the CADR.
 REVISION=${REVISION:-}
 # **AND THE SYSTEM THE CARD IS FOR**, a muir-sys System number, which the
 # README names with its release and its two files: 1003 for the CADR's
-# cards, 2001 for revision 13's.  Named, never guessed, like the commit.
+# cards, 2002 for QUUX's.  Named, never guessed, like the commit.
 SYSTEM=${SYSTEM:-}
 [ -n "$SYSTEM" ] || { echo "mksd-release: SYSTEM=<the muir-sys System the card is for, such as 1003 or 2001> is required" >&2; exit 1; }
 # **AND THE COMMIT THE RELEASE WAS BUILT FROM, NAMED, NEVER GUESSED**, as the

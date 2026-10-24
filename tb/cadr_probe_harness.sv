@@ -105,14 +105,6 @@ module cadr_probe_harness #(
   logic mem_req, mem_write;
   logic sintr;   // -XBUS.INTR, the machine's own; read by nothing here
 
-  // QUUX's line fill and its port's idle (contract Q6): the CADR this
-  // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained, h_mem_wide;
-  logic [2:0] h_mem_beats;
-  // QUUX's host side's word, read by nobody here.
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic [31:0] h9_host_rdata;
-  /* verilator lint_on UNUSEDSIGNAL */
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -204,7 +196,6 @@ module cadr_probe_harness #(
       // tied and the word is folded with the rest.
       .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .mem_done(1'b0), .mem_rdata(32'd0),
-      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -224,10 +215,7 @@ module cadr_probe_harness #(
       // Nothing answers this harness's memory port at all --- `mem_done` is
       // tied low above --- so there is nothing to hand it and the audit's
       // seventh clause has nothing to say here.
-      .port_read_ack(1'b0), .port_write_ack(1'b0),
-      // QUUX's host side of revision 9: idle, as a board with no Linux leaves it.
-      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd0),
-      .host_rdata(h9_host_rdata)
+      .port_read_ack(1'b0), .port_write_ack(1'b0)
   );
 
   // WIRED AS `cadr_arty.sv` WIRES IT, including the inversion --- the two
@@ -339,7 +327,7 @@ module cadr_probe_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q, phys, ub_addr, ub_rdata, arb_stage, mem_addr,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, disp_color_map_q, phys, ub_addr, ub_rdata, arb_stage, mem_addr,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

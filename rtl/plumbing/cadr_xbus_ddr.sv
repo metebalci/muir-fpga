@@ -35,11 +35,6 @@
 
 `default_nettype none
 
-// **ON QUUX IT ANSWERS BLOCK-DISK'S TRANSFERS ALONE** (contract Q7): QUUX's
-// frame buffer is on the memory bus with main memory, through the memory
-// port's cache (`quux_mem_port.sv`), so `display` never rises there and the
-// display windows below are the CADR boards'.
-
 module cadr_xbus_ddr
   import cadr_ddr_map::*;
 (

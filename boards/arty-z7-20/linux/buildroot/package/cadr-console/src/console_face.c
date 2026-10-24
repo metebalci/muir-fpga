@@ -288,13 +288,13 @@ static int boot_how(struct console *c, struct cons_boot_report *r)
 		return -1;
 	}
 	r->revision = id.revision;
-	if (!id.quux || (id.revision >= 13 && id.revision <= 14)) {
+	if (!id.quux) {
 		r->how = CONS_BOOT_BY_BUTTON;
 		return 0;
 	}
-	// Revision 16 is revision 15's machine with the Ethernet device, and
-	// boots as it does.
-	if (id.revision == 15 || id.revision == 16) {
+	// QUUX, the revision this program is built for, boots on the keyboard;
+	// an older fabric has a face this program does not drive.
+	if (id.revision == CONS_QUUX_REVISION) {
 		r->how = CONS_BOOT_BY_KEYBOARD;
 		return 0;
 	}
@@ -391,7 +391,7 @@ int cons_boot_and_report(struct console *c, unsigned settle_us,
 	r->pc_after = pc & 0x3FFFu;
 	r->in_prom = r->pc_after >= CONS_QUUX_PROM_FIRST && r->pc_after <= CONS_QUUX_PROM_LAST;
 	// FLAG-1's PROMDISABLE is the CADR's overlay; QUUX's PROM is never
-	// overlaid, so revision 15's is the PC's place instead.
+	// overlaid, so QUUX's is the PC's place instead.
 	if (r->how == CONS_BOOT_BY_BUTTON) {
 		if (cons_spy_read(c, SPY_FLAG_1, &f1) < 0)
 			r->lost_after = 1;
@@ -848,9 +848,9 @@ void cons_say_boot(const struct cons_boot_report *r)
 		return;
 	}
 	if (r->how == CONS_BOOT_BY_KEYBOARD) {
-		say("boot: QUUX revision %u has no light panel's button; the keyboard's cold boot "
+		say("boot: QUUX has no light panel's button; the keyboard's cold boot "
 		    "word 0x%08x written to the input page's KEY, which halts the machine and "
-		    "presses -BOOT", r->revision, CONS_KEY_BOOT_COLD);
+		    "presses -BOOT", CONS_KEY_BOOT_COLD);
 		if (r->handed)
 			say("boot: KEY reads back 0x%08x with the queue empty, LOST %u then %u --- "
 			    "the word was handed to the machine", r->key_after, r->in_lost_before,
@@ -1022,10 +1022,9 @@ void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine
 	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
 	m->revision = (low >> 4) & 0xFFu;
 	m->processor_type = low & 0xFu;
-	// Revision 13's words are 40 bits, and revisions 14's, 15's and 16's.
-	// A revision this program has not met has a width it does not know, and
-	// says so rather than guessing.
-	m->word_bits = m->revision >= 13 && m->revision <= 16 ? 40 : 0;
+	// QUUX's words are 40 bits.  A revision this program is not built for
+	// has a width it does not know, and says so rather than guessing.
+	m->word_bits = m->revision == CONS_QUUX_REVISION ? 40 : 0;
 }
 
 int cons_read_machine_id(struct console *c, struct cons_machine_id *m)
@@ -1087,19 +1086,15 @@ void cons_say_machine_id(const struct cons_machine_id *m)
 	char id[128];
 	snprintf(id, sizeof id, "MACHINE-ID %08x (revision %u, processor type %u)",
 		 m->machine_id, m->revision, m->processor_type);
-	char width[32];
-	if (m->word_bits)
-		snprintf(width, sizeof width, "%u-bit words", m->word_bits);
+	// QUUX's entry carries its clock's period, in units of 0.5 ns, in
+	// <31:24> (A15b.5): a pipelined machine's microcycle is its clock.  An
+	// older fabric's revision is named, and nothing more is read into it.
+	if (m->revision == CONS_QUUX_REVISION)
+		say("machine: QUUX revision %u, %s, %u-bit words, period %u%s ns; %s",
+		    m->revision, id, m->word_bits, m->k / 2u, m->k % 2u ? ".5" : "", build);
 	else
-		snprintf(width, sizeof width, "words of a width not known here");
-	// Revision 15's entry carries its clock's period, in units of 0.5 ns,
-	// where K stood (A15b.5): a pipelined machine's microcycle is its clock.
-	if (m->revision >= 15)
-		say("machine: QUUX revision %u, %s, %s, period %u%s ns; %s",
-		    m->revision, id, width, m->k / 2u, m->k % 2u ? ".5" : "", build);
-	else
-		say("machine: QUUX revision %u, %s, %s, microcycle K=%u L=%u; %s",
-		    m->revision, id, width, m->k, m->l, build);
+		say("machine: QUUX revision %u, %s, a revision this program does not know; %s",
+		    m->revision, id, build);
 }
 
 int cons_machine_word(struct console *c, int argc, char **argv, int *status)
@@ -1132,8 +1127,11 @@ int cons_machine_word(struct console *c, int argc, char **argv, int *status)
 		*status = 1;
 		return 1;
 	}
+	// `quux` alone is the QUUX this program is built for; a revision
+	// named is that one.
 	const int same = want_quux < 0 ||
-			 (m.quux == want_quux && (!want_rev || m.revision == want_rev));
+			 (m.quux == want_quux &&
+			  (!want_quux || m.revision == (want_rev ? want_rev : CONS_QUUX_REVISION)));
 	if (!same) {
 		char asked[48], is[48];
 		snprintf(asked, sizeof asked, want_quux ? "QUUX" : "the CADR");
@@ -1539,7 +1537,7 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status)
 			say("main-memory-boards N: decimal, %u to %u boards of 64K words, as muir's"
 			    " --main-memory-boards; %u is the default%s", CONS_BOARDS_MIN, max, dflt,
 			    max > CONS_BOARDS_MAX
-				    ? "; QUUX revision 13's most is the main memory this board keeps for it"
+				    ? "; QUUX's most is the main memory this board keeps for it"
 				    : ranged ? "" : " (a fabric older than word 38 takes these)");
 			*status = 2;
 			return 1;
@@ -1612,8 +1610,8 @@ int cons_size_word(struct console *c, int argc, char **argv, int *status)
 			return 1;
 		}
 		if (mw < 1 || mw > most) {
-			say("main-memory-size %s: revision %u's main memory on this board is 1MW to %uMW",
-			    argv[1], id.revision, most);
+			say("main-memory-size %s: QUUX's main memory on this board is 1MW to %uMW",
+			    argv[1], most);
 			*status = 2;
 			return 1;
 		}
@@ -1631,8 +1629,8 @@ int cons_size_word(struct console *c, int argc, char **argv, int *status)
 	char has[24], deflt[24];
 	amount_words(b.count, has, sizeof has);
 	amount_words(dflt, deflt, sizeof deflt);
-	say("main-memory-size: %s of main memory%s; revision %u on this board takes 1MW to %uMW, "
-	    "%s by default", has, b.count == dflt ? ", the default" : "", id.revision, most, deflt);
+	say("main-memory-size: %s of main memory%s; QUUX on this board takes 1MW to %uMW, "
+	    "%s by default", has, b.count == dflt ? ", the default" : "", most, deflt);
 	*status = (!asked || b.count == want) ? 0 : 1;
 	return 1;
 }

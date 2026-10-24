@@ -40,19 +40,18 @@ a daemon and has no init script, because it halts the machine while it reads.
    has stopped retiring microcycles with SRUN up, in a wait that never ends
    or a pipeline that never drains, stands as still as a halted one, and a
    checkpoint is of a halted machine. So when the counter stands, the
-   program asks why. On the CADR and on QUUX up to revision 14, FLAG-1 must
-   name a halt: SRUN down (the console's), ERR up (HALT-CONS under
-   ERRSTOP), or -STATHALT low (the statistics counter's). On revision 15
-   the pipeline's own halted bit must be up, word 19 of the halted
+   program asks why. On the CADR, FLAG-1 must name a halt: SRUN down (the
+   console's), ERR up (HALT-CONS under ERRSTOP), or -STATHALT low (the
+   statistics counter's). On QUUX the pipeline's own halted bit must be up, word 19 of the halted
    pipeline's readout, which rises only when the drain ends; SRUN follows
    RUN there, so it falls on a write of zero whether or not the drain ends.
    A machine that stands and is not halted is refused, found so or after
    the program's own halt: nothing is written, the program says where the
    counter stood, FLAG-1, PC and OPC, and exits non-zero. A machine it
-   halted is started again as it was found. On revision 15 a pipeline
+   halted is started again as it was found. On QUUX a pipeline
    stopped at an error (OA-OUTSIDE-FIELDS, PDL-FIELD-MISMATCH) reads the
    same way, and is refused too: it has not drained either. So is a
-   revision 15 machine held in reset, whose halted bit is down. `--halt`
+   QUUX machine held in reset, whose halted bit is down. `--halt`
    refuses the same machines and marks no halt.
 4. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
@@ -313,18 +312,19 @@ it. A CADR checkpoint's sidecar carries the Chaosnet address the checkpoint
 was written at, and its line names it as `--chaos-address`, since muir refuses
 to resume a checkpoint at any other address. A sidecar written before the
 address was named carries no `chaos-address`, and its line names none.
-A QUUX checkpoint's sidecar also carries the revision, the
-microcycle's length in ticks, K, and the video controller's size, and its
-line names all three, the revision as the environment's `MUIR_QUUX_REVISION`
-before the command, since muir's `quux` refuses a checkpoint of another
-revision, another K or another size:
+A QUUX checkpoint's sidecar also carries the revision, the clock's period
+in units of 0.5 ns (the `sync-cycle-ticks` line) and the video controller's
+size, and its line names all three, the revision as the environment's
+`MUIR_QUUX_REVISION` before the command, the period as `--microcycle-ns` and
+the size, since muir's `quux` refuses a checkpoint of another revision,
+another period or another size:
 
-    revision: 13
-    sync-cycle-ticks: 5
-    video-size: 1280x1024
+    revision: 16
+    sync-cycle-ticks: 40
+    video-size: 1920x1080
     running: yes
     ...
-    resume: MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 --video-size 1280x1024 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 20 --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
 
 A sidecar written before the size was named carries no `video-size`, and its
 line names none: its checkpoint is 1280 by 1024, muir's default.
@@ -408,166 +408,37 @@ written at the value the fabric behaves as.
 `--machine` being muir's own flag and the one `cadr-terminal` and
 `cadr-disk-packs` take. The program asks the fabric which machine it is before
 it reads anything. The readout's register table has QUUX's signature,
-`0x5155`, at entry 21, with the K and L the bitstream was built at, and the
-CADR answers `RO_NO_MEMORY` there. A checkpoint of the other machine is
-refused, because it would be one machine's fields filled from the other's.
+`0x5155`, at entry 21, with MACHINE-ID's revision, and the CADR answers
+`RO_NO_MEMORY` there. A checkpoint of the other machine is refused, because it
+would be one machine's fields filled from the other's, and so is a QUUX of an
+older revision than the program writes, named by the revision entry 21 reads.
 
-What a QUUX checkpoint holds beyond the CADR's, in muir's order:
-
-| what | where the fabric has it | how it is read |
-|---|---|---|
-| `Geometry::QUUX`: a six-bit level-1 entry, a 14-bit PDL pointer, `MUL` and `DIV`, the timers | the bitstream | entry 21 names the machine |
-| the PDL buffer's 16,384 words and its 14-bit pointer and index; the level-1 map at six bits; the level-2 map's 2,048 entries | `cadr_microcycle.sv` | the window's own selectors, at QUUX's sizes |
-| the boot PROM | `cadr_microcycle.sv` | selector 1; the control store under it, at 36000 and up, is written zero, as muir's machine holds it, since nothing fetches or writes that RAM |
-| the interval timers, `Machine::timers`: each timer's on, mode, interrupt enable, period and deadline | `quux_clocks.sv` | entries 22 to 28: the microsecond clock, each timer's count at 23 to 25, and its interrupt enable, mode and period at 26 to 28 |
-| the keyboard and mouse, `QuuxInput`: the FIFO's waiting words, the overflow, both enables, the counts, the buttons and whether the mouse changed | `quux_input.sv` and the I/O board's counters | selector 12, word 0 and the FIFO at words 64 to 127 |
-| block-disk, `BlockDisk`: its four registers, its three errors and when its transfer is done | `quux_block_disk.sv` | selector 12, words 1 to 5 |
-| the bus errors, word 101 of the register page | `cadr_busint_regs.sv` | selector 12, word 6 |
-| the file device, `FileDevice`: its four flags, the rings' bases and sizes, the three indexes, and the handles open the refusal reads | `quux_file_device.sv` | selector 12, words 7 to 9 |
-| the video controller: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_video.sv` and DDR | selector 12, word 6, and DDR |
-| `TimingModel::Sync` with K and L | the bitstream | entry 21 |
-| the fused return, `MacroDispatch` (revision 12): the register, the index, the 1,024 entries, the two base copies, and an operand address and an M 31 word a fused return armed | `cadr_microcycle.sv` | entries 29 to 33 and selector 13 |
-| the cache-only prefetch, `MemoryPort`'s buffered word with its addresses and a fetch still to be answered, and the engine's `memstart_fetch` | `quux_mem_port.sv` as the processor sees it at each master clock edge | entries 37 to 40, and the flags' bit 34 |
-
-**The clocks run while they are read**, halted machine or not, and a reader's
-accesses are microseconds apart. So each timer's word carries the low bits of
-the microsecond clock from the same tick, and the program reads the whole
-clock before and after the three timers' counts. It refuses the reading if those two are
-more than 64 microseconds apart, and tries again. muir's instant is ticks since
-power-on, `usec * 100 + 99 - usec_t`, and the thirty-two bits of microseconds
-are unwrapped against the console's tick count. A timer's next rise is
-`pre + (us - 1) * 100` ticks after its word was taken.
-
-**At a tick that does not divide a microsecond**, the 15 ns tick of revision
-14 on the Arty Z7-20 (`docs/timing.md`), neither is exact. A microsecond is
-then 66 or 67 ticks, and which one each coming microsecond takes is decided by
-an accumulator that is not read out (`quux_clocks.sv`'s `pre_acc`). So
-`pre + (us - 1) * 66` ticks falls short of the rise by up to one tick for each
-microsecond left, two thirds of one on average. The program does not count
-that way: `(us - 1) * 100` ticks of the 10 ns grid are `us - 1` whole
-microseconds, and `pre` ticks and then `us - 1` microseconds of wall time are
-within a tick of the rise, however long the period. What does reach the file
-at 15 ns is that `pre` and `usec_t` count 15 ns ticks and the program takes
-them as 10 ns ones. muir's instant and each timer's deadline are then off by
-up to about a third of a microsecond either way, by the same bound for any
-period. The traces and `build/checkpoint.quux.pass` are at 10 ns, where every
-microsecond is 100 ticks and both are exact.
-
-What a QUUX checkpoint does not carry exactly, besides what it shares with the
-CADR's list above:
-
-- **A periodic timer's flag raised more than a period ago and not cleared.**
-  The fabric counts to the next rise and cannot say how many rises ago the
-  flag went up. The file carries the latest rise where muir keeps the first.
-  The flag is up either way, and a clear moves both to the same next
-  boundary, so the resumed machine is the same machine; the file is not the
-  same bytes.
-- **When a one-shot timer rose**, once it has. Its count stops at the rise,
-  so the file carries the latest tick it can have risen at, the one before
-  its word was read. The flag is up either way and a clear leaves both with
-  no deadline, so the resumed machine is the same machine; the file is the
-  same bytes only when the rise was that tick.
-- **When block-disk's transfer finished** is read a few microseconds after the
-  checkpoint's own instant. For a finished transfer it lies in the past either
-  way, which is all the machine reads of it. A disk whose command list is still
-  being walked is refused, as a transfer in flight cannot be carried.
-- **The Chaosnet interface's registers**, the register page's words 140 to 147,
-  which are the I/O board's and which the readout does not reach.
-- **When `IR` was loaded**, which only the divider reads. It is written as a
-  fresh machine's, long ago, which a machine halted for more than the divider's
-  33 ticks is.
-
-The Unibus's registers, the CADR's disk controller and the display's sync
-program and color map are written as muir's QUUX holds them, at their power-on
-values, which QUUX never changes. That is exact rather than idle.
-
-The proof is `make build/checkpoint.quux.pass`, and **its judge is muir's own
-file for the same machine**. `golden/src/quux_checkpoint.rs` builds a QUUX
-machine through muir's own calls: the three timers' periods written and each
-turned on, one-shot or periodic, one risen and one not, keys
-pressed and read, the mouse moved, block-disk started. The package's check
-builds the same machine as the fabric's counters and registers would hold it
-after that history, through a modeled window, and the two files are compared
-byte for byte. muir then loads the program's file and saves it back
-identically. Thirteen mutants of `chk_rtl.c`, 9 to 21, are each caught by muir's
-refusal, by a re-save that differs, or by a file that is not muir's own. The
-`Rtl` engine's own registers are a fresh engine's on both sides, because muir
-keeps them private. They are the CADR's code, which `build/checkpoint.pass`
-holds.
-
-`make build/quux13_readout_window.quux.k4.pass` holds the fabric's half. Each
-new field is poisoned in the register that holds it and read back through the
-window. Each moving word is held to the ticks it could have been taken at, and
-a timer's predicted rise is held against the flag itself. Built as the CADR,
-the same addresses must read `RO_NO_MEMORY`.
-`make build/quux13_readout_window.quux.k4.pass` holds the same at revision
-13's widths and sizes.
+What the file holds is the pipeline's checkpoint and the Ethernet device's
+(the two sections below). Two checks hold the board's writer to muir. The core's
+checkpoints group holds the file the board's own reader and writer make off the
+core to muir's own byte for byte. `make build/checkpoint.quux.pass` writes a
+QUUX file from the package's fixed synthetic machine through a modeled window
+(`checkpoint_test.c`'s `fill_quux`): muir's `quux` resumes it and saves it back
+byte for byte, its report names the microcycles, the nanoseconds and the main
+memory the model gave, and the file's digest is the value the Makefile records
+(`CHECKPOINT_QUUX_SHA`). Mutants 11, 17, 18, 31, 39 and 40 of `chk_rtl.c` are
+caught there.
 
 **Neither machine's checkpoint can be restored to the fabric.** The readout
 window only reads, so a checkpoint is resumed in muir and not on
 the board. Restoring one would need a write path into every memory and
 register named here, which neither machine has.
 
-## A revision 13 checkpoint
+## The pipeline's checkpoint
 
-QUUX revision 13's checkpoint is muir's version 55, version 50 with the
-Chaosnet interface's six bytes. Every word is 5 bytes,
-`<7:0>` first and the tag last. The dispatch memory has 4,096 entries, level 1
-of the map 8,192 and level 2 4,096. After the geometry come the word's width
-and the fixnum overflow flag, and the cache has 8-word lines. The program
-knows the revision from the register table's entry 21, which carries
-MACHINE-ID's `<15:0>` on revision 13. **The fabric's side of that word is not
-built yet.**
-
-**Main memory is not copied.** A 40-bit word in the file is packed storage
-byte for byte, so the program hands the file the DDR mapping where it stands
-(`chk_hole`). The packer reads it twice, once to find where a literal run
-ends and once to copy it, and writes the file as it goes. At 32M words main
-memory is 160 MB. A copy of it beside a body of the same size would not fit
-in the memory Linux has beside the machine.
-
-`--main-memory-size` gives revision 13's main memory in whole megawords,
-as muir's flag does. The default is 32MW, and the most is the room the board
-keeps: 32MW on the Arty Z7-20 and the Kria KR260, 64MW on the DE25-Nano.
-muir's header still counts it in 64K-word units, sixteen a megaword.
-
-`build/checkpoint.quux.pass` holds it. `golden/src/quux_checkpoint.rs
---revision 13` builds the same machine through muir's own calls. The
-program's file must be muir's byte for byte, and muir's own load and save
-come from the same generator (`--resume-and-save`). Mutants 9 to 31 are
-caught there. Revision 12's file is retired with that revision.
-
-## A revision 14 checkpoint
-
-QUUX revision 14's checkpoint is version 55 too, and the revision is in the
-geometry: the map has no level 1, so its level-1 bits are 0 (contract G3
-revision 14, A14.14). After everything revision 13 writes come `LC<40:32>`,
-the memory system's words 220 to 224, and the redirect's copies of the PDL
-buffer's base and head; at the end, `LC<33:32>`. The TLB is not kept, so a
-resumed machine starts with it swept. Main memory is revision 13's, packed
-where it stands, with the same room on each board.
-
-The program takes revision 14 from the register table's entry 21, as it
-takes 13, and the resume line names `MUIR_QUUX_REVISION=14`. The revisions
-it writes are 12, 13 and 14 (`bind_revision_known`), and it refuses any
-other by name. `golden/src/quux_checkpoint.rs --revision 14` builds the
-same machine through muir's own calls, and `build/checkpoint.quux.pass`
-holds the program's file to it byte for byte. Mutants 41 to 46 are caught
-there; 47, `LC<33:32>` written 0, and 48, revision 14 refused as unknown,
-are caught by the package's own check.
-
-## A revision 15 checkpoint
-
-QUUX revision 15's checkpoint is muir's version 56, version 51 with the
-Chaosnet interface's six bytes, `Pipeline::save`: the
-machine at revision 15, whose level-1 byte carries the revision with `<7>`
-set and which ends with word 225; then the clock's period in units of 0.5 ns,
+QUUX's checkpoint is `Pipeline::save`'s body (contract G3 revision 15,
+A15b.13, at revision 16): the machine, whose level-1 byte carries the
+revision with `<7>` set and which ends with word 225; then the clock's period in units of 0.5 ns,
 the memory port's timing and cache, and the pipeline's state between two
 microcycles (contract G3 revision 15, A15b.13), D's wait among it: a halt
 that squashed a return's delay slot leaves D waiting with the slot to fetch
 again, and the file carries both (A15b.9). The control store's words are 64
-bits. A fabric checkpoint of revision 15 resumes in muir; nothing is restored
-to the fabric.
+bits. A fabric checkpoint resumes in muir; nothing is restored to the fabric.
 
 The machine is read through the pipelined core's own window
 (`rtl/machine/quux15_core.sv`, behind `rtl/plumbing/quux15_face.sv`, the
@@ -586,22 +457,18 @@ What the file holds otherwise than muir's own:
 - the cache written empty, no line held and the recency zero. A drained
   cache's words are main memory's, so a resumed machine misses where muir's
   would hit, which moves when a read is answered and never what it reads;
-- the I/O board as muir's machine comes up. Revision 15's network, the
-  Chaosnet interface on words 140 to 147, is the core's own and its
-  readout does not carry it: its registers and buffers are written as at
-  power-up, with the switches at the address `--chaos-address` names.
-  Revision 16 has no interface, and its file carries none.
-  Nothing else of the board is QUUX's; a resumed machine's board catches up
+- the I/O board as muir's machine comes up, with no Chaosnet interface.
+  Nothing of the board is QUUX's; a resumed machine's board catches up
   with the clock at its first look;
 - a data push's word waiting for the micro stack at the stack's 19 bits,
   which are all `SPC<18:0>` keeps.
 
-`cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
+`cadr-checkpoint --what-it-cannot-read` names them on a QUUX board.
 
-## A revision 16 checkpoint
+## The Ethernet device in the checkpoint
 
-QUUX revision 16's checkpoint is muir's version 58: revision 15's body, the
-level-1 byte carrying revision 16, with the Ethernet device after word 225
+QUUX's checkpoint is muir's version 58: the pipeline's body, the level-1 byte
+carrying revision 16, with the Ethernet device after word 225
 (`EthernetDevice::save`), and an I/O board with no Chaosnet interface, which
 revision 16 has not got (QUUX's Ethernet contract, section 8 R4). muir
 refuses version 57, revision 16's file with the interface. The device's
@@ -614,12 +481,12 @@ due time, and a resumed machine sends it at once.
 muir refuses a resume under other `--ethernet-mac`, `--ip-address` or
 `--ip-gateway` than the checkpoint's, so the resume line names the three the
 board's device holds, and the sidecar records them as `ethernet-mac:`,
-`ip-address:` and `ip-gateway:` lines. `make check`'s checkpoints group at
-revision 16 holds the board's file to muir's byte for byte, and
+`ip-address:` and `ip-gateway:` lines. `make check`'s checkpoints group holds the board's
+file to muir's byte for byte, and
 `quux16_resume.quux.pass` resumes one under those flags and has muir refuse
 it under its defaults.
 
-**Block-disk's pack** is bound to the file as on revisions 13 and 14, its
+**Block-disk's pack** is bound to the file as the CADR's pack is, its
 registers, DONE and the instant it was last told read off the devices' words.
 A checkpoint is refused while a transfer is in flight: its walk running or
 its words still on the memory port, which muir moves at START and no file
@@ -627,7 +494,7 @@ carries (the devices' word 15 `<4>`, which `chk_rtl_refusal` reads). Halt the
 machine between transfers. The halt itself does not wait for a walk, only for
 the processor's writes.
 
-The resume line names `MUIR_QUUX_REVISION=15` and `--microcycle-ns` at the
+The resume line names `MUIR_QUUX_REVISION=16` and `--microcycle-ns` at the
 bitstream's period, which muir refuses another at, as it refuses another
 memory timing or cache.
 

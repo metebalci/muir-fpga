@@ -122,27 +122,6 @@ module quux15_core #(
     input var logic [23:0] kbd_code,
     input var logic [6:0] mouse_lines,
     output var logic kbd_busy,
-    input var logic [15:0] chaos_address,
-    output var logic chaos_tx_go,
-    output var logic [8:0] chaos_tx_len,
-    output var logic chaos_tx_valid,
-    output var logic [15:0] chaos_tx_word,
-    output var logic chaos_tx_clear,
-    output var logic chaos_reset,
-    output var logic [15:0] chaos_csr,
-    input var logic chaos_rx_valid,
-    input var logic [15:0] chaos_rx_word,
-    input var logic chaos_rx_done,
-    input var logic [12:0] chaos_rx_bits,
-    input var logic chaos_rx_crc,
-    input var logic chaos_rx_lost,
-    input var logic chaos_tx_done,
-    input var logic chaos_tx_abort,
-    input var logic chaos_cbl_busy,
-    input var logic chaos_rx_start,
-    input var logic [11:0] chaos_rx_stored,
-    input var logic chaos_rx_store,
-    output var logic [11:0] chaos_bits,
     output var logic axi_one_write_id,
     output var logic [3:0] axi_read_clocks,
     output var logic [3:0] axi_write_clocks,
@@ -348,48 +327,6 @@ module quux15_core #(
   assign tbi_mouse_lines = mouse_lines;
   logic tbo_kbd_busy /*verilator public_flat_rw*/;
   assign kbd_busy = tbo_kbd_busy;
-  logic [15:0] tbi_chaos_address /*verilator public_flat_rw*/;
-  assign tbi_chaos_address = chaos_address;
-  logic tbo_chaos_tx_go /*verilator public_flat_rw*/;
-  assign chaos_tx_go = tbo_chaos_tx_go;
-  logic [8:0] tbo_chaos_tx_len /*verilator public_flat_rw*/;
-  assign chaos_tx_len = tbo_chaos_tx_len;
-  logic tbo_chaos_tx_valid /*verilator public_flat_rw*/;
-  assign chaos_tx_valid = tbo_chaos_tx_valid;
-  logic [15:0] tbo_chaos_tx_word /*verilator public_flat_rw*/;
-  assign chaos_tx_word = tbo_chaos_tx_word;
-  logic tbo_chaos_tx_clear /*verilator public_flat_rw*/;
-  assign chaos_tx_clear = tbo_chaos_tx_clear;
-  logic tbo_chaos_reset /*verilator public_flat_rw*/;
-  assign chaos_reset = tbo_chaos_reset;
-  logic [15:0] tbo_chaos_csr /*verilator public_flat_rw*/;
-  assign chaos_csr = tbo_chaos_csr;
-  logic tbi_chaos_rx_valid /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_valid = chaos_rx_valid;
-  logic [15:0] tbi_chaos_rx_word /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_word = chaos_rx_word;
-  logic tbi_chaos_rx_done /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_done = chaos_rx_done;
-  logic [12:0] tbi_chaos_rx_bits /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_bits = chaos_rx_bits;
-  logic tbi_chaos_rx_crc /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_crc = chaos_rx_crc;
-  logic tbi_chaos_rx_lost /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_lost = chaos_rx_lost;
-  logic tbi_chaos_tx_done /*verilator public_flat_rw*/;
-  assign tbi_chaos_tx_done = chaos_tx_done;
-  logic tbi_chaos_tx_abort /*verilator public_flat_rw*/;
-  assign tbi_chaos_tx_abort = chaos_tx_abort;
-  logic tbi_chaos_cbl_busy /*verilator public_flat_rw*/;
-  assign tbi_chaos_cbl_busy = chaos_cbl_busy;
-  logic tbi_chaos_rx_start /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_start = chaos_rx_start;
-  logic [11:0] tbi_chaos_rx_stored /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_stored = chaos_rx_stored;
-  logic tbi_chaos_rx_store /*verilator public_flat_rw*/;
-  assign tbi_chaos_rx_store = chaos_rx_store;
-  logic [11:0] tbo_chaos_bits /*verilator public_flat_rw*/;
-  assign chaos_bits = tbo_chaos_bits;
   logic tbo_axi_one_write_id /*verilator public_flat_rw*/;
   assign axi_one_write_id = tbo_axi_one_write_id;
   logic [3:0] tbo_axi_read_clocks /*verilator public_flat_rw*/;

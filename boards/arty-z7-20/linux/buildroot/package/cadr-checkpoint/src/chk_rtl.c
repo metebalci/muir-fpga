@@ -123,13 +123,10 @@ static void emit_words_padded(struct chk *w, const uint64_t *v, size_t have, siz
 		chk_word(w, i < have ? v[i] : 0u);
 }
 
-// **REVISION 13** (contract G2 appendix A1.13; muir's `Geometry::QUUX`):
-// a level-1 entry of seven bits; level 2 in 4,096 entries, `L2_MAP_WORDS`,
-// every one of which the machine has; and the cache's 8-word lines, the lines
-// of packed storage (`memory_port::Layout::REVISION_13`).
-#define MUIR_QUUX13_L1_BITS    7u
+// QUUX's level-2 map as its file carries it, 4,096 entries, `L2_MAP_WORDS`,
+// though the machine has no map levels; the name is the revision's that
+// brought the size, 13.
 #define MUIR_QUUX13_L2_WORDS   4096u
-#define MUIR_QUUX13_CACHE_LINE 8u
 
 // --- Machine ---------------------------------------------------------------
 
@@ -458,10 +455,9 @@ static void emit_chaos(struct chk *w, const struct chk_declared *d)
 // time of day starts again from zero.  Nothing the machine computes depends
 // on it being continuous; what it will see is one very long or very short
 // interval at the seam.
-// `chaos` is whether the machine has a Chaosnet interface: the CADR and QUUX
-// to revision 15 do, and revision 16 has none (QUUX's Ethernet contract,
-// section 8 R4; muir's `Geometry::chaos`), so its board saves `false` and
-// nothing after it.
+// `chaos` is whether the machine has a Chaosnet interface: the CADR does, and
+// QUUX has none (QUUX's Ethernet contract, section 8 R4; muir's
+// `Geometry::chaos`), so its board saves `false` and nothing after it.
 static void emit_ioboard(struct chk *w, const struct chk_declared *d, int chaos)
 {
 	chk_u16(w, 0);		/* NONE csr */
@@ -555,77 +551,9 @@ static void emit_busint(struct chk *w, const struct cadr_image *img)
 }
 
 // `rtl.rs`'s `Bus`, version 40: which of the two the processor's cycles go
-// through, written before it --- `Bus::Cadr`, the bus interface above, or
-// `Bus::Quux`, QUUX's memory port below (contract Q6).
+// through, written before it: `Bus::Cadr`, the bus interface above.  QUUX's
+// pipeline writes no `Rtl` tail and so no bus.
 #define MUIR_BUS_CADR 0u
-#define MUIR_BUS_QUUX 1u
-
-// `CacheConfig::QUUX`, src/cache.rs: 4,096 words in lines of 4, 2-way, a hit
-// in 20 ns and the write buffer; `MemoryTiming::NOMINAL`: a line fill in
-// 380 ns, a write in 290.  The fabric's cache is this shape
-// (`rtl/machine/quux_cache.sv`).
-#define MUIR_QUUX_CACHE_WORDS 4096u
-#define MUIR_QUUX_CACHE_LINE  4u
-#define MUIR_QUUX_CACHE_WAYS  2u
-#define MUIR_QUUX_CACHE_HIT_NS 20u
-#define MUIR_QUUX_READ_NS  380u
-#define MUIR_QUUX_WRITE_NS 290u
-
-// `memory_port.rs`'s `MemoryPort::save`, at `MemoryPort::new()`: no cycle in
-// flight, and the cache as a fresh port holds it --- EMPTY, with no hits and
-// no misses.  muir restores a cache warm; this file restores it cold, so a
-// resumed machine misses where muir's saved one would have hit.  That moves
-// when a read is answered and never which word it reads, because the cache
-// is write-through and every line it holds equals main memory.  Main memory
-// is free: a halt drains the write buffer before this program reads the
-// machine, so `memory_free_at` and `buffer_free_at` are in the past, and 0
-// is a past as good as any.
-static void emit_memory_port(struct chk *w, const struct cadr_image *img)
-{
-#if CHK_MUTATE == 27
-	const unsigned line = MUIR_QUUX_CACHE_LINE;
-#else
-	const unsigned line = MUIR_QUUX13_CACHE_LINE;
-#endif
-	chk_u8(w, 0);			/* IDLE State::Idle */
-	chk_bool(w, 0);			/* IDLE write */
-	chk_u32(w, 0);			/* IDLE addr */
-	chk_bool(w, 0);			/* IDLE memory */
-	chk_u32(w, MUIR_QUUX_CACHE_WORDS);	/* Cache::save: config.words */
-	chk_u32(w, line);			/* config.line_words */
-	chk_u32(w, MUIR_QUUX_CACHE_WAYS);	/* config.ways */
-	chk_u64(w, MUIR_QUUX_CACHE_HIT_NS);	/* config.hit_ns */
-	chk_bool(w, 1);				/* config.write_buffer */
-	chk_u64(w, 0);				/* NONE hits */
-	chk_u64(w, 0);				/* NONE misses */
-	for (unsigned s = 0; s < MUIR_QUUX_CACHE_WORDS / (line * MUIR_QUUX_CACHE_WAYS); ++s)
-		chk_u32(w, 0);			/* NONE the set's lines: cold */
-	chk_u64(w, MUIR_QUUX_READ_NS);		/* timing.read_ns */
-	chk_u64(w, MUIR_QUUX_WRITE_NS);		/* timing.write_ns */
-	chk_u64(w, 0);				/* IDLE memory_free_at */
-	chk_u64(w, 0);				/* IDLE buffer_free_at */
-	// Version 49: revision 12's cache-only prefetch, its word with the
-	// word's virtual and physical addresses, and a fetch the port is yet to
-	// answer, each an option (`MemoryPort::save`).  READ, off the register
-	// table's entries 37 to 40, which are the buffer as the last master
-	// clock edge left it: a halted machine's master clock runs, so that is
-	// the buffer.
-	chk_bool(w, img->qx.pf_v);			/* READ prefetched */
-	if (img->qx.pf_v) {
-		chk_u32(w, img->qx.pf_vaddr);
-		chk_u32(w, img->qx.pf_phys);
-		chk_word(w, img->qx.pf_word);
-	}
-	chk_bool(w, img->qx.fetch_v);			/* READ fetch_vaddr */
-	if (img->qx.fetch_v)
-		chk_u32(w, img->qx.fetch_vaddr);
-	// Revision 14: the reference's write-back's end, which a cycle waits
-	// for (A14.6); past, as `memory_free_at` is.
-#if CHK_MUTATE != 45
-	if (img->rev14)
-		chk_u64(w, 0);				/* IDLE write_back_until */
-#endif
-}
 
 // `MacroDispatch::save`, version 49 (revision 12, contract H8a): the
 // MACRO-DISPATCH register, the MACRO DISPATCH MEMORY's index and its 1,024
@@ -654,103 +582,18 @@ static void emit_macro_dispatch(struct chk *w, const struct cadr_image *img, int
 
 // --- QUUX ------------------------------------------------------------------
 //
-// **WHAT A QUUX CHECKPOINT HOLDS THAT A CADR'S DOES NOT**, each written below
-// where muir's own order puts it: `Geometry::QUUX` after the level-1 map; the
-// processor's clocks, `Tick`; block-disk in the CADR controller's place,
-// whose own slot is then an idle controller with no drive; the video
-// controller, the display board with the tag 2, its size, its 40,960-word buffer and one bit
-// of mode; the keyboard and mouse, `QuuxInput`; the page's bus errors in
-// `Machine::bus_error`; and `TimingModel::Sync` with K and L.  All of it is
-// READ, off the register table's entries 21 to 25 and selector 12, but for
-// what a QUUX machine of muir's holds and never changes --- the Unibus's
-// registers at their power-on values, the display's sync program and color
-// map, which the video controller has neither of --- and those are written as muir's own
-// machine holds them, which is exact rather than idle.
-//
-// Held to muir's own file for the same machine, byte for byte, by
-// `build/checkpoint.quux.pass` (`golden/src/quux_checkpoint.rs`).
+// What QUUX's file shares with the CADR's writer: the PDL pointer's width,
+// block-disk's disk, the video controller's tag and mode, the file device and
+// the keyboard and mouse.  The rest of QUUX's file is `body_15`'s, below.
 
-// `Geometry::QUUX`, src/machine.rs: a level-1 entry of six bits, a PDL
-// pointer and index of fourteen, multiply and divide, and the tick.
-#define MUIR_QUUX_L1_BITS  6u
+// `Geometry`'s PDL pointer and index on QUUX, fourteen bits.
 #define MUIR_QUUX_PDL_BITS 14u
-// Ticks of MIT's grid in a microsecond, `quux_clocks.sv`'s `TICKS_A_US`.
-#define CHK_TICKS_A_US (1000u / CHK_GRID_NS)
 // `block_disk::BLOCK_NS`, a block's time, which `BlockDisk::save` writes.
 #define MUIR_BLOCK_NS 100000u
 // `Tv::save`'s tag for the video controller, `Board::Video`, and
 // `tv::mode::BOW`.
 #define MUIR_TV_BOARD_VIDEO 2u
 #define MUIR_TV_MODE_BOW 04u
-// `Rtl::save`'s tag for `TimingModel::Sync`, followed by K and L.
-#define MUIR_TIMING_SYNC 2u
-
-// The machine's clock: the fabric's ticks on the CADR; on QUUX muir's own
-// instant off the microsecond clock, which `ro_read_quux` unwrapped.
-static uint64_t chk_ns(const struct cadr_image *img)
-{
-	return (img->quux ? img->qx.m : img->ticks) * CHK_GRID_NS;
-}
-
-// A timer's `deadline_ns` in muir's terms, from its words.  **muir's
-// deadline is when the flag rose, or will next rise; the fabric's counts say
-// when it next rises**, `pre + (us - 1) * 100` ticks after the tick the word
-// was taken at.  A periodic flag up and not cleared rose a period before
-// that.  Off, or on with no period, or a one-shot risen and cleared, is
-// `u64::MAX`, no deadline (`IntervalTimer::after`, `write_control`).
-//
-// **TWO THINGS THE COUNTS CANNOT SAY.**  How many periods ago an uncleared
-// periodic flag first rose: muir keeps the first rise and this writes the
-// latest.  And when a one-shot rose, its count stopping at the rise (`live`
-// down, `quux_clocks.sv`): this writes the latest tick it can have risen
-// at, the one before its word was taken.  In both the resumed machine is the
-// same machine --- the flag is up either way, a clear moves a periodic
-// timer's deadline to the next period boundary of its grid, which both give
-// alike, and a one-shot's to none --- but not one file, so a checkpoint
-// taken more than a period after a periodic flag rose, or more than a tick
-// after a one-shot rose, differs from muir's own in that one field.
-static uint64_t quux_deadline(const struct quux_timer *t)
-{
-	if (!t->en)
-		return ~(uint64_t)0;
-	if (!t->live)
-#if CHK_MUTATE == 20
-		// A one-shot that has risen written as one that never will.
-		return ~(uint64_t)0;
-#else
-		return t->one_shot && t->sticky ? (t->m - 1u) * CHK_GRID_NS : ~(uint64_t)0;
-#endif
-	uint64_t next = t->m + t->pre + (uint64_t)(t->us ? t->us - 1u : 0u) * CHK_TICKS_A_US;
-#if CHK_MUTATE == 10
-	// The rise the counts name, the next one, even for a flag that is up:
-	// a deadline in the future for a flag muir must see as raised.
-#else
-	if (t->sticky)
-		next -= (uint64_t)t->period_us * CHK_TICKS_A_US;
-#endif
-	return next * CHK_GRID_NS;
-}
-
-// `Timers::save`: each timer in turn, on, its mode, its interrupt enable,
-// its period and its deadline (version 45).
-static void emit_timers(struct chk *w, const struct cadr_image *img)
-{
-	const struct quux_state *q = &img->qx;
-	for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
-		const struct quux_timer *t = &q->timer[k];
-		chk_bool(w, t->en);			/* READ */
-#if CHK_MUTATE == 21
-		// The mode and the interrupt enable crossed.
-		chk_bool(w, t->ie);
-		chk_bool(w, t->one_shot);
-#else
-		chk_bool(w, t->one_shot);		/* READ */
-		chk_bool(w, t->ie);			/* READ */
-#endif
-		chk_u32(w, t->period_us);		/* READ */
-		chk_u64(w, quux_deadline(t));		/* READ */
-	}
-}
 
 // `disk_image.rs`'s `Disk::save`, block-disk's disk (version 41, contract
 // Q8a): its size in blocks and the blocks written that the file does not
@@ -768,89 +611,9 @@ static void emit_quux_disk(struct chk *w, const struct chk_declared *d)
 	chk_u64(w, 0);			/* IDLE written, no blocks */
 }
 
-// `BlockDisk::save`: the four registers, when the transfer is done, the
-// clock it was last told, a block's time, the three errors, and the disk.
-static void emit_block_disk(struct chk *w, const struct cadr_image *img,
-			    const struct chk_declared *d)
-{
-	const struct quux_state *q = &img->qx;
-	const uint64_t ns = chk_ns(img);
-	chk_u32(w, q->cmd);				/* READ */
-	chk_u32(w, q->clp);				/* READ */
-	chk_u32(w, q->da);				/* READ */
-	chk_u32(w, q->lma);				/* READ */
-	// When the blocks moved stop owing their time: the fabric's ticks since
-	// that instant, taken back from the checkpoint's own.  A disk that has
-	// never walked has muir's zero.  `cadr-checkpoint` refuses a disk that
-	// is walking, whose transfer is in flight.
-	uint64_t done_at = 0;
-	if (q->walked) {
-		const int64_t back = (int64_t)q->since_done * (int64_t)CHK_GRID_NS;
-		done_at = (back > 0 && (uint64_t)back > ns) ? 0 : (uint64_t)((int64_t)ns - back);
-	}
-	chk_u64(w, done_at);				/* READ */
-	// `now` is the clock a register access last told it; a resumed machine
-	// tells it again before any access, and the checkpoint's instant is
-	// what one at the checkpoint would have told it.
-#if CHK_MUTATE == 12
-	chk_u64(w, 0);
-#else
-	chk_u64(w, ns);					/* READ, the clock */
-#endif
-	chk_u64(w, MUIR_BLOCK_NS);			/* DECLARED, muir's */
-	chk_bool(w, q->past_end);			/* READ */
-	chk_bool(w, q->nxm);				/* READ */
-	chk_bool(w, q->bad_command);			/* READ */
-	// The disk: the bay's one pack, unit 0, a flag and then the disk
-	// (`w.opt`).
-	if (d->present & 1u) {
-		chk_bool(w, 1);
-		emit_quux_disk(w, d);
-	} else {
-		chk_bool(w, 0);
-	}
-}
-
-// `Tv::save` for the video controller (src/tv.rs): the tag, its size, the
-// buffer, and a mode that keeps black-on-white alone.  It has no sync
-// program and no color map --- `Tv::write_control` keeps nothing else --- so
-// the rest is `Tv::default`'s and stays so on a machine of muir's.
-static void emit_video(struct chk *w, const struct cadr_image *img)
-{
-	chk_u8(w, MUIR_TV_BOARD_VIDEO);			/* READ, the machine */
-#if CHK_MUTATE == 38
-	// The old bitstreams' size whatever the bitstream says.
-	chk_u16(w, MUIR_VIDEO_WIDTH);
-	chk_u16(w, MUIR_VIDEO_HEIGHT);
-#else
-	chk_u16(w, (uint16_t)img->video_width);		/* READ, console word 39 */
-	chk_u16(w, (uint16_t)img->video_height);
-#endif
-#if CHK_MUTATE == 14
-	// The CADR's buffer, 32,768 words, where the video controller's is 40,960.
-	chk_u32s(w, img->tv, IMG_TV_WORDS);
-#else
-	chk_u32s(w, img->tv, img->tv_words);		/* READ, out of DDR */
-#endif
-	chk_u32(w, img->qx.bow ? MUIR_TV_MODE_BOW : 0u);	/* READ */
-	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
-	chk_bytes(w, zero_sync, IMG_TV_SYNC);		/* NONE on the video controller */
-	chk_u16(w, 0);
-	chk_u8(w, MUIR_TV_SYNC_ENABLE);
-	for (unsigned i = 0; i < MUIR_TV_COLOR_MAP_BYTES; ++i)
-		chk_u8(w, 0);				/* NONE on the video controller */
-	chk_bool(w, 0);					/* flag_written */
-	chk_u64(w, 0);					/* written_at */
-	chk_u64(w, 0);					/* origin */
-	chk_bool(w, 0);					/* sync_held.0 */
-	chk_bool(w, 0);					/* sync_held.1 */
-}
-
-// `QuuxInput::save`: the key words waiting, oldest first, then the flags,
-// the counts and the buttons.
 // `FileDevice::save` (version 43): four flags, the rings' bases and sizes,
-// the three indexes and the head's due time.  On QUUX they are the register
-// page's readout, words 7 to 9; the due time is absent, because a checkpoint
+// the three indexes and the head's due time.  On QUUX they are the devices'
+// readout, words 6 to 10 (`img_dv15`); the due time is absent, because a checkpoint
 // is refused while a command is queued and a device with none has taken
 // none.  On the CADR every field is a power-on file device's, which muir's
 // CADR holds and never touches.
@@ -878,6 +641,8 @@ static void emit_file_device(struct chk *w, const struct cadr_image *img)
 	chk_opt_u64(w, 0, 0);				/* IDLE head_due: none queued */
 }
 
+// `QuuxInput::save`: the key words waiting, oldest first, then the flags,
+// the counts and the buttons.
 static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 {
 	const struct quux_state *q = &img->qx;
@@ -899,16 +664,15 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 	chk_bool(w, q->mouse_enable);			/* READ */
 }
 
-// --- REVISION 15 -------------------------------------------------------
+// --- QUUX's pipeline ---------------------------------------------------
 //
-// **QUUX REVISION 15'S FILE, VERSION 56** (A15b.13; muir's `Pipeline::save`):
-// `Machine::save` at revision 15, then the pipeline's period, its port's
-// timing and cache, and `save_15`'s fields, all READ off `quux15_core.sv`'s
-// window (`ro_read_quux15`) but for what the core does not keep, each marked.
-// **THE CACHE IS WRITTEN EMPTY** (A15b.13): no line held and the
-// recency bytes zero.  A drained cache's words are main memory's, so a cold
-// one moves when a read is answered, never what it reads.
-#define MUIR_REVISION_15_MARK (0200u | 15u)
+// **QUUX'S FILE, VERSION 58** (A15b.13 and QUUX's Ethernet contract, section
+// 2.9; muir's `Pipeline::save`): `Machine::save` at revision 16, then the
+// pipeline's period, its port's timing and cache, and `save_15`'s fields,
+// all READ off `quux15_core.sv`'s window (`ro_read_quux15`) but for what the
+// core does not keep, each marked.  **THE CACHE IS WRITTEN EMPTY** (A15b.13):
+// no line held and the recency bytes zero.  A drained cache's words are main
+// memory's, so a cold one moves when a read is answered, never what it reads.
 #define MUIR_REVISION_16_MARK (0200u | 16u)
 #define MUIR_KRIA_READ_NS 247u
 #define MUIR_KRIA_WRITE_NS 130u
@@ -918,7 +682,7 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 #define MUIR_L1_WORDS_13 8192u
 #define MUIR_XBUS_NXM 01u
 
-// `Timers::save` at revision 15: the snapshot's words, the deadline already
+// `Timers::save` on the pipeline: the snapshot's words, the deadline already
 // muir's, in units of 0.5 ns (`quux15_devices.sv`).
 static void emit_timers_15(struct chk *w, const struct cadr_image *img)
 {
@@ -932,7 +696,7 @@ static void emit_timers_15(struct chk *w, const struct cadr_image *img)
 	}
 }
 
-// `BlockDisk::save` at revision 15: the registers, DONE and the instant it
+// `BlockDisk::save` on the pipeline: the registers, DONE and the instant it
 // was last told, as `quux15_devices.sv` keeps them, and the bay's pack.
 static void emit_block_disk_15(struct chk *w, const struct cadr_image *img,
 			       const struct chk_declared *d)
@@ -1008,7 +772,7 @@ static void emit_pipeline_15(struct chk *w, const struct cadr_image *img)
 	chk_u16(w, (uint16_t)(t[IMG_TL15_NPC_PREV] & 0x3FFFu));		/* READ npc_prev */
 }
 
-// `EthernetDevice::save` at revision 16 (QUUX's Ethernet contract, section
+// `EthernetDevice::save` (QUUX's Ethernet contract, section
 // 2.9): the registers, the counters each to its field, the transmit due and
 // 253-257, all READ off `quux16_ethernet.sv`'s readout but for the due time.
 // **A TRANSMIT WAITING IS DUE AT THE CHECKPOINT'S INSTANT**: the board's
@@ -1048,8 +812,9 @@ static void emit_ethernet_16(struct chk *w, const struct cadr_image *img)
 	chk_u32(w, x->eth.gateway);				/* READ 257 */
 }
 
-// `Tv::save` for revision 15's video controller: `emit_video`'s, and the
-// instant of the last RESET-DEVICES, which the fabric keeps for it.
+// `Tv::save` for the video controller: the tag, its size, the buffer, a mode
+// that keeps black-on-white alone, and the instant of the last RESET-DEVICES,
+// which the fabric keeps for it.  It has no sync program and no color map.
 static void emit_video_15(struct chk *w, const struct cadr_image *img)
 {
 	chk_u8(w, MUIR_TV_BOARD_VIDEO);				/* READ, the machine */
@@ -1078,12 +843,12 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	memset(&no_drives, 0, sizeof no_drives);
 	no_drives.chaos_address = d->chaos_address;
 
-	// --- Machine::save, at revision 15 ----------------------------------
+	// --- Machine::save, at revision 16 ----------------------------------
 	w->word_bytes = 5u;
-	w->version = img->rev16 ? CHK_VERSION_16 : CHK_VERSION_15;
+	w->version = CHK_VERSION_16;
 	chk_u64s(w, img->prom, IMG_PROM_WORDS);			/* READ, 64 bits */
-	// The control store as its RAM holds it, and **ZERO UNDER THE PROM**,
-	// as revisions 13 and 14 write it: the PROM has the addresses from 36000
+	// The control store as its RAM holds it, and **ZERO UNDER THE PROM**:
+	// the PROM has the addresses from 36000
 	// up, nothing fetches the RAM behind it and `Machine::write_imem` writes
 	// nothing there, so muir's machine holds zeros.  The core's RAM there
 	// holds what it came up with, which no machine can observe.
@@ -1115,8 +880,8 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	chk_u32(w, x->intctl);					/* READ */
 	chk_u16(w, img->dc);					/* READ */
 	static const uint32_t no_l1[MUIR_L1_WORDS_13] = { 0 };
-	chk_u32s(w, no_l1, MUIR_L1_WORDS_13);		/* NONE: revision 15 has no map levels */
-	chk_u8(w, img->rev16 ? MUIR_REVISION_16_MARK : MUIR_REVISION_15_MARK);	/* READ, the machine */
+	chk_u32s(w, no_l1, MUIR_L1_WORDS_13);		/* NONE: QUUX has no map levels */
+	chk_u8(w, MUIR_REVISION_16_MARK);			/* the machine */
 	chk_u8(w, MUIR_QUUX_PDL_BITS);
 	chk_bool(w, 1);						/* muldiv */
 	chk_bool(w, 1);						/* tick */
@@ -1135,7 +900,7 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	emit_file_device(w, img);
 	chk_bool(w, 0);			/* IDLE dma_written: taken at every clock */
 	static const uint32_t no_l2[MUIR_QUUX13_L2_WORDS] = { 0 };
-	chk_u32s(w, no_l2, MUIR_QUUX13_L2_WORDS);	/* NONE: revision 15 has no map levels */
+	chk_u32s(w, no_l2, MUIR_QUUX13_L2_WORDS);	/* NONE: QUUX has no map levels */
 	chk_u32(w, img->boards);				/* READ, console word 37 */
 	const size_t words = (size_t)img->boards * IMG_BOARD_WORDS;
 	chk_u64(w, (uint64_t)words);
@@ -1153,10 +918,10 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	emit_block_disk_15(w, img, d);
 	emit_video_15(w, img);
 	chk_bool(w, 0);						/* DECLARED no color TV */
-	// The I/O board: on revision 15 the network on it is not built, and
-	// nothing else of it is QUUX's.  As muir's machine comes up.  Revision
-	// 16 has no Chaosnet interface (QUUX's Ethernet contract, section 8 R4).
-	emit_ioboard(w, d, !img->rev16);
+	// The I/O board: nothing of it is QUUX's, and it has no Chaosnet
+	// interface (QUUX's Ethernet contract, section 8 R4).  As muir's machine
+	// comes up.
+	emit_ioboard(w, d, 0);
 	emit_quux_input(w, img);
 	chk_u64(w, x->committed);				/* READ cycles */
 	chk_u64(w, x->ns);					/* READ ns, the snapshot's */
@@ -1168,8 +933,7 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	chk_u32(w, img->qx.pdl_base);				/* READ A 430's copy */
 	chk_u16(w, img->qx.pdl_head);				/* READ A 431's copy */
 	chk_u32(w, x->posted);					/* READ word 225 */
-	if (img->rev16)
-		emit_ethernet_16(w, img);
+	emit_ethernet_16(w, img);
 
 	// --- the pipeline -----------------------------------------------------
 	chk_u64(w, x->period);					/* READ entry 21 */
@@ -1190,42 +954,18 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		  const struct chk_declared *d)
 {
-	if (img->rev15) {
+	// QUUX is its pipeline's file (`body_15`).
+	if (img->quux) {
 		body_15(w, img, d);
 		return;
 	}
-	const int quux = img->quux;
-	// On QUUX the drive bay's pack is block-disk's, and the CADR controller
-	// in muir's machine beside it holds none.
-	struct chk_declared no_drives;
-	memset(&no_drives, 0, sizeof no_drives);
-	no_drives.chaos_address = d->chaos_address;
 
 	// --- Machine::save -------------------------------------------------
 	// Words from here on, the engine's after the machine's, at the
-	// machine's width: 4 bytes, and 5 on revision 13 (`Writer::set_word_bits`).
-#if CHK_MUTATE == 22
+	// machine's width, 4 bytes (`Writer::set_word_bits`).
 	w->word_bytes = 4u;
-#else
-	w->word_bytes = img->rev13 ? 5u : 4u;
-#endif
 	chk_u64s(w, img->prom, IMG_PROM_WORDS);		/* READ */
-	if (quux) {
-		// **THE CONTROL STORE UNDER QUUX'S PROM IS WRITTEN ZERO**: the
-		// PROM has addresses of its own there, nothing fetches the RAM
-		// behind it and `Machine::write_imem` writes nothing into it, so
-		// muir's machine holds zeros.  The fabric's RAM there holds the
-		// all-ones it came up with, which no machine can observe.
-		chk_u64(w, IMG_IMEM_WORDS);
-		for (unsigned i = 0; i < IMG_IMEM_WORDS; ++i)
-#if CHK_MUTATE == 15
-			chk_u64(w, img->imem[i]);
-#else
-			chk_u64(w, i < IMG_QUUX_PROM_BASE ? img->imem[i] : 0u);	/* READ */
-#endif
-	} else {
-		chk_u64s(w, img->imem, IMG_IMEM_WORDS);	/* READ */
-	}
+	chk_u64s(w, img->imem, IMG_IMEM_WORDS);		/* READ */
 	emit_mode(w, img);
 	emit_clock_control(w, img);
 	emit_opc_control(w);
@@ -1273,62 +1013,23 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// as its own flags.  Zero is what muir would write.
 	chk_u32(w, 0);					/* IDLE interrupt_control */
 	chk_u16(w, img->dc);				/* READ dispatch_constant */
-#if CHK_MUTATE == 25
-	chk_u32s(w, img->l1_map, IMG_L1_WORDS);
-#else
-	chk_u32s(w, img->l1_map, img->l1_words);	/* READ */
-#endif
-	if (quux) {
-		// `Machine::geometry`: `Geometry::QUUX`, or `QUUX_13`, which the
-		// register table's entry 21 said the bitstream is.
-		// Revision 14's is `Geometry::QUUX_14`, revision 13's with no
-		// level-1 entry: 0, feature word 1's (A14.14).
-#if CHK_MUTATE == 41
-		const unsigned l1_bits = MUIR_QUUX13_L1_BITS;
-#else
-		const unsigned l1_bits = img->rev14 ? 0u : MUIR_QUUX13_L1_BITS;
-#endif
-#if CHK_MUTATE == 9
-		// The CADR's PDL width on QUUX: a machine whose pointer is too
-		// wide for its own buffer.
-		chk_u8(w, (uint8_t)l1_bits);
-		chk_u8(w, MUIR_PDL_BITS);
-#else
-		chk_u8(w, (uint8_t)l1_bits);		/* READ, the machine */
-		chk_u8(w, MUIR_QUUX_PDL_BITS);
-#endif
-		chk_bool(w, 1);				/* muldiv */
-		chk_bool(w, 1);				/* tick */
-		chk_bool(w, 1);				/* macro_dispatch: revision 12 and on */
-		if (img->rev13) {
-			// A wider word says so, and then the fixnum overflow
-			// flag (A1.3), the flag word's <35>.
-			chk_u8(w, IMG_WORD_BITS_13);	/* READ, the machine */
-#if CHK_MUTATE == 24
-			chk_bool(w, img_flag(img, IMG_F_MEMSTART_FETCH));
-#elif CHK_MUTATE != 23
-			chk_bool(w, img_flag(img, IMG_F_OVERFLOW));	/* READ */
-#endif
-		}
-		emit_timers(w, img);
-	} else {
-		// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
-		chk_u8(w, MUIR_L1_BITS);		/* DECLARED l1_bits */
-		chk_u8(w, MUIR_PDL_BITS);		/* DECLARED pdl_bits */
-		chk_bool(w, MUIR_MULDIV);		/* DECLARED muldiv */
-		chk_bool(w, MUIR_TICK);			/* DECLARED tick */
-		chk_bool(w, 0);				/* DECLARED macro_dispatch */
-		// `Timers::save`: QUUX's interval timers, which a CADR's machine
-		// holds in their reset state and never turns on (version 45).
-		for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
-			chk_bool(w, 0);			/* NONE timer.on */
-			chk_bool(w, 0);			/* NONE timer.one_shot */
-			chk_bool(w, 0);			/* NONE timer.interrupt_enable */
-			chk_u32(w, 0);			/* NONE timer.period_us */
-			chk_u64(w, ~(uint64_t)0);	/* NONE timer.deadline_ns */
-		}
+	chk_u32s(w, img->l1_map, IMG_L1_WORDS);		/* READ */
+	// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
+	chk_u8(w, MUIR_L1_BITS);		/* DECLARED l1_bits */
+	chk_u8(w, MUIR_PDL_BITS);		/* DECLARED pdl_bits */
+	chk_bool(w, MUIR_MULDIV);		/* DECLARED muldiv */
+	chk_bool(w, MUIR_TICK);			/* DECLARED tick */
+	chk_bool(w, 0);				/* DECLARED macro_dispatch */
+	// `Timers::save`: QUUX's interval timers, which a CADR's machine
+	// holds in their reset state and never turns on (version 45).
+	for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
+		chk_bool(w, 0);			/* NONE timer.on */
+		chk_bool(w, 0);			/* NONE timer.one_shot */
+		chk_bool(w, 0);			/* NONE timer.interrupt_enable */
+		chk_u32(w, 0);			/* NONE timer.period_us */
+		chk_u64(w, ~(uint64_t)0);	/* NONE timer.deadline_ns */
 	}
-	emit_macro_dispatch(w, img, quux);
+	emit_macro_dispatch(w, img, 0);
 	// **REVISION 9, ON BOTH MACHINES** (versions 42 and 43).  `Rtc::save`:
 	// the real-time clock's setting, and a board's is always the host's
 	// clock, Linux keeping the fabric's count; so the option is absent, as
@@ -1348,28 +1049,9 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// has no cache, and a halted board's controller has told nothing it has
 	// not already been asked for, so it is false.
 	chk_bool(w, 0);					/* IDLE dma_written */
-#if CHK_MUTATE == 30
-	emit_u32s_padded(w, img->l2_map, img->l2_words, MUIR_L2_MAP_WORDS);
-#else
-	emit_u32s_padded(w, img->l2_map, img->l2_words,
-			 img->rev13 ? MUIR_QUUX13_L2_WORDS : MUIR_L2_MAP_WORDS);	/* READ */
-#endif
+	emit_u32s_padded(w, img->l2_map, img->l2_words, MUIR_L2_MAP_WORDS);	/* READ */
 	chk_u32(w, img->boards);			/* the count, again */
-	if (img->rev13) {
-		// **MAIN MEMORY AS IT STANDS IN DDR.**  A 40-bit word is 5 bytes
-		// in the file, `<7:0>` first and the tag last, which is packed
-		// storage byte for byte (G1 4.1), so the bytes are taken where
-		// they are rather than copied (`chk_hole`).
-		const size_t words = (size_t)img->boards * IMG_BOARD_WORDS;
-		chk_u64(w, (uint64_t)words);
-#if CHK_MUTATE == 26
-		chk_hole(w, img->main13, 4u * words);
-#else
-		chk_hole(w, img->main13, 5u * words);	/* READ */
-#endif
-	} else {
-		chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
-	}
+	chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
 	// The bus interface's own registers.  **THE READOUT WINDOW DOES NOT
 	// REACH THEM**, which is not the same as their not existing and used
 	// to be: `rtl/machine/cadr_busint_regs.sv` holds the interrupt status
@@ -1381,15 +1063,9 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// registers and nothing else, so these are written at the value a
 	// machine that has never been asked for them has --- which is right
 	// for a board halted out of a boot the PROM drove, the PROM touching
-	// none of them, and is a decision anywhere else.
-	// On QUUX the bus errors are the register page's word 101, which the
-	// readout reaches; on the CADR they are the interface's, which it does
-	// not.
-#if CHK_MUTATE == 16
-	chk_u16(w, 0);
-#else
-	chk_u16(w, quux ? (uint16_t)img->qx.bus_error : 0u);	/* READ on QUUX */
-#endif
+	// none of them, and is a decision anywhere else.  The bus errors are
+	// the interface's, which the readout does not reach.
+	chk_u16(w, 0);					/* NONE bus_error */
 	chk_u16(w, MUIR_LOCAL_ENABLE);			/* NONE interrupt_status */
 	chk_bool(w, 0);					/* NONE write_through */
 	static const uint16_t sixteen[16] = { 0 };
@@ -1397,21 +1073,12 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u16s(w, sixteen, 16);			/* NONE read_buffer */
 	chk_u16s(w, sixteen, 16);			/* NONE write_buffer */
 	chk_bool(w, img_flag(img, IMG_F_VMAOK));	/* READ */
-	if (quux) {
-		// The CADR controller is in muir's machine with no drive on it,
-		// and block-disk is fitted in its place with the bay's pack.
-		emit_disk(w, &no_drives);
-		chk_bool(w, 1);				/* block_disk is there */
-		emit_block_disk(w, img, d);
-		emit_video(w, img);
-	} else {
-		emit_disk(w, d);
-		// `Machine::block_disk`, version 37: QUUX's block-disk when it
-		// is fitted in the CADR controller's place.  The CADR fits none,
-		// so the option is written absent and nothing follows it.
-		chk_bool(w, 0);				/* NONE block_disk */
-		emit_tv(w, img);
-	}
+	emit_disk(w, d);
+	// `Machine::block_disk`, version 37: QUUX's block-disk when it is
+	// fitted in the CADR controller's place.  The CADR fits none, so the
+	// option is written absent and nothing follows it.
+	chk_bool(w, 0);					/* NONE block_disk */
+	emit_tv(w, img);
 	// **WHETHER A SECOND DISPLAY BOARD WAS ON THE BACKPLANE**, and the
 	// board itself after it when there was one (`Machine::save`,
 	// src/machine.rs:962-965).  The flag is written clear and NOTHING
@@ -1435,22 +1102,17 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, 0);					/* DECLARED no color TV */
 #endif
 	emit_ioboard(w, d, 1);
-	if (quux) {
-		emit_quux_input(w, img);
-	} else {
-		// `QuuxInput::save`, version 39: QUUX's keyboard and mouse on
-		// its register page, which a CADR's machine holds empty --- no
-		// key word waiting, no overflow, both enables off, the counts
-		// and the buttons 0.
-		chk_u32(w, 0);				/* NONE quux_input.fifo.len() */
-		chk_bool(w, 0);				/* NONE quux_input.overflowed */
-		chk_bool(w, 0);				/* NONE quux_input.kbd_enable */
-		chk_u16(w, 0);				/* NONE quux_input.x */
-		chk_u16(w, 0);				/* NONE quux_input.y */
-		chk_u8(w, 0);				/* NONE quux_input.buttons */
-		chk_bool(w, 0);				/* NONE quux_input.mouse_changed */
-		chk_bool(w, 0);				/* NONE quux_input.mouse_enable */
-	}
+	// `QuuxInput::save`, version 39: QUUX's keyboard and mouse on its
+	// register page, which a CADR's machine holds empty --- no key word
+	// waiting, no overflow, both enables off, the counts and the buttons 0.
+	chk_u32(w, 0);					/* NONE quux_input.fifo.len() */
+	chk_bool(w, 0);					/* NONE quux_input.overflowed */
+	chk_bool(w, 0);					/* NONE quux_input.kbd_enable */
+	chk_u16(w, 0);					/* NONE quux_input.x */
+	chk_u16(w, 0);					/* NONE quux_input.y */
+	chk_u8(w, 0);					/* NONE quux_input.buttons */
+	chk_bool(w, 0);					/* NONE quux_input.mouse_changed */
+	chk_bool(w, 0);					/* NONE quux_input.mouse_enable */
 	chk_u64(w, img->cycles);			/* READ */
 	// **THE CLOCK.**  A fabric tick stands for `CHK_GRID_NS` nanoseconds of
 	// MIT's grid, `cadr_tick_pkg::TICK_NS`, which is muir's own time under
@@ -1458,37 +1120,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// the units muir counts it in, and it is a measurement rather than a
 	// guess.  What it is NOT is consistent with the idle instants in
 	// `Busint` above, which are a fresh machine's.
-	chk_u64(w, chk_ns(img));			/* READ ns */
-	// **REVISION 14'S OWN** (A14.14), after everything revision 13 has:
-	// `Machine::lc`'s `<40:32>`, the `rtl` engine never writing that
-	// field; the memory system's words 220 to 224; and the redirect's
-	// copies of the PDL buffer's base and head.  The TLB is not kept: a
-	// resume starts with it swept.
-	if (img->rev14) {
-		chk_u16(w, 0);				/* IDLE Machine::lc <40:32> */
-#if CHK_MUTATE == 42
-		chk_u32(w, img->qx.refused);
-		chk_bool(w, img->qx.ephemeral);
-		chk_u64(w, img->qx.pointer_types);
-		chk_u32(w, img->qx.directory);
-#else
-		chk_u32(w, img->qx.directory);		/* READ word 220 */
-		chk_bool(w, img->qx.ephemeral);		/* READ word 221 <0> */
-#if CHK_MUTATE == 43
-		chk_u64(w, (img->qx.pointer_types >> 32) | (img->qx.pointer_types << 32));
-#else
-		chk_u64(w, img->qx.pointer_types);	/* READ words 222, 223 */
-#endif
-		chk_u32(w, img->qx.refused);		/* READ word 224 */
-#endif
-		chk_u32(w, img->qx.pdl_base);		/* READ A 430's copy */
-#if CHK_MUTATE == 44
-		chk_u16(w, 0);
-#else
-		chk_u16(w, img->qx.pdl_head);		/* READ A 431's copy */
-#endif
-	}
-
+	chk_u64(w, img->ticks * CHK_GRID_NS);		/* READ ns */
 	// --- the Rtl tail ---------------------------------------------------
 	//
 	// `trace` and `flags` are the columns `Rtl::signals` and `Rtl::spy`
@@ -1550,13 +1182,8 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, img_flag(img, IMG_F_MBUSY));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_RDCYC));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_WRCYC));	/* READ */
-	if (quux) {
-		chk_u8(w, MUIR_BUS_QUUX);
-		emit_memory_port(w, img);
-	} else {
-		chk_u8(w, MUIR_BUS_CADR);
-		emit_busint(w, img);
-	}
+	chk_u8(w, MUIR_BUS_CADR);
+	emit_busint(w, img);
 	chk_bool(w, img_flag(img, IMG_F_MBUSY_SYNC));	/* READ */
 	// The bus cycle in the air.  IDLE, all of it: see the header.  The
 	// physical address the fabric holds is in `phys_r` and is READ, but it
@@ -1604,34 +1231,14 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// Whose nanoseconds `ns` counts, muir's `TimingModel`: this fabric keeps
 	// muir-fpga's grid, so the count below is in its nanoseconds and the
 	// checkpoint says so.
-	if (quux) {
-		// QUUX's is `sync`, of the K and L the bitstream was built at,
-		// which the register table's entry 21 said.
-		chk_u8(w, MUIR_TIMING_SYNC);
-#if CHK_MUTATE == 13
-		chk_u8(w, (uint8_t)img->qx.l);
-		chk_u8(w, (uint8_t)img->qx.k);
-#else
-		chk_u8(w, (uint8_t)img->qx.k);		/* READ cycle_ticks */
-		chk_u8(w, (uint8_t)img->qx.l);		/* READ ilong_ticks */
-#endif
-	} else {
-		chk_u8(w, CHK_TIMING_FPGA);		/* DECLARED timing */
-	}
-	chk_u64(w, chk_ns(img));			/* READ ns, as above */
+	chk_u8(w, CHK_TIMING_FPGA);			/* DECLARED timing */
+	chk_u64(w, img->ticks * CHK_GRID_NS);		/* READ ns, as above */
 	chk_word(w, 0);					/* IDLE busint_bus */
 	chk_u64(w, ~(uint64_t)0);			/* IDLE loadmd_at */
 	chk_opt_u16(w, 0, 0);				/* IDLE executed */
 	// Version 49: `MEMSTART`'s cycle is the stream's fetch, for QUUX's
-	// prefetch; READ on QUUX, and false on the CADR, which never sets it.
+	// prefetch; false on the CADR, which never sets it.
 	chk_bool(w, img_flag(img, IMG_F_MEMSTART_FETCH));	/* READ */
-	// Revision 14's location counter's `<33:32>` (A14.11, A14.14).
-	if (img->rev14)
-#if CHK_MUTATE == 47
-		chk_u8(w, 0);
-#else
-		chk_u8(w, img->lc_hi);			/* READ */
-#endif
 }
 
 // --- what it could not read ------------------------------------------------
@@ -1702,64 +1309,22 @@ static const char *const kMissing[] = {
 	NULL
 };
 
-// And QUUX's.  Shorter, and not because more is read: much of what the CADR's
-// list names is a board QUUX has not got --- the Unibus's registers, the
-// CADR's disk controller, its display's sync program --- which muir's QUUX
-// holds at power-on for ever, so the file carries it exactly.
-static const char *const kMissingQuux[] = {
-	"the mode register's TRAPENB, the clock control register's STEP, NOP11,",
-	"    IDEBUG and LDSTAT with SSTEP and SSDONE, the OPC control register",
-	"    and the debug IR: as on the CADR, written clear, which is what a",
-	"    machine halted from the console holds.",
-	"the Chaosnet interface's registers, the register page's words 140 to",
-	"    147: they are the I/O board's, which the readout does not reach.",
-	"    The switches are written at the address --chaos-address names.",
-	"a periodic timer's flag raised and not cleared for MORE than a period:",
-	"    the fabric counts to the next rise and cannot say how many rises ago",
-	"    the flag went up, so the file has the latest rise where muir keeps",
-	"    the first.  The flag is up either way and a clear moves both to the",
-	"    same next boundary, so the resumed machine is the same machine.",
-	"a one-shot timer's rise, once it has risen: its count stops there, so",
-	"    the file has the latest tick it can have risen at, the one before its",
-	"    word was read.  The flag is up either way and a clear leaves both",
-	"    with no deadline, so the resumed machine is the same machine.",
-	"block-disk's instant of completion is taken a few microseconds off the",
-	"    checkpoint's own instant, the two being separate reads; it is in the",
-	"    past for a disk that is done and the machine sees it so.  A disk",
-	"    whose transfer is in flight is REFUSED: halt between transfers.",
-	"the instant IR was loaded, which only the divider reads: written as a",
-	"    fresh machine's, long ago, which a machine halted for more than the",
-	"    divider's 33 ticks is.",
-	"the bus cycle in flight, the two totals muir keeps and Rtl's trace and",
-	"    flag columns: as on the CADR.",
-	"the memory cache's lines and counts: written EMPTY, where muir keeps",
-	"    them and restores the cache warm.  The cache is write-through, so",
-	"    every line it holds is main memory's word; a resumed machine misses",
-	"    where muir's would hit, which moves when a read is answered and",
-	"    never what it reads.",
-	"and the DISK PACK, which muir's format never carries: bound to the file",
-	"    by the sidecar beside it, as on the CADR.",
-	NULL
-};
-
-// Revision 15's (A15b.13): what `quux15_core.sv`'s window does not give.
+// QUUX's (A15b.13): what `quux15_core.sv`'s window does not give.
 static const char *const kMissingQuux15[] = {
 	"the cache's lines and its recency: written EMPTY (A15b.13).  A",
 	"    drained cache's words are main memory's, so a resumed machine misses",
 	"    where muir's would hit, which moves when a read is answered and never",
 	"    what it reads.",
-	"the Chaosnet interface's registers and buffers, words 140 to 147, which",
-	"    revision 15's readout does not carry: written as at power-up, the",
-	"    switches at the address --chaos-address names.  Nothing else of the",
-	"    I/O board is QUUX's: written as muir's machine comes up.  A resumed",
-	"    machine's board catches up with the clock at its first look.",
-	"    Revision 16 has no Chaosnet interface, and its file none.",
+	"the I/O board, none of which is QUUX's: written as muir's machine comes",
+	"    up.  A resumed machine's board catches up with the clock at its",
+	"    first look.",
 	"a data push's word waiting for the micro stack: its 19 bits, which are",
 	"    all SPC<18:0> keeps; muir keeps the push's 32.",
-	"on revision 16, the Ethernet device's transmit due time, which is the",
-	"    board's program's: a transmit waiting is written due at the",
-	"    checkpoint's instant, and a resumed machine sends it at once.",
-	"and the DISK PACK, which revision 15's fabric does not build: no pack.",
+	"the Ethernet device's transmit due time, which is the board's",
+	"    program's: a transmit waiting is written due at the checkpoint's",
+	"    instant, and a resumed machine sends it at once.",
+	"and the DISK PACK, which muir's format never carries: bound to the file",
+	"    by the sidecar beside it, as on the CADR.",
 	NULL
 };
 
@@ -1773,10 +1338,6 @@ const char *const *chk_rtl_missing(void)
 	return kMissing;
 }
 
-const char *const *chk_rtl_missing_quux(void)
-{
-	return kMissingQuux;
-}
 
 int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 {
@@ -1784,9 +1345,8 @@ int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 		return 0;
 	const struct quux_state *q = &img->qx;
 	// **BLOCK-DISK'S TRANSFER IN FLIGHT**: a walk half done, which muir moves
-	// at START and no file carries (`cadr-checkpoint` says so first on
-	// revisions 13 and 14; revision 15's readout counts the transfer's
-	// words still on the port too).
+	// at START and no file carries; the readout counts the transfer's words
+	// still on the port too.
 	if (q->walking) {
 		snprintf(why, n, "block-disk's transfer is in flight; a checkpoint waits "
 			 "until it is done: halt the machine between transfers");
@@ -1814,8 +1374,8 @@ int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 // nothing else that the file carries.
 void chk_rtl_run_state(struct cadr_image *img, int was_running)
 {
-	// Revision 15's: the clock control register's RUN, which the console's
-	// halt cleared, in the halted pipeline's console word (`img_tl15`); the
+	// QUUX's: the clock control register's RUN, which the console's halt
+	// cleared, in the halted pipeline's console word (`img_tl15`); the
 	// pipeline keeps no SRUN of its own in its file.
 	if (img->rev15) {
 		if (was_running)
@@ -1876,52 +1436,16 @@ const char *chk_rtl_mutation(void)
 	return "a color display board claimed on a backplane that has none";
 #elif CHK_MUTATE == 8
 	return "--chaos-address read as decimal, which is what strtoul(.., 0) does";
-#elif CHK_MUTATE == 9
-	return "QUUX's geometry written with the CADR's ten-bit PDL pointer";
-#elif CHK_MUTATE == 10
-	return "a raised timer flag's deadline written at its next rise, not the last";
 #elif CHK_MUTATE == 11
 	return "the keyboard FIFO written from its first slot, not from its head";
-#elif CHK_MUTATE == 12
-	return "block-disk's clock written 0 where the checkpoint's instant belongs";
-#elif CHK_MUTATE == 13
-	return "the sync timing model's K and L written crossed";
-#elif CHK_MUTATE == 14
-	return "the video controller's buffer written at the CADR display's 32,768 words";
-#elif CHK_MUTATE == 15
-	return "the control store under QUUX's PROM written as the fabric's RAM holds it";
-#elif CHK_MUTATE == 16
-	return "the register page's bus errors written 0";
 #elif CHK_MUTATE == 17
 	return "block-disk's disk written a block smaller than the pack file";
 #elif CHK_MUTATE == 18
 	return "the file device's two ring bases written crossed";
 #elif CHK_MUTATE == 19
 	return "the real-time clock written counted from 0 where a board's is the host's";
-#elif CHK_MUTATE == 20
-	return "a one-shot timer that has risen written with no deadline, as one that never will";
-#elif CHK_MUTATE == 21
-	return "a timer's mode and interrupt enable written crossed";
-#elif CHK_MUTATE == 22
-	return "revision 13's words written in 4 bytes, a 32-bit machine's";
-#elif CHK_MUTATE == 23
-	return "revision 13's overflow flag left out after the word's width";
-#elif CHK_MUTATE == 24
-	return "revision 13's overflow flag taken from the flag word's <34>, MEMSTART-FETCH";
-#elif CHK_MUTATE == 25
-	return "revision 13's level-1 map written at revision 12's 2,048 entries";
-#elif CHK_MUTATE == 26
-	return "revision 13's main memory written 4 bytes a word";
-#elif CHK_MUTATE == 27
-	return "revision 13's cache written with revision 12's 4-word lines";
-#elif CHK_MUTATE == 28
-	return "revision 13's response ring's base read from word 7, the command ring's";
-#elif CHK_MUTATE == 29
-	return "revision 13's words read out at 32 bits, their tags dropped";
-#elif CHK_MUTATE == 30
-	return "revision 13's level-2 map written at revision 12's 2,048 entries";
 #elif CHK_MUTATE == 31
-	return "a 40-bit body written under version 54, a 32-bit machine's";
+	return "QUUX's body written under version 54, the CADR's";
 #elif CHK_MUTATE == 32
 	return "a machine found running written with RUN clear, as the halt left it";
 #elif CHK_MUTATE == 33
@@ -1934,32 +1458,14 @@ const char *chk_rtl_mutation(void)
 	return "QUUX's main memory written in the sidecar as boards";
 #elif CHK_MUTATE == 37
 	return "QUUX's main memory said in memory boards";
-#elif CHK_MUTATE == 38
-	return "the video controller's size written as 1280x1024 whatever the bitstream says";
-#elif CHK_MUTATE == 41
-	return "revision 14's geometry written with revision 13's level-1 bits";
-#elif CHK_MUTATE == 42
-	return "revision 14's directory base and refused count written crossed";
-#elif CHK_MUTATE == 43
-	return "revision 14's pointer-type register written with its two words crossed";
-#elif CHK_MUTATE == 44
-	return "revision 14's redirect head written 0";
-#elif CHK_MUTATE == 45
-	return "revision 14's write-back's end left out of the memory port";
-#elif CHK_MUTATE == 46
-	return "revision 14's map levels read from the window, which has none";
-#elif CHK_MUTATE == 49
-	return "a machine whose counter stands taken as halted, SRUN up and FLAG-1 naming no halt";
-#elif CHK_MUTATE == 50
-	return "revision 15 taken as halted on SRUN down, its pipeline's halted bit not asked";
-#elif CHK_MUTATE == 47
-	return "revision 14's LC<33:32> written 0";
-#elif CHK_MUTATE == 48
-	return "revision 14's bitstream refused as a revision this program does not know";
 #elif CHK_MUTATE == 39
 	return "the video controller's buffer sized at 1280x1024 whatever the bitstream says";
 #elif CHK_MUTATE == 40
 	return "the resume line without the video controller's size";
+#elif CHK_MUTATE == 49
+	return "a machine whose counter stands taken as halted, SRUN up and FLAG-1 naming no halt";
+#elif CHK_MUTATE == 50
+	return "QUUX taken as halted on SRUN down, its pipeline's halted bit not asked";
 #elif CHK_MUTATE == 51
 	return "the sidecar's resume line naming the checkpoint by the board's path";
 #elif CHK_MUTATE == 52
@@ -1971,7 +1477,7 @@ const char *chk_rtl_mutation(void)
 #elif CHK_MUTATE == 55
 	return "the CADR's resume line without its Chaosnet address";
 #elif CHK_MUTATE == 56
-	return "revision 16's resume line without the host's three flags";
+	return "QUUX's resume line without the host's three flags";
 #elif CHK_MUTATE == 57
 	return "the resume line's --ip-address with the host part's length for the prefix's";
 #elif CHK_MUTATE == 58

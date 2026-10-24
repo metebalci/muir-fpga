@@ -4274,13 +4274,14 @@ if generate_fpgarc "" 1; then
 		ok "and the reader takes it for the CADR's"
 	fi
 fi
-# **AND QUUX WITHOUT REVISION=13 IS REFUSED**: that card was revision 12's,
-# which is retired, and no bitstream it could carry is built.
+# **AND QUUX WITHOUT REVISION=13 IS REFUSED**: REVISION=13 is the setting
+# that selects QUUX's card path, and no bitstream a card without it could
+# carry is built.  The refusal names the setting and no revision.
 sandbox
 if (generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux) > "$WORK/badrev" 2>&1; then
 	fail "MACHINE=quux with no REVISION wrote a card"
-elif grep -q "MACHINE=quux is QUUX revision 13: give REVISION=13" "$WORK/badrev"; then
-	ok "and MACHINE=quux with no REVISION is refused by name, revision 12 being retired"
+elif grep -q "MACHINE=quux: give REVISION=13 too, the setting that selects QUUX's card" "$WORK/badrev"; then
+	ok "and MACHINE=quux with no REVISION is refused, naming the setting"
 else
 	fail "MACHINE=quux with no REVISION was refused without saying why: $(cat "$WORK/badrev")"
 fi
@@ -8310,11 +8311,12 @@ if lift_readme "$WORK/rd"; then
 	for b in arty-z7-20 de25-nano kria-kr260; do
 		for rel in "" 1; do
 			for m in cadr quux; do
-				# QUUX is revision 13, on the three boards that run it.
+				# QUUX's card is REVISION=13's, on the three boards that run it,
+				# and carries revision 16.
 				rm -rf "$WORK/rd/card"; mkdir -p "$WORK/rd/card"
-				# A release card names its system, 1003 for the CADR's and 2001
+				# A release card names its system, 1003 for the CADR's and 2002
 				# for QUUX's.
-				sys=; [ -z "$rel" ] || { [ "$m" = quux ] && sys=2001 || sys=1003; }
+				sys=; [ -z "$rel" ] || { [ "$m" = quux ] && sys=2002 || sys=1003; }
 				rev=; [ "$m" = quux ] && rev=13
 				( set -u
 				  OUT="$WORK/rd"; BOARD_NAME=$b; BOARD_DTB=the-board.dtb; MACHINE=$m; NO_FAULT=
@@ -8341,7 +8343,7 @@ if lift_readme "$WORK/rd"; then
 						esac
 					done
 					case "$m:$rev:$flat" in
-					quux:13:*"This card runs QUUX revision 13,"*|cadr::*"This card runs the CADR,"*) ;;
+					quux:13:*"This card runs QUUX revision 16,"*|cadr::*"This card runs the CADR,"*) ;;
 					*) fail "the release README for $b ($m) does not say which machine and revision it runs"
 					   readme_bad=$((readme_bad + 1)) ;;
 					esac

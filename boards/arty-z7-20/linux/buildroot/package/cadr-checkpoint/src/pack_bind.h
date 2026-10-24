@@ -108,12 +108,12 @@ struct binding {
 	// sidecar without the line is the CADR's, which is all there was.
 	int quux;
 	// **WHAT muir NEEDS TO RESUME IT AS THE BOARD RAN IT**: QUUX's revision,
-	// 12 or 13, which muir's `quux` takes from `MUIR_QUUX_REVISION` and
-	// refuses a checkpoint of the other at; and the microcycle's length in
-	// ticks, K, which `--sync-cycle-ticks` gives and muir refuses a
-	// checkpoint of another K at.  Both are the fabric's own (the readout's
-	// register table's entry 21).  0 on the CADR, and 0 in a sidecar written
-	// before the lines were, whose resume then names neither.
+	// MACHINE-ID's, which the sidecar records; and the clock's period in
+	// units of 0.5 ns, which `--microcycle-ns` gives and muir refuses a
+	// checkpoint of another period at, recorded under the line's older name,
+	// `sync-cycle-ticks`.  Both are the fabric's own (the readout's register
+	// table's entry 21).  0 on the CADR, and 0 in a sidecar written before
+	// the lines were, whose resume then names neither.
 	unsigned revision;
 	unsigned sync_k;
 	// **AND QUUX's VIDEO CONTROLLER'S SIZE**, the bitstream's (console word
@@ -121,11 +121,11 @@ struct binding {
 	// of another size at.  0 on the CADR and in a sidecar written before
 	// the size was named.
 	unsigned video_width, video_height;
-	// **AND REVISION 16's 253-257**, the board's Ethernet device's, which
-	// muir's `--ethernet-mac`, `--ip-address` and `--ip-gateway` give and
-	// muir refuses a checkpoint of others at (QUUX's Ethernet contract,
-	// section 2.9).  `eth` 0 below revision 16 and in a sidecar written
-	// before the lines were.
+	// **AND QUUX's 253-257**, the board's Ethernet device's, which muir's
+	// `--ethernet-mac`, `--ip-address` and `--ip-gateway` give and muir
+	// refuses a checkpoint of others at (QUUX's Ethernet contract, section
+	// 2.9).  `eth` 0 on the CADR and in a sidecar written before the lines
+	// were.
 	int eth;
 	uint8_t eth_mac[6];
 	uint32_t eth_address, eth_netmask, eth_gateway;
@@ -208,19 +208,9 @@ void bind_halt_unmark(const char *path);
 // nothing this program says about it counts them.
 void bind_memory_words(int quux, unsigned units, char *out, size_t n);
 
-// **THE REVISIONS OF QUUX A CHECKPOINT IS WRITTEN OF**, the register table's
-// entry 21: 13 to 16, whose words are 40 bits in packed main memory
-// (contract G2 appendix A1.13; revision 14 has revision 13's main memory, its
-// checkpoint version 55 with the revision in the geometry, contract G3
-// revision 14 A14.14; revision 15's is version 56, and revision 16's, its body
-// with the Ethernet device and no Chaosnet interface, 58).  Revision 12 is
-// retired.
-// `bind_revision_known` and `bind_revision_packed` are 1 for those four.
-int bind_revision_known(unsigned revision);
 // 253-257 in muir's spellings: `02:00:00:00:00:01`, `169.254.100.2`.
 void bind_mac_text(const uint8_t mac[6], char out[18]);
 void bind_ipv4_text(uint32_t a, char out[16]);
-int bind_revision_packed(unsigned revision);
 
 // **THE MAIN MEMORY THE COMMAND LINE ASKED FOR**, held to the machine named:
 // the CADR's `--boards N`, 1 to 60, and QUUX's `--main-memory-size <n>MW`,
@@ -253,9 +243,9 @@ unsigned bind_chaos_address(struct chaos_face *f, int asked, unsigned asked_addr
 // The command a resume takes, into `out`.  The packs in unit order, the
 // checkpoint last, which is the order muir's own usage puts them in.  It
 // names everything muir needs to take the file as the board ran it: on the
-// CADR the timing model, the boards and the Chaosnet address; on QUUX the revision, as the
-// environment's `MUIR_QUUX_REVISION=` before the command, K and the video
-// controller's size.
+// CADR the timing model, the boards and the Chaosnet address; on QUUX the
+// clock's period, the video controller's size and the Ethernet device's
+// host words.
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);
 
 #endif
