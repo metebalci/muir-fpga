@@ -1214,16 +1214,28 @@ module quux15_core #(
                                       input logic [17:0] e, input logic [9:0] ea);
     return fused_at(popped, m31, bm, lcv + (bm ? 34'd1 : 34'd2), e, ea);
   endfunction
-  // The operand address (`operand_address`): A-LOCALP + delta, or M-AP + 1 +
-  // delta for ARG, from the copies, in the PDL buffer's fourteen bits.
+  // The operand address (`operand_address_over`): A-LOCALP + delta, or
+  // M-AP + 1 + delta for ARG, over the bases given, in the PDL buffer's
+  // fourteen bits; `op_addr` over the copies (`operand_address`).
+  function automatic logic [13:0] op_addr_over(input logic arg, input logic [5:0] delta,
+                                               input logic [13:0] b_ap, input logic [13:0] b_localp);
+    return (arg ? b_ap + 14'd1 : b_localp) + {8'd0, delta};
+  endfunction
   function automatic logic [13:0] op_addr(input logic arg, input logic [5:0] delta);
-    return (arg ? ap + 14'd1 : localp) + {8'd0, delta};
+    return op_addr_over(arg, delta, ap, localp);
   endfunction
   // A word that writes `M 31` or INTERRUPT-CONTROL, which a fused return
   // cannot be.
   function automatic logic writes_m31_ic(input logic [47:0] ir);
     return (ir[44:43] == 2'd0 || ir[44:43] == 2'd3) && !ir[25]
         && (ir[18:14] == 5'o31 || ir[23:19] == 5'o2);
+  endfunction
+  // A word that writes A-LOCALP or M-AP at the addresses the register names
+  // (`a_dest`, `m_dest`): an ALU or BYTE word's A destination, or its M one.
+  function automatic logic writes_base(input logic [47:0] ir);
+    return (ir[44:43] == 2'd0 || ir[44:43] == 2'd3)
+        && ((ir[25] ? ir[23:14] : {5'd0, ir[18:14]}) == mdreg[23:14]
+            || (!ir[25] && ir[18:14] == mdreg[28:24]));
   endfunction
   // **A base copy still being written** (`base_in_flight`): a word in EX or
   // WB that writes A at `a` or M at `m`, or WB's write landing now.
@@ -1452,7 +1464,11 @@ module quux15_core #(
               end
               if (f.op_v) begin
                 p.e.opa = 1'b1;
-                p.e.opa_known = !base_in_flight(1'b1, mdreg[23:14], 1'b1, mdreg[28:24]);
+                // The popping word's own write of a base lands at its WB,
+                // after the copies are read here: EX forms the address then,
+                // with that write forwarded (`a_dest`, `m_dest`).
+                p.e.opa_known = !writes_base(rd_ir)
+                             && !base_in_flight(1'b1, mdreg[23:14], 1'b1, mdreg[28:24]);
                 p.e.opa_addr = op_addr(f.op_arg, f.op_delta);
                 cc.opa_v = 1'b1;
                 cc.opa_known = p.e.opa_known;
@@ -2377,9 +2393,16 @@ module quux15_core #(
         mismatch = (ex_alu || ex_byte) && ex_word[48] && formed != nidx;
       end
       // `end_of_microcycle`: the operand address the microcycle before armed
-      // loads PDL-INDEX, over the word's own write, executed or nopped;
+      // loads PDL-INDEX, over the word's own write, executed or nopped, and
+      // over the bases as the word leaves them (`bases`): the copies, or a
+      // write of either by the word in WB, which lands at this edge, at the
+      // address the register names as EX leaves it (the copies' own write,
+      // below) --- the return's own write of its base, in WB now;
       // NEXT INSTRD steps LC, fetching with NEEDFETCH.
-      if (mdop_v) nidx = op_addr(mdop_arg, mdop_delta);
+      if (mdop_v)
+        nidx = op_addr_over(mdop_arg, mdop_delta,
+                            (land_m_we && land_m_addr == n_mdreg[28:24]) ? land_data[13:0] : ap,
+                            (land_a_we && land_a_addr == n_mdreg[23:14]) ? land_data[13:0] : localp);
       if (next_instrd) begin
         stepped = step_lc(nlc, nlc_nf, nintctl[3]);
         if (stepped[35]) begin
@@ -2603,10 +2626,15 @@ module quux15_core #(
     c_res.bm = nintctl[3];
     c_res.next_instr = nid_new;
     // The operand address armed as EX leaves it, from the copies
-    // (`restore_copies`).
+    // (`restore_copies`); armed before, with no word committing, over the
+    // bases as this edge leaves them, a write of either by the word in WB
+    // landing now.
     c_res.opa_v = commit ? ex_op_v : mdop_v;
     c_res.opa_known = 1'b1;
-    c_res.opa_addr = commit ? op_addr(ex_op_arg, ex_op_delta) : op_addr(mdop_arg, mdop_delta);
+    c_res.opa_addr = commit ? op_addr(ex_op_arg, ex_op_delta)
+                   : op_addr_over(mdop_arg, mdop_delta,
+                                  (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap,
+                                  (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp);
   end
 
   // **D DECIDES AT ITS WORD'S ARRIVAL** (`d_decides`; A15b.9): in the clock
@@ -2995,6 +3023,22 @@ module quux15_core #(
       $finish;
     end
   end
+  // **WHAT THE RESTORE RELIES ON** (`restore_copies` for the word that
+  // commits): the operand address of a fused return EX arms is formed over
+  // the copies as EX finds them, so a redirect or restore by such a return
+  // must not have a base still to be written, by the return itself or by
+  // the word in WB.  RD resolves every such return (it fuses them too, the
+  // address left unknown, `writes_base`), and EX fuses only what RD would
+  // have (`fuse_barred`); a change that lets EX fuse one stops here.
+  always_ff @(posedge clk) begin
+    if (!core_rst && errhalt == 2'd0 && commit && !ex_nop && ex_op_v && (redirect || ex_restore)
+        && ((nx_a_we && nx_a_addr == n_mdreg[23:14]) || (nx_m_we && nx_m_addr == n_mdreg[28:24])
+            || (land_a_we && land_a_addr == n_mdreg[23:14]) || (land_m_we && land_m_addr == n_mdreg[28:24]))) begin
+      $display("quux15_core: a fused return at %o restores an operand address over a base still being written",
+               ex_pc);
+      $finish;
+    end
+  end
   // **WHAT THE HALT RELIES ON**, which muir's drain does by hand:
   // - the successor's MD (`md_old`, kept at the drain's end only for the
   //   read start that ran last): a read start is granted in WB before the
@@ -3017,13 +3061,13 @@ module quux15_core #(
         $display("quux15_core: the MD a read start kept is not the last word's, %o", n_old_seq);
         $finish;
       end
-      if (drain_end && (c_next.spc_ptr != c_hlt.spc_ptr || c_next.ptr != c_hlt.ptr || c_next.idx != c_hlt.idx
-                        || c_next.lc != c_hlt.lc || c_next.nf != c_hlt.nf || c_next.bm != c_hlt.bm
-                        || c_next.next_instr != c_hlt.next_instr || c_next.spc_pend || c_next.ptr_pend
-                        || c_next.idx_pend || c_next.lc_pend
-                        || c_next.opa_v != c_hlt.opa_v
-                        || (c_next.opa_v && (!c_next.opa_known || c_next.opa_addr != c_hlt.opa_addr))
-                        || (!c_next.spc_below && c_next.spc_top != c_hlt.spc_top))) begin
+      if (drain_end && (c_end.spc_ptr != c_hlt.spc_ptr || c_end.ptr != c_hlt.ptr || c_end.idx != c_hlt.idx
+                        || c_end.lc != c_hlt.lc || c_end.nf != c_hlt.nf || c_end.bm != c_hlt.bm
+                        || c_end.next_instr != c_hlt.next_instr || c_end.spc_pend || c_end.ptr_pend
+                        || c_end.idx_pend || c_end.lc_pend
+                        || c_end.opa_v != c_hlt.opa_v
+                        || (c_end.opa_v && (!c_end.opa_known || c_end.opa_addr != c_hlt.opa_addr))
+                        || (!c_end.spc_below && c_end.spc_top != c_hlt.spc_top))) begin
         $display("quux15_core: the halt leaves RD's copies apart from the registers");
         $finish;
       end
@@ -3154,7 +3198,7 @@ module quux15_core #(
       end
 
       // --- The copies.
-      c <= c_next;
+      c <= c_end;
 
       // --- D (`d_decides`, `d_ends`): its wait, the slot to fetch first, the
       // --- stream's fetch; at its word's arrival the popped word kept unless
@@ -3346,6 +3390,22 @@ module quux15_core #(
     c_boot.nf = lc_needfetch;
     c_boot.bm = intctl[3];
     c_boot.next_instr = next_instrd;
+  end
+
+  // **RD's COPIES AT THE HALT'S END** (`restore_copies` as the drain ends):
+  // an operand address RD left unknown, its fused return's own write of a
+  // base still to land, is formed over the bases as the drain leaves them
+  // (the restore copy, over WB's last write landing with the drain's end),
+  // before anything is fetched again.  A drain that begins with the return
+  // in EX squashes the handler's first word, whose operand load would have
+  // taken it.
+  copies_t c_end;
+  always_comb begin
+    c_end = c_next;
+    if (drain_end && c_next.opa_v && !c_next.opa_known) begin
+      c_end.opa_known = 1'b1;
+      c_end.opa_addr = c_hlt.opa_addr;
+    end
   end
 
   // **THE HALT ENDS** (`clock_once`'s end) as the clock ends with nothing in

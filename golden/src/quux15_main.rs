@@ -18,7 +18,10 @@
 //!             on; D's own machines; and a PDL address field
 //!             on M-AP and on A-LOCALP written by the word right before it,
 //!             or the one before that (muir's
-//!             `a_pdl_field_reads_a_base_the_word_before_wrote`)
+//!             `a_pdl_field_reads_a_base_the_word_before_wrote`); and a fused
+//!             return whose own popping word writes A-LOCALP or M-AP, the
+//!             handler reading its operand where that write puts it
+//!             (`own_base`, halted at every clock in `halts` too)
 
 use muir::isa::asm::{
     ALU, ALWAYS, CARRY_IN, DISPATCH, JUMP, M_PLUS_C, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ,
@@ -214,6 +217,7 @@ pub fn main_loop() -> Vec<(String, Case)> {
     for d in [false, true] {
         v.extend(byte_steps(d).into_iter().map(|(n, p)| (n, parked(&p))));
     }
+    v.extend(own_base(&[false, true]).into_iter().map(|(n, p)| (n, parked(&p))));
     v
 }
 
@@ -509,6 +513,77 @@ fn d_timing() -> Vec<(String, Preset)> {
         // INTERRUPT-CONTROL's enable, `<27>`, which word 4 writes.
         p.amem.push((0o53, 1 << 35));
         v.push((format!("irq-{on}"), p));
+    }
+    v
+}
+
+/// **A fused return whose own popping word writes its base** (contract H8a
+/// §3.4; muir's `a_handler_reads_its_operand_over_the_return_s_own_base_write`),
+/// D as `ds` says, the names ending `-nod` and `-d`: opcode 3's return,
+/// fused on opcode 11, LOCAL 2 or ARG 2, whose handler reads the PDL buffer
+/// through the operand address in its first word.  PDL-INDEX must take the
+/// address over the new base, EX forwarding WB's write of it in the
+/// microcycle after the return, and the handler's read must find it there,
+/// RD counting the return's own write as a base still being written:
+///
+/// - `own`: the return writes A-LOCALP;
+/// - `ownap`: the return steps M-AP;
+/// - `jumpret`: the return is a jump with R, whose target's bits stand
+///   where an ALU word's M destination names M-AP: a jump writes no base,
+///   and RD knows the address.
+///
+/// The PDL buffer's words at the address over the old base and over the
+/// new one each name their address, so a read at the wrong one shows in
+/// M 27.
+pub fn own_base(ds: &[bool]) -> Vec<(String, Preset)> {
+    use muir::isa::asm::R;
+    let fd = |c: u64| c << 19 | 0o37 << 14;
+    // M-AP's word at the start, and A-LOCALP's after the return.
+    const AP: Word = 0o1400;
+    const LOCALP_NEW: Word = 0o1100;
+    // A jump's target whose `<6:2>`, `IR<18:14>`, is M-AP's address.
+    const AP_TARGET: u64 = AP_AT << 2;
+    let mut v = Vec::new();
+    for &d in ds {
+        let on = if d { "d" } else { "nod" };
+        for (what, reg, old, new) in [
+            ("own", 5u32, LOCALP + 2, LOCALP_NEW + 2),
+            ("ownap", 6u32, AP + 1 + 2, AP + 2 + 2),
+            ("jumpret", 6u32, AP + 1 + 2, AP + 2 + 2),
+        ] {
+            let mut p = ml_machine(d, &[hw(3, 0, 0), hw(0o11, reg, 2), hw(1, 0, 0), hw(7, 0, 0)], &[]);
+            let ret = match what {
+                "own" => {
+                    let to = p.k(LOCALP_NEW);
+                    ALU | SETA | a_src(to) | a_dest(LOCALP_AT) | POPJ
+                }
+                "ownap" => ALU | M_PLUS_C | CARRY_IN | m_src(AP_AT) | m_dest(AP_AT) | POPJ,
+                _ => JUMP | ALWAYS | R | N | target(AP_TARGET),
+            };
+            put_at(&mut p, OP_3, ret);
+            put_at(&mut p, OP_11, ALU | SETM | src(0o5) | m_dest(0o27));
+            put_at(&mut p, OP_11 + 1, filler().raw() | POPJ);
+            put_at(&mut p, OP_11 + 2, ALU | SETM | m_src(0o31) | fd(0o11));
+            p.dmem.push(((OPDTB + 0o11) as usize, OP_11 as u32));
+            for k in 0..macro_dispatch::ENTRIES {
+                if k >> 3 & 0o37 == 0o11 {
+                    p.mdmem.push((k, OP_11 as u32 | macro_dispatch::OPERAND));
+                }
+            }
+            p.mmem.push((AP_AT, AP));
+            // The PDL buffer's two words first, then the machine's word 0,
+            // which sets PDL-INDEX to the sentinel.
+            let first = p.words[0];
+            let ks: Vec<u64> = [old, 0o1000000 | old, new, 0o1000000 | new].iter().map(|&w| p.k(w)).collect();
+            p.words[0] = JUMP | target(0o340) | ALWAYS | N;
+            put_at(&mut p, 0o340, ALU | SETA | a_src(ks[0]) | fd(0o13));
+            put_at(&mut p, 0o341, ALU | SETA | a_src(ks[1]) | fd(0o12));
+            put_at(&mut p, 0o342, ALU | SETA | a_src(ks[2]) | fd(0o13));
+            put_at(&mut p, 0o343, ALU | SETA | a_src(ks[3]) | fd(0o12));
+            put_at(&mut p, 0o344, first);
+            put_at(&mut p, 0o345, JUMP | target(1) | ALWAYS | N);
+            v.push((format!("opbase-{what}-{on}"), p));
+        }
     }
     v
 }

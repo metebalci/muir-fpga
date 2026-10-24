@@ -196,11 +196,13 @@ CADR_LAT = $(BUILD)/machine.lat.pass $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.lat.pass)
 # (`golden/src/quux15_console.rs`): halts, single steps, the debug IR, the
 # reset and the boot (`console`), and a halt at every clock of five programs,
 # of a write start in a delay slot and of one right after a read start, and
-# of the main loop's machines, and at every third of two at random with
+# of the main loop's machines and of the returns that write their own base,
+# and at every third of two at random with
 # memory (`halts`, at 10 ns alone), each halted state held byte for byte to
 # muir's checkpoint; and the main loop's (`golden/src/quux15_main.rs`,
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
-# and A-LOCALP; and a store and its page check before a return with N, fused
+# and A-LOCALP, and a fused return whose own popping word writes A-LOCALP or
+# M-AP, its handler reading the operand over the new base; and a store and its page check before a return with N, fused
 # into an operand's handler that reads the PDL buffer in its first word
 # (`storeret`), under the port's timings and the seeded memory model.  And
 # the keyboard and the mouse (`golden/src/quux15_input.rs`, `input`): key

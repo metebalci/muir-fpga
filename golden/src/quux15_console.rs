@@ -578,8 +578,11 @@ pub fn halts(period: u64) -> Vec<Case> {
     }
     // The main loop's machines, D off and on: a halt in a fused return's wait
     // for its operand address among them, and with D on a halt at every
-    // clock from a return's EX to its word's arrival (A15b.13).
-    for (name, p) in super::quux15_main::machines(&[false, true]) {
+    // clock from a return's EX to its word's arrival (A15b.13); and the
+    // returns that write their own base, halted with the write in WB too.
+    let mut mains = super::quux15_main::machines(&[false, true]);
+    mains.extend(super::quux15_main::own_base(&[false, true]));
+    for (name, p) in mains {
         let end = park_clock(&super::quux15_main::parked(&p), period);
         for at in 2..=end {
             let mut c = super::quux15_main::parked(&p);

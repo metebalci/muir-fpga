@@ -23129,9 +23129,9 @@ set prom build/boot_prom.quux15.hex
 @file rtl/machine/quux15_core.sv
 @note ARG's operand address is M-AP + delta, without the one.
 @old
-    return (arg ? ap + 14'd1 : localp) + {8'd0, delta};
+    return (arg ? b_ap + 14'd1 : b_localp) + {8'd0, delta};
 @new
-    return (arg ? ap : localp) + {8'd0, delta};
+    return (arg ? b_ap : b_localp) + {8'd0, delta};
 @end
 
 @mutation quux15-operand-never-loaded
@@ -23139,9 +23139,119 @@ set prom build/boot_prom.quux15.hex
 @file rtl/machine/quux15_core.sv
 @note The operand address a fused return armed is never loaded into PDL-INDEX.
 @old
-      if (mdop_v) nidx = op_addr(mdop_arg, mdop_delta);
+      if (mdop_v)
+        nidx = op_addr_over(mdop_arg, mdop_delta,
 @new
-      if (1'b0) nidx = op_addr(mdop_arg, mdop_delta);
+      if (1'b0)
+        nidx = op_addr_over(mdop_arg, mdop_delta,
+@end
+
+@mutation quux15-operand-ap-not-forwarded-from-wb
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The operand address is formed over the copy of M-AP alone: a fused
+@note return that steps M-AP itself loads PDL-INDEX over the old base.
+@old
+                            (land_m_we && land_m_addr == n_mdreg[28:24]) ? land_data[13:0] : ap,
+@new
+                            ap,
+@end
+
+@mutation quux15-operand-localp-not-forwarded-from-wb
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The operand address is formed over the copy of A-LOCALP alone: a
+@note fused return that writes A-LOCALP itself loads PDL-INDEX over the old
+@note base.
+@old
+                            (land_a_we && land_a_addr == n_mdreg[23:14]) ? land_data[13:0] : localp);
+@new
+                            localp);
+@end
+
+@mutation quux15-operand-own-base-write-not-counted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD forms a fused return's operand address over the copies while the
+@note popping word itself writes A-LOCALP or M-AP: the handler's first read
+@note of the PDL buffer, which RD addresses, reads at the old base.
+@old
+                p.e.opa_known = !writes_base(rd_ir)
+                             && !base_in_flight(1'b1, mdreg[23:14], 1'b1, mdreg[28:24]);
+@new
+                p.e.opa_known = !base_in_flight(1'b1, mdreg[23:14], 1'b1, mdreg[28:24]);
+@end
+
+@mutation quux15-operand-own-a-write-not-counted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD does not count the popping word's own write of A-LOCALP; its own
+@note write of M-AP still counts.
+@old
+        && ((ir[25] ? ir[23:14] : {5'd0, ir[18:14]}) == mdreg[23:14]
+@new
+        && ((ir[25] ? ir[23:14] : {5'd0, ir[18:14]}) == ~mdreg[23:14]
+@end
+
+@mutation quux15-operand-own-m-write-not-counted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD does not count the popping word's own write of M-AP; its own
+@note write of A-LOCALP still counts.
+@old
+            || (!ir[25] && ir[18:14] == mdreg[28:24]));
+@new
+            || (!ir[25] && ir[18:14] == ~mdreg[28:24]));
+@end
+
+@mutation quux15-operand-own-write-of-a-jump-counted
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD reads a return's destination fields whatever the word: a jump
+@note whose target's bits stand where an M destination names M-AP leaves
+@note the operand address unknown, and the handler's read waits a clock.
+@old
+    return (ir[44:43] == 2'd0 || ir[44:43] == 2'd3)
+        && ((ir[25] ? ir[23:14] : {5'd0, ir[18:14]}) == mdreg[23:14]
+@new
+    return (ir[44:43] == 2'd0 || ir[44:43] != 2'd0)
+        && ((ir[25] ? ir[23:14] : {5'd0, ir[18:14]}) == mdreg[23:14]
+@end
+
+@mutation quux15-halt-end-keeps-an-unknown-operand
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The halt ends with RD's operand address still unknown: a drain that
+@note began with a fused return that writes its own base in EX squashed the
+@note handler's first word, whose operand load would have taken it.
+@old
+    if (drain_end && c_next.opa_v && !c_next.opa_known) begin
+@new
+    if (drain_end && c_next.opa_v && !c_next.opa_known && 1'b0) begin
+@end
+
+@mutation quux15-restore-copy-operand-without-the-ap-landing
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The restore copy of an armed operand address, with no word committing,
+@note is formed over the copy of M-AP before WB's write of it lands: a halt
+@note that ends in that clock keeps the old base.
+@old
+                                  (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap,
+@new
+                                  ap,
+@end
+
+@mutation quux15-restore-copy-operand-without-the-localp-landing
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The restore copy of an armed operand address, with no word committing,
+@note is formed over the copy of A-LOCALP before WB's write of it lands: a
+@note halt that ends in that clock keeps the old base.
+@old
+                                  (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp);
+@new
+                                  localp);
 @end
 
 @mutation quux15-pdl-field-m-ap-without-the-landing
