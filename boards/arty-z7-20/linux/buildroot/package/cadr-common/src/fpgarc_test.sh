@@ -69,7 +69,15 @@ cases=0
 # a new sandbox and passed.  A `timeout` around the check sent the signal and
 # the log read as a few cases failing, with the run otherwise whole.  Now the
 # run stops where it was signalled and says so.
-cleanup() { rm -rf "$WORK"; }
+# The Ethernet device's watch, a loop the stubbed start-stop-daemon left
+# running, stopped by its pid file before its sandbox goes: it would otherwise
+# tick on into the next case's files of the same name.
+watch_gone() {
+	_wp=$(cat "$WORK/run/quux-ethernet-device.watch.pid" 2>/dev/null)
+	[ -n "$_wp" ] && kill "$_wp" 2>/dev/null
+	return 0
+}
+cleanup() { watch_gone; rm -rf "$WORK"; }
 trap cleanup EXIT
 trap 'echo "fpgarc: stopped by SIGINT after $cases cases" >&2; exit 130' INT
 trap 'echo "fpgarc: stopped by SIGTERM after $cases cases" >&2; exit 143' TERM
@@ -101,6 +109,7 @@ anchor() {
 }
 
 sandbox() {
+	watch_gone
 	rm -rf "$WORK"
 	mkdir -p "$WORK/bin" "$WORK/card" "$WORK/run" "$WORK/mnt" "$WORK/dev"
 	: > "$WORK/daemon.calls"
@@ -112,6 +121,9 @@ sandbox() {
 	: > "$WORK/order.calls"
 	: > "$WORK/ozd.check.calls"
 	: > "$WORK/ssd.fg.calls"
+	: > "$WORK/ssd.refused.calls"
+	: > "$WORK/ssd.test.calls"
+	: > "$WORK/watch.order"
 	: > "$WORK/devmem.calls"
 	: > "$WORK/ntpd.calls"
 	: > "$WORK/ntpd.order"
@@ -155,6 +167,15 @@ EOF
 	# caller's stdout and stderr, and its status is the program's).  Such a
 	# run is recorded in ssd.fg.calls and not in daemon.calls, which is the
 	# record of what was STARTED and which every case counts flags in.
+	#
+	# **AND -S REFUSES A PROGRAM ALREADY RUNNING, AS THE REAL ONE DOES**:
+	# with -p naming a live process it starts nothing and exits 1
+	# (busybox's start_stop_daemon.c:546-550), and the refusal is recorded
+	# in ssd.refused.calls, not in daemon.calls.  **AND -K -t ONLY ASKS**:
+	# 0 when -p names a live process, 1 otherwise, and nothing is sent
+	# (do_stop's TEST, :388), recorded in ssd.test.calls.  The real one
+	# also matches the process's executable against --exec; the stand-in
+	# programs exec \`sleep\`, so here a live pid is the match.
 	cat > "$WORK/bin/start-stop-daemon" <<EOF
 #!/bin/sh
 _all="\$*"
@@ -162,11 +183,13 @@ _pidfile=""
 _prog=""
 _kill=no
 _bg=no
+_test=no
 _chuid=""
 while [ \$# -gt 0 ]; do
 	case "\$1" in
 	-K) _kill=yes ;;
 	-b) _bg=yes ;;
+	-t) _test=yes ;;
 	-c) _chuid=\$2; shift ;;
 	-p) _pidfile=\$2; shift ;;
 	--exec) _prog=\$2; shift ;;
@@ -174,6 +197,20 @@ while [ \$# -gt 0 ]; do
 	esac
 	shift
 done
+_live=no
+if [ -n "\$_pidfile" ]; then
+	_pid=\$(cat "\$_pidfile" 2>/dev/null)
+	[ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null && _live=yes
+fi
+if [ "\$_test" = yes ]; then
+	echo "\$_all" >> "$WORK/ssd.test.calls"
+	[ "\$_live" = yes ]
+	exit \$?
+fi
+if [ "\$_kill" = no ] && [ "\$_live" = yes ]; then
+	echo "\$_all" >> "$WORK/ssd.refused.calls"
+	exit 1
+fi
 if [ "\$_kill" = no ] && [ "\$_bg" = no ]; then
 	echo "\$_all" >> "$WORK/ssd.fg.calls"
 	[ -n "\$_prog" ] || exit 0
@@ -187,8 +224,16 @@ if [ "\$_kill" = yes ]; then
 	exit 0
 fi
 [ -n "\$_prog" ] || exit 0
-SSD_CHUID=\$_chuid "\$_prog" "\$@" > /dev/null 2>&1 &
-[ -n "\$_pidfile" ] && echo \$! > "\$_pidfile"
+# The pid file is written by the child before it execs, as busybox's is
+# (start_stop_daemon.c, write_pidfile after the second vfork), so the program
+# finds its own pid there from its first instruction; and by the parent too,
+# the same pid, so it is there when this returns, as vfork makes it.
+if [ -n "\$_pidfile" ]; then
+	SSD_CHUID=\$_chuid /bin/sh -c 'echo \$\$ > "\$0"; exec "\$@"' "\$_pidfile" "\$_prog" "\$@" > /dev/null 2>&1 &
+	echo \$! > "\$_pidfile"
+else
+	SSD_CHUID=\$_chuid "\$_prog" "\$@" > /dev/null 2>&1 &
+fi
 exit 0
 EOF
 	# The five programs, each a stand-in that refuses the flag \$REFUSE
@@ -580,10 +625,30 @@ esac
 exit 0
 EOF
 	# **AND BusyBox's \`arp\`**, which a LAN tap's proxy entry is made and
-	# removed with: recorded in the tap's record like the other two.
+	# removed with: recorded in the tap's record like the other two.  **AND
+	# THE KERNEL'S TABLE FOLLOWS IT**: \`-i L -Ds Q L pub\` puts Q's proxy
+	# entry on L into \$WORK/proc-net-arp, as /proc/net/arp lists one (flags
+	# 0xc, no hardware address), and \`-i L -d Q pub\` takes it out, so the
+	# Ethernet device's watch reads what the script made.  A removal while
+	# the watch's pid file names a live process is recorded in watch.order:
+	# the stop must end the watch before it undoes anything, or the watch
+	# would make the entry again behind it.
 	cat > "$WORK/bin/arp" <<EOF
 #!/bin/sh
 echo "arp \$*" >> "$WORK/tap.calls"
+_t="$WORK/proc-net-arp"
+case "\$3" in
+-Ds)
+	awk -v q="\$4" -v l="\$2" '!(\$1 == q && \$3 == "0xc" && \$NF == l)' "\$_t" > "\$_t.new" &&
+		mv "\$_t.new" "\$_t"
+	printf '%-16s 0x1         0xc         00:00:00:00:00:00     *        %s\\n' "\$4" "\$2" >> "\$_t" ;;
+-d)
+	_w=\$(cat "$WORK/run/quux-ethernet-device.watch.pid" 2>/dev/null)
+	[ -n "\$_w" ] && kill -0 "\$_w" 2>/dev/null &&
+		echo "arp \$* while the watch ran" >> "$WORK/watch.order"
+	awk -v q="\$4" -v l="\$2" '!(\$1 == q && \$3 == "0xc" && \$NF == l)' "\$_t" > "\$_t.new" &&
+		mv "\$_t.new" "\$_t" ;;
+esac
 exit 0
 EOF
 	# **THE IMAGE'S /etc/network/interfaces**, as Buildroot writes it for
@@ -739,6 +804,13 @@ prepare() {
 		anchor "$dst" "^PROC_ARP=/proc/net/arp\$" "PROC_ARP=$WORK/proc-net-arp" || return 1
 		anchor "$dst" "^LANFILE=/var/run/quux-ethernet-device.lan\$" \
 		              "LANFILE=$WORK/run/quux-ethernet-device.lan" || return 1
+		# The proxy entry's watch: its pid file and the two places it
+		# says a remade entry, the board's, rewritten to the sandbox.
+		anchor "$dst" "^WATCHFILE=/var/run/quux-ethernet-device.watch.pid\$" \
+		              "WATCHFILE=$WORK/run/quux-ethernet-device.watch.pid" || return 1
+		anchor "$dst" "^WATCH_LOG=/var/log/quux-ethernet-device.watch.log\$" \
+		              "WATCH_LOG=$WORK/watch.log" || return 1
+		anchor "$dst" "^WATCH_CONSOLE=/dev/console\$" "WATCH_CONSOLE=$WORK/watch.console" || return 1
 		;;
 	S87cadr-chaosnet)
 		anchor "$dst" "^WAIT_SECONDS=30\$" "WAIT_SECONDS=1" || return 1
@@ -2287,6 +2359,9 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		ok "the console was not asked about the lamps"
 	fi
 	printf '%s\r\n' '--no-blinking-leds' > "$WORK/card/fpgarc"
+	# A second boot: the first's stand-in program is still alive, and the
+	# stubbed start-stop-daemon, like the real one, refuses to start it again.
+	rm -f "$WORK"/run/*.pid "$WORK"/run/*.pid.why
 	: > "$WORK/daemon.calls"
 	CONSOLE_LAMPS=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S80cadr-disk-packs" start > "$WORK/out.lamps" 2>&1
@@ -2349,6 +2424,9 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		ok "the console was not asked about sleep"
 	fi
 	printf '%s\r\n' '--display-sleep 0' > "$WORK/card/fpgarc"
+	# A second boot: the first's stand-in program is still alive, and the
+	# stubbed start-stop-daemon, like the real one, refuses to start it again.
+	rm -f "$WORK"/run/*.pid "$WORK"/run/*.pid.why
 	: > "$WORK/daemon.calls"
 	: > "$WORK/console.calls"
 	CONSOLE_SLEEP=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
@@ -7497,6 +7575,268 @@ if prepare quux-ethernet-device S82quux-ethernet-device; then
 		fail "LAN stop: status $(cat "$WORK/status.stop"), said [$(tr '\n' '|' < "$WORK/out.stop")]," \
 		     "run file [$(cat "$WORK/run/quux-ethernet-device.lan" 2>/dev/null)]"
 	fi
+fi
+
+# The proxy entry's watch, read from outside it (cases below).
+watch_pid() { cat "$WORK/run/quux-ethernet-device.watch.pid" 2>/dev/null; }
+watch_alive() {
+	_wa=$(watch_pid)
+	[ -n "$_wa" ] && kill -0 "$_wa" 2>/dev/null
+}
+# Q's proxy entry on eth0 in the stubbed kernel table.
+q_entry() { awk '$1 == "192.0.2.50" && $3 == "0xc" && $NF == "eth0" { f = 1 } END { exit !f }' "$WORK/proc-net-arp"; }
+# Up to $1 tenths of a second for the command $2 to succeed.
+within() {
+	_wn=0
+	while [ "$_wn" -lt "$1" ]; do
+		eval "$2" && return 0
+		sleep 0.1
+		_wn=$((_wn + 1))
+	done
+	eval "$2"
+}
+
+# **A START WHILE THE DEVICE RUNS CHANGES NOTHING.**  It once rebuilt the
+# rules, took the running tap down and up again, failed at the daemon start,
+# and then undid the running tap's rules, proxy entry and LAN values, with
+# BusyBox's `tunctl -d` crashing on the tap the program held.  Now: no call to
+# the tap's tools, no program started or run again, everything as the first
+# start left it, the first program still running, and status 0, LSB's rule
+# for a start on a service already running.
+s82_start_again() {
+	: > "$WORK/tap.calls"
+	: > "$WORK/daemon.calls"
+	: > "$WORK/ssd.refused.calls"
+	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+	CADR_FAULT_SAID="$WORK/run/fault.said" \
+	PATH="$WORK/bin:$PATH" "$WORK/S82quux-ethernet-device" start > "$WORK/out.again" 2>&1
+	echo "$?" > "$WORK/status.again"
+}
+
+# What a start leaves that a second start must not move: the rules, the run
+# file, every sysctl written, and whether the tap is there.
+s82_state() {
+	echo "rules [$(tr '\n' '|' < "$WORK/ip.rules")]"
+	echo "run file [$(cat "$WORK/run/quux-ethernet-device.lan" 2>/dev/null | tr '\n' '|')]"
+	echo "sysctl [$(cd "$WORK/sysctl" && grep -r . . | sort | tr '\n' '|')]"
+	echo "tap [$([ -e "$WORK/tap.made" ] && echo made || echo gone)]"
+}
+
+case_head "a start while the device runs touches nothing, starts nothing and succeeds, on a LAN card and a host-only card"
+for mode in LAN host-only; do
+	if [ "$mode" = LAN ]; then
+		lan_card
+	else
+		sandbox
+		printf '%s\r\n' '--machine quux' > "$RC"
+		mkdir -p "$WORK/ipv6/quux0"
+	fi
+	if prepare quux-ethernet-device S82quux-ethernet-device; then
+		run_script S82quux-ethernet-device
+		first=$(cat "$WORK/run/quux-ethernet-device.pid" 2>/dev/null)
+		if [ -z "$first" ] || ! kill -0 "$first" 2>/dev/null; then
+			fail "$mode: the first start left no running program: $(cat "$WORK/out.S82quux-ethernet-device")"
+			continue
+		fi
+		before=$(s82_state)
+		watch_first=$(watch_pid)
+		s82_start_again
+		after=$(s82_state)
+		if [ "$mode" = LAN ]; then
+			if [ -n "$watch_first" ] && [ "$(watch_pid)" = "$watch_first" ] && watch_alive; then
+				ok "LAN: the one watch the first start began still runs, and no second was started"
+			else
+				fail "LAN: the watch was [$watch_first] and is [$(watch_pid)], alive: $(watch_alive && echo yes || echo no)"
+			fi
+		fi
+		if [ ! -s "$WORK/tap.calls" ] && [ ! -s "$WORK/daemon.calls" ] && [ ! -s "$WORK/ssd.refused.calls" ] &&
+		   ! grep -q FAIL "$WORK/out.again"; then
+			ok "$mode: the second start called no tool of the tap's and started and ran no program"
+		else
+			fail "$mode: the second start: the tap [$(tr '\n' '|' < "$WORK/tap.calls")], the program [$(given)]," \
+			     "refused [$(cat "$WORK/ssd.refused.calls")], said [$(tr '\n' '|' < "$WORK/out.again")]"
+		fi
+		if [ "$before" = "$after" ]; then
+			ok "$mode: the rules, the run file, the sysctls and the tap are as the first start left them"
+		else
+			fail "$mode: the second start moved the first's state: before {$before} after {$after}"
+		fi
+		if [ "$(cat "$WORK/run/quux-ethernet-device.pid" 2>/dev/null)" = "$first" ] && kill -0 "$first" 2>/dev/null; then
+			ok "$mode: the first program is still running under its pid file"
+		else
+			fail "$mode: the first program, pid $first, is gone or its pid file moved"
+		fi
+		if [ "$(cat "$WORK/status.again")" = 0 ] && grep -q "already running (pid $first)" "$WORK/out.again"; then
+			ok "$mode: status 0, and it says it is already running, by pid"
+		else
+			fail "$mode: the second start: status $(cat "$WORK/status.again"), said [$(tr '\n' '|' < "$WORK/out.again")]"
+		fi
+		kill "$first" 2>/dev/null
+	fi
+done
+
+# **THE PROXY ENTRY'S WATCH.**  The kernel drops a proxy entry that `arp`
+# made when the LAN interface loses its carrier, and when the interface goes
+# down or loses its last address, so a LAN card's start begins a watch that
+# makes Q's entry again whenever it is gone, says so, and leaves a present
+# entry alone.  A host-only card starts none, and the stop ends it before it
+# undoes anything.
+case_head "a LAN card starts the proxy entry's watch under its own pid file; a host-only card starts none"
+lan_card
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if watch_alive &&
+	   grep -q -- "-p $WORK/run/quux-ethernet-device.watch.pid --exec /bin/sh -- .*/S82quux-ethernet-device watch\$" \
+		"$WORK/daemon.calls"; then
+		ok "LAN: the watch runs, started by start-stop-daemon with its own pid file"
+	else
+		fail "LAN: the watch [$(watch_pid)], the program [$(given)], said [$(tr '\n' '|' < "$WORK/out.S82quux-ethernet-device")]"
+	fi
+fi
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if [ -s "$WORK/daemon.calls" ] && [ ! -e "$WORK/run/quux-ethernet-device.watch.pid" ] &&
+	   ! grep -q ' watch$' "$WORK/daemon.calls"; then
+		ok "host-only: the device started and no watch"
+	else
+		fail "host-only: the program [$(given)], the watch [$(watch_pid)]"
+	fi
+fi
+
+case_head "a proxy entry the kernel drops is made again within two ticks and said; one that stays is left alone"
+lan_card
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	if ! watch_alive || ! q_entry; then
+		fail "the LAN start left no watch [$(watch_pid)] or no entry [$(tr '\n' '|' < "$WORK/proc-net-arp")]"
+	else
+		: > "$WORK/tap.calls"
+		sleep 2.5
+		if [ ! -s "$WORK/tap.calls" ]; then
+			ok "with the entry there the watch calls nothing in 2.5 s"
+		else
+			fail "with the entry there the watch called [$(tr '\n' '|' < "$WORK/tap.calls")]"
+		fi
+		# The kernel's purge, as a carrier loss on eth0 makes it.
+		awk '!($1 == "192.0.2.50" && $3 == "0xc")' "$WORK/proc-net-arp" > "$WORK/proc-net-arp.new" &&
+			mv "$WORK/proc-net-arp.new" "$WORK/proc-net-arp"
+		if within 25 q_entry && [ "$(tr '\n' '|' < "$WORK/tap.calls")" = "arp -i eth0 -Ds 192.0.2.50 eth0 pub|" ]; then
+			ok "the entry is made again, by start's own command, once"
+		else
+			fail "the dropped entry: the tap's record [$(tr '\n' '|' < "$WORK/tap.calls")], the table [$(tr '\n' '|' < "$WORK/proc-net-arp")]"
+		fi
+		for _f in watch.log watch.console; do
+			if grep -q "the proxy entry for 192.0.2.50 on eth0 was gone, and is made again" "$WORK/$_f" 2>/dev/null; then
+				ok "the remade entry is said in $_f"
+			else
+				fail "the remade entry is not said in $_f: [$(cat "$WORK/$_f" 2>/dev/null)]"
+			fi
+		done
+	fi
+fi
+
+case_head "the stop ends the watch before it undoes anything, and nothing is made again after it"
+lan_card
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	w=$(watch_pid)
+	s82_stop
+	if [ -n "$w" ] && ! kill -0 "$w" 2>/dev/null && [ ! -s "$WORK/watch.order" ] &&
+	   [ ! -e "$WORK/run/quux-ethernet-device.watch.pid" ]; then
+		ok "the watch, pid $w, was gone before the proxy entry was removed, and its pid file with it"
+	else
+		fail "the stop: the watch [$w] alive $(kill -0 "$w" 2>/dev/null && echo yes || echo no)," \
+		     "removed while it ran [$(tr '\n' '|' < "$WORK/watch.order")], said [$(tr '\n' '|' < "$WORK/out.stop")]"
+	fi
+	sleep 2
+	if q_entry; then
+		fail "after the stop Q's proxy entry is back: [$(tr '\n' '|' < "$WORK/proc-net-arp")]"
+	else
+		ok "two seconds after the stop Q's proxy entry is still gone"
+	fi
+	_ifs=$IFS; IFS='
+'
+	# shellcheck disable=SC2086
+	set -- $LAN_STOP_LIST
+	IFS=$_ifs
+	tap_record_is "LAN stop with the watch" "$@"
+fi
+
+# **AND A WATCH WITH NOTHING LEFT TO WATCH ENDS BY ITSELF**: once its own pid
+# file or the LAN tap's run file is gone, at the next tick, so a watch that
+# outlived its stop never makes an entry for a tap that is no longer there.
+case_head "the watch ends by itself within two ticks once its pid file, or the run file, is gone"
+for gone in "run/quux-ethernet-device.watch.pid" "run/quux-ethernet-device.lan"; do
+	lan_card
+	if prepare quux-ethernet-device S82quux-ethernet-device; then
+		run_script S82quux-ethernet-device
+		w=$(watch_pid)
+		rm -f "$WORK/$gone"
+		if [ -n "$w" ] && within 25 "! kill -0 $w 2>/dev/null"; then
+			ok "with $gone gone the watch, pid $w, ended"
+		else
+			fail "with $gone gone the watch [$w] is still running"
+			[ -n "$w" ] && kill "$w" 2>/dev/null
+		fi
+	fi
+done
+
+# **A PROGRAM THE STOP CANNOT END KEEPS ITS TAP.**  stop.sh leaves a program
+# that is still running at its bound, and says so; undoing the tap under it
+# would take its rules, its proxy entry and its LAN values away while it
+# runs, and BusyBox's `tunctl -d` crashes on a tap a program holds.  So the
+# stop undoes nothing then, and fails.
+case_head "a program the stop cannot end keeps its tap, rules, proxy entry and watch; the stop says so and fails"
+lan_card
+cat > "$WORK/bin/quux-ethernet-device" <<'EOF'
+#!/bin/sh
+trap '' TERM
+exec sleep 30
+EOF
+chmod +x "$WORK/bin/quux-ethernet-device"
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	run_script S82quux-ethernet-device
+	deaf=$(cat "$WORK/run/quux-ethernet-device.pid" 2>/dev/null)
+	w=$(watch_pid)
+	before=$(s82_state)
+	s82_stop
+	after=$(s82_state)
+	if [ "$(cat "$WORK/status.stop")" = 2 ] && [ ! -s "$WORK/tap.calls" ] && [ "$before" = "$after" ] && q_entry &&
+	   [ -n "$w" ] && kill -0 "$w" 2>/dev/null && grep -q "still running" "$WORK/out.stop" &&
+	   grep -q "left as they are" "$WORK/out.stop"; then
+		ok "status 2, no call to the tap's tools, the rules, run file, sysctls, tap, entry and watch as they were, and said"
+	else
+		fail "a program that would not stop: status $(cat "$WORK/status.stop"), the tap [$(tr '\n' '|' < "$WORK/tap.calls")]," \
+		     "before {$before} after {$after}, the watch [$w], said [$(tr '\n' '|' < "$WORK/out.stop")]"
+	fi
+	[ -n "$deaf" ] && kill -KILL "$deaf" 2>/dev/null
+fi
+
+# **AND A PID FILE WHOSE PROCESS IS GONE IS NO RUNNING DEVICE**: a program that
+# died leaves its pid file, and the start then makes the LAN tap in full.
+case_head "a pid file naming a process that is gone does not stop a LAN start"
+lan_card
+if prepare quux-ethernet-device S82quux-ethernet-device; then
+	sh -c 'exit 0' &
+	dead=$!
+	wait "$dead"
+	echo "$dead" > "$WORK/run/quux-ethernet-device.pid"
+	s82_start_again
+	cp "$WORK/out.again" "$WORK/out.S82quux-ethernet-device"
+	_ifs=$IFS; IFS='
+'
+	# shellcheck disable=SC2086
+	set -- $LAN_START_LIST
+	IFS=$_ifs
+	tap_record_is "LAN over a dead pid file" "$@"
+	if [ "$(cat "$WORK/status.again")" = 0 ] && [ -s "$WORK/daemon.calls" ]; then
+		ok "a dead pid file: the device started"
+	else
+		fail "a dead pid file: status $(cat "$WORK/status.again"), the program [$(given)], said [$(tr '\n' '|' < "$WORK/out.again")]"
+	fi
+	kill "$(cat "$WORK/run/quux-ethernet-device.pid" 2>/dev/null)" 2>/dev/null
 fi
 
 case_head "a LAN tap started again without a stop keeps eth0's first values, and the stop puts those back"

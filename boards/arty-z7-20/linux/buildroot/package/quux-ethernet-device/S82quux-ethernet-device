@@ -59,6 +59,14 @@
 # header, so the board's Linux checks every checksum QUUX's device fills in.
 # BusyBox's `ip neigh` cannot add a proxy entry, so its `arp` does.
 #
+# **A START WHILE THE PROGRAM RUNS CHANGES NOTHING**: it says so and
+# succeeds, as LSB has a start on a service already running.  Making the tap
+# again would take the running tap down and up, and the daemon start that
+# then failed would undo the running tap's rules, proxy entry and LAN
+# values.  Running is what start-stop-daemon's own -S refusal means: the
+# pid file names a live process of this program, asked with `-K -t`, which
+# sends nothing.
+#
 # **THE FLAGS ARE muir's**, with muir's meaning and defaults
 # (`docs/fpgarc.md`): `--ethernet-mac`, `--ip-address`, `--ip-gateway` and
 # `--ethernet-trace`.  The program refuses a value muir refuses, in muir's
@@ -97,6 +105,12 @@ LANFILE=/var/run/quux-ethernet-device.lan
 # both forms.
 LINK_LOCAL_NET=169.254.0.0/16
 RULE_PRIORITY=1169
+# The proxy entry's watch (below): its pid file, the two places it says a
+# remade entry, and its tick in seconds.
+WATCHFILE=/var/run/quux-ethernet-device.watch.pid
+WATCH_LOG=/var/log/quux-ethernet-device.watch.log
+WATCH_CONSOLE=/dev/console
+WATCH_SECONDS=1
 
 RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
@@ -306,6 +320,103 @@ make_lan_tap() {
 	arp -i "$_l" -Ds "$_q" "$_l" pub || return 1
 }
 
+# **THE PROXY ENTRY'S WATCH.**  The kernel drops a proxy entry that `arp`
+# made when the LAN interface loses its carrier (net/ipv4/arp.c's
+# NETDEV_CHANGE calls neigh_carrier_down, which keeps only a permanent proxy
+# entry, and the SIOCSARP path makes none permanent), and drops every one when
+# the interface goes down or loses its last address, as udhcpc's deconfig
+# takes it.  Nothing makes it again, and QUUX is then unreachable from the
+# LAN.  So a LAN tap's start begins this loop, as its own daemon under its own
+# pid file: every WATCH_SECONDS it looks for Q's entry on L in the kernel's
+# table, and makes it again with the start's own command when it is gone,
+# saying so on the console and in its log.  It reads Q and L from the run
+# file at every tick, and ends at the next tick once the run file or its own
+# pid file is gone.  TERM is taken after the step in hand, so a stop that has
+# waited for it knows no `arp` of its is still running.
+
+# 0 when the kernel's table has a proxy entry, a line flagged ATF_PUBL 0x8,
+# for $1 on $2.
+proxy_entry_on() {
+	while read -r _ip _hw _flags _rest; do
+		[ "$_ip" = "$1" ] || continue
+		case "$_flags" in
+		0x*) ;;
+		*) continue ;;
+		esac
+		[ $(( _flags & 8 )) -ne 0 ] || continue
+		[ "${_rest##* }" = "$2" ] && return 0
+	done < "$PROC_ARP"
+	return 1
+}
+
+# One line on the console and in the watch's log.
+watch_said() {
+	_m="$(date -u '+%Y-%m-%dT%H:%M:%SZ') $1"
+	for _f in "$WATCH_CONSOLE" "$WATCH_LOG"; do
+		echo "$_m" >> "$_f"
+	done 2> /dev/null
+}
+
+# The loop, as the watch's daemon runs it: `S82quux-ethernet-device watch`.
+watch() {
+	trap 'exit 0' TERM
+	_failed=no
+	while :; do
+		_me=
+		read -r _me 2> /dev/null < "$WATCHFILE"
+		[ "$_me" = "$$" ] || exit 0
+		[ -f "$LANFILE" ] || exit 0
+		_l=
+		_q=
+		while read -r _k _v; do
+			case "$_k" in
+			lan) _l=$_v ;;
+			quux) _q=$_v ;;
+			esac
+		done < "$LANFILE"
+		if [ -n "$_l" ] && [ -n "$_q" ] && ! proxy_entry_on "$_q" "$_l"; then
+			if arp -i "$_l" -Ds "$_q" "$_l" pub > /dev/null 2>&1; then
+				watch_said "quux-ethernet-device: the proxy entry for $_q on $_l was gone, and is made again"
+				_failed=no
+			elif [ "$_failed" = no ]; then
+				watch_said "quux-ethernet-device: the proxy entry for $_q on $_l is gone and could not be made again; trying every $WATCH_SECONDS s"
+				_failed=yes
+			fi
+		fi
+		sleep "$WATCH_SECONDS"
+	done
+}
+
+# The watch started, unless one already runs: this script itself, by its
+# absolute path, under /bin/sh.
+watch_started() {
+	start-stop-daemon -K -t -q -p "$WATCHFILE" --exec /bin/sh > /dev/null 2>&1 && return 0
+	_self=$(cd "$(dirname "$0")" && pwd)/${0##*/}
+	start-stop-daemon -S -q -b -m -p "$WATCHFILE" --exec /bin/sh -- "$_self" watch
+}
+
+# The watch ended and gone: TERM by its pid file, then up to five seconds for
+# it to leave, which it does at most a tick later.
+watch_stopped() {
+	_w=
+	read -r _w 2> /dev/null < "$WATCHFILE"
+	if start-stop-daemon -K -q -p "$WATCHFILE" --exec /bin/sh > /dev/null 2>&1 && [ -n "$_w" ]; then
+		# Tenths where `sleep` takes them, whole seconds where not, as
+		# stop.sh counts them.
+		_step=0.1
+		_steps=50
+		sleep 0.1 2> /dev/null || { _step=1; _steps=5; }
+		_i=0
+		while kill -0 "$_w" 2> /dev/null && [ "$_i" -lt "$_steps" ]; do
+			sleep "$_step"
+			_i=$((_i + 1))
+		done
+		kill -0 "$_w" 2> /dev/null &&
+			echo "quux-ethernet-device: the proxy entry's watch, pid $_w, is still running; the stop goes on"
+	fi
+	rm -f "$WATCHFILE"
+}
+
 # The LAN interface's address and prefix, A.B.C.D N, or nothing before the
 # lease.
 lan_address() {
@@ -340,6 +451,10 @@ tap_removed() {
 
 start() {
 	cadr_fault_stop && return 0
+	if start-stop-daemon -K -t -q -p "$PIDFILE" --exec "$PROG" > /dev/null 2>&1; then
+		echo "Starting quux-ethernet-device: already running (pid $(cat "$PIDFILE" 2>/dev/null)); nothing changed."
+		return 0
+	fi
 	set --
 	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
 	if ! fpgarc_is_quux; then
@@ -413,6 +528,11 @@ start() {
 		tap_removed
 		return 1
 	fi
+	if watch_started; then
+		echo "quux-ethernet-device: the proxy entry for $q on $lan is watched every $WATCH_SECONDS s, and made again if it goes."
+	else
+		echo "quux-ethernet-device: the proxy entry's watch could not be started; an entry the kernel drops is not made again until a restart."
+	fi
 }
 
 # **A DEVICE THE START DID NOT START IS NOT A STOP THAT FAILED**, the file
@@ -420,7 +540,12 @@ start() {
 # the start's question.  The stop undoes the start in reverse: the program,
 # then a LAN tap's proxy entry and the LAN interface's values, then the tap,
 # which a persistent tap would otherwise outlive its holder by; the next start
-# makes it afresh.
+# makes it afresh.  **THE PROXY ENTRY'S WATCH ENDS FIRST**, before anything is
+# undone, or it would make the entry again behind the stop.  **A PROGRAM STILL
+# RUNNING AT stop.sh's BOUND KEEPS ITS TAP**: nothing is undone, the watch
+# included, and the stop says so and fails with stop.sh's 2, since undoing the
+# tap would take the rules, the proxy entry and the LAN values from a program
+# that runs, and BusyBox's `tunctl -d` crashes on a tap a program holds.
 stop() {
 	if [ ! -s "$PIDFILE" ] && [ ! -f "$LANFILE" ] && ! fpgarc_is_quux; then
 		echo "Stopping quux-ethernet-device: not running (CADR)"
@@ -428,6 +553,11 @@ stop() {
 	fi
 	cadr_stop quux-ethernet-device "$PIDFILE"
 	_status=$?
+	if [ "$_status" = 2 ]; then
+		echo "quux-ethernet-device: it is still running, so the tap $TAP, its rules, its proxy entry and its watch are left as they are"
+		return 2
+	fi
+	watch_stopped
 	lan_undo
 	tap_removed
 	return $_status
@@ -437,6 +567,8 @@ case "$1" in
 	start) start ;;
 	stop) stop ;;
 	restart|reload) stop; start ;;
+	# The proxy entry's watch, which watch_started runs; not for a person.
+	watch) watch ;;
 	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
 esac
 

@@ -91,6 +91,7 @@ deliver to QUUX:
    address, and the script undoes the tap and refuses. If QUUX's address is
    off the LAN interface's subnet, or its prefix differs, the script warns.
 10. The program starts.
+11. The proxy entry's watch starts, below.
 
 `arp_ignore` 0 and `arp_filter` 1 let the board answer QUUX for the board's own
 addresses, but only when the route back to the sender goes out of `quux0`.
@@ -118,10 +119,31 @@ which every board's kernel sets). Without it `ip rule add` fails, and the
 script undoes the tap, says so, naming `CONFIG_IP_MULTIPLE_TABLES`, and starts
 nothing.
 
-The stop undoes the start in reverse: it stops the program, removes the proxy
-entry the start made, puts the LAN interface's `forwarding` and proxy delay
-back to the values the start found, removes the rules at priority 1169, and
-removes the tap, which takes its route and its settings with it.
+**The proxy entry's watch.** The kernel removes a proxy entry made with `arp`
+when the LAN interface loses its carrier, since it keeps only permanent ones
+then, and it removes every proxy entry when the interface goes down or loses
+its last address, as the DHCP client's deconfig does. Nothing would make the
+entry again, and QUUX would be unreachable from the LAN until the script ran
+again. So a LAN tap's start also starts a watch, a loop of the init script's
+own under `start-stop-daemon` with its own pid file. Every second it looks
+for QUUX's proxy entry on the LAN interface in `/proc/net/arp`, and makes it
+again with the start's own `arp` command when it is gone. Each entry it makes
+again is said on the console and in `/var/log/quux-ethernet-device.watch.log`.
+A host-only tap has no proxy entry and no watch.
+
+The stop undoes the start in reverse: it stops the program, then ends the
+watch before anything is undone, so nothing makes the proxy entry again behind
+it. Then it removes the proxy entry the start made, puts the LAN interface's
+`forwarding` and proxy delay back to the values the start found, removes the
+rules at priority 1169, and removes the tap, which takes its route and its
+settings with it. If the program is still running when the stop's bound has
+passed, the stop undoes nothing: the tap, its rules, the proxy entry and the
+watch stay with the program that holds them, and the stop says so and fails.
+
+A start while the program runs changes nothing. It says the program is
+already running, with its process ID, and succeeds, as LSB has a start on a
+service already running. Running means what `start-stop-daemon`'s own refusal
+means: the pid file names a live process of the program.
 
 ### The LAN interface on each board
 
@@ -331,8 +353,12 @@ landing instead, so its 251 moves at the landing's edge.
 `make check`'s `fpgarc.pass` holds the init script (`docs/fpgarc.md`, What
 holds all of this). With BusyBox's `tunctl`, `sysctl`, `ip` and `arp` stubbed,
 it compares every call the script makes to a list, line for line and in order:
-a host-only card's start, a LAN card's start and its stop. A mixed card, and a
-LAN card on an image with no DHCP line or with two, must make no call at all.
+a host-only card's start, a LAN card's start and its stop. A mixed card, a
+LAN card on an image with no DHCP line or with two, and a start while the
+program runs must make no call at all. The proxy entry's watch is held with a stubbed
+`/proc/net/arp`: an entry taken out of it is made again within two seconds and
+said, an entry that stays draws no call, a host-only card starts no watch, and
+the stop ends the watch before it removes the entry.
 
 The model of the page is what the fabric owes, written from muir's device.
 
