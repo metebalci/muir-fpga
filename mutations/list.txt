@@ -10220,25 +10220,24 @@ if {0 && $held ne $want} {
 @note dropping `tv_fb` alone survived everything while MIT's boot PROM was the
 @note only program that reached the audit, and it never writes a pixel.  The
 @note machine check's testbench now reads the audit at the end of every run,
-@note and `quux_tv` writes and reads each machine's first display buffer, so
-@note `the-audit-forgets-the-tv-board-s-buffer` and
-@note `the-audit-forgets-the-video-buffer` below hold each term.
+@note and `quux_tv` writes and reads the TV board's buffer, so
+@note `the-audit-forgets-the-tv-board-s-buffer` below holds that term.
 @old
   assign cpu_memory_o   = cpu_bridged;
 @new
-  assign cpu_memory_o   = QUUX ? video_fb : (is_memory && (tv_fb || tvc_fb || video_fb));
+  assign cpu_memory_o   = is_memory && (tv_fb || tvc_fb);
 @end
 
 @mutation the-audit-forgets-the-tv-board-s-buffer
 @check quux_tv
 @file rtl/machine/cadr_memory_path.sv
-@note The CADR's side of the record below: `quux_tv` on the CADR writes and
-@note reads the TV board's buffer at 17000000, which the bridge answers, so
-@note the audit's flag without `tv_fb` calls those cycles not memory's.
+@note `quux_tv` on the CADR writes and reads the TV board's buffer at
+@note 17000000, which the bridge answers, so the audit's flag without `tv_fb`
+@note calls those cycles not memory's.
 @old
   assign cpu_memory_o   = cpu_bridged;
 @new
-  assign cpu_memory_o   = QUUX ? video_fb : (is_memory || (tv_fb && 1'b0) || tvc_fb || video_fb);
+  assign cpu_memory_o   = is_memory || (tv_fb && 1'b0) || tvc_fb;
 @end
 
 @mutation the-audit-stops-watching-the-port
