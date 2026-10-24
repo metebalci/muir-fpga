@@ -29076,3 +29076,121 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 55}]
 @new
       4'd5:  spy_rdata = {2'b00, halted ? (npc_after_v ? npc_after : npc + 14'd1)
 @end
+
+# EVERY FILE A BOARD'S FLOW READS IS IN THE TREE.  A flow's list is read by
+# no simulation, so a file deleted from `rtl/` and still named there stopped
+# only the fit.  `tools/fit_sources_check.py` walks each script for what it
+# reads, in every form the flows name a file.
+
+@mutation fit-sources-the-kria-quux-flow-reads-a-deleted-module
+@check fit_sources
+@file boards/kria-kr260/vivado/quux15_bitstream.tcl
+@note The Kria's QUUX flow still names the Chaosnet interface QUUX dropped,
+@note and its fit stops at read_verilog.
+@old
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
+    rtl/plumbing/cadr_input_cables.sv \
+@new
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
+    rtl/plumbing/cadr_input_cables.sv \
+@end
+
+@mutation fit-sources-the-arty-quux-flow-reads-a-deleted-module
+@check fit_sources
+@file boards/arty-z7-20/vivado/quux15_bitstream.tcl
+@note The Arty's QUUX flow still names the Chaosnet interface QUUX dropped,
+@note and its fit stops at read_verilog.
+@old
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
+@new
+    rtl/machine/quux15_block_walk.sv rtl/machine/quux15_input.sv rtl/machine/quux15_chaos.sv rtl/machine/quux16_ethernet.sv rtl/plumbing/quux_ed_face.sv \
+@end
+
+@mutation fit-sources-the-arty-flow-reads-a-misnamed-constraint
+@check fit_sources
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note The debug cable's constraints under a name no file has: read_xdc
+@note stops the CADR's fit.
+@old
+read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
+@new
+read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod_jb.xdc
+@end
+
+@mutation fit-sources-the-tick-is-read-from-a-missing-top
+@check fit_sources
+@file boards/arty-z7-20/vivado/tick.tcl
+@note The procedure's default names a top level that is not there, and the
+@note two Arty flows that call it with no argument open nothing.
+@old
+proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
+@new
+proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty_z7.sv"}} {
+@end
+
+@mutation fit-sources-the-ram-canary-is-not-beside-its-check
+@check fit_sources
+@file boards/arty-z7-20/vivado/rams_check.tcl
+@note The canary is named beside the script through `[info script]`, under a
+@note name it does not have.
+@old
+set rams_canary_src [file join [file dirname [file normalize [info script]]] rams_canary.sv]
+@new
+set rams_canary_src [file join [file dirname [file normalize [info script]]] rams_canary_7.sv]
+@end
+
+@mutation fit-sources-the-de25-quux-build-reads-a-missing-sdc
+@check fit_sources
+@file boards/de25-nano/quartus/project.tcl
+@note QUUX's own constraint file, in an elseif arm, under a name it does not
+@note have.
+@old
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus quux15_de25.sdc]
+@new
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus quux16_de25.sdc]
+@end
+
+@mutation fit-sources-the-de25-ip-is-read-from-the-tree
+@check fit_sources
+@file boards/de25-nano/quartus/project.tcl
+@note The PLL's variant named under the tree rather than the build directory
+@note build.sh deploys it into, a read the table no longer covers.
+@old
+set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pll.ip]
+@new
+set_global_assignment -name IP_FILE [file join $root ip cadr_de25_pll.ip]
+@end
+
+@mutation fit-sources-the-de25-sta-sources-a-missing-common-file
+@check fit_sources
+@file boards/de25-nano/quartus/sta_check.tcl
+@note A script run from the build directory sources its shared half through
+@note `[info script]`, under a name it does not have.
+@old
+source [file join [file dirname [file normalize [info script]]] sta_common.tcl]
+@new
+source [file join [file dirname [file normalize [info script]]] sta_shared.tcl]
+@end
+
+@mutation fit-sources-the-de25-build-runs-a-missing-sta-script
+@check fit_sources
+@file boards/de25-nano/quartus/build.sh
+@note QUUX's timing check under a name no script has, so the build stops at
+@note its timing step.
+@old
+    sta_script=$here/quux15_sta_check.tcl
+@new
+    sta_script=$here/quux16_sta_check.tcl
+@end
+
+@mutation fit-sources-the-kria-fault-bitstream-names-a-missing-top
+@check fit_sources
+@file tools/fault_zynq.tcl
+@note The Kria's arm of the switch on BOARD names a top level that is not
+@note there; the Arty's arm is right, so only the walk that keeps the arms
+@note apart sees it.
+@old
+        set top   cadr_kr260_fault
+@new
+        set top   cadr_kr260_faults
+@end

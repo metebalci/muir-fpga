@@ -109,6 +109,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
        $(BUILD)/arty.pass $(BUILD)/kr260.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/fit_sources.pass \
        $(BUILD)/work_dirs.pass \
        mutrev \
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
@@ -332,7 +333,7 @@ CHECK_QUUX = $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass
        $(BUILD)/quux15_fd_face.pass \
        $(BUILD)/quux16_ethernet_module.quux.pass \
        $(BUILD)/quux16_resume.quux.pass \
-       $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass muir-pin
+       $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/fit_sources.pass muir-pin
 
 ifeq ($(MACHINE),quux)
 check: $(filter-out $(QUUX_PENDING),$(CHECK_QUUX)) quux-pending
@@ -3108,6 +3109,23 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      boards/kria-kr260/vivado/bitstream.tcl \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
+
+# **EVERY FILE A BOARD'S FLOW READS IS IN THE TREE**, for both machines: each
+# Vivado and Quartus script, constraint file and the DE25-Nano's two shell
+# scripts walked for what they read (`tools/fit_sources_check.py`, whose
+# header says how and what it cannot resolve), and `make -n de25` and
+# `de25-fault` asked what they hand `build.sh`.  No simulation reads a flow's
+# list, so a file deleted from `rtl/` and still named there stopped only the
+# fit.  The prerequisites are what the tool reads; a file removed with no
+# script and no Makefile changed leaves the pass standing until `build/*.pass`
+# is removed, as the gate does.
+FIT_SOURCES_SRC := $(sort $(wildcard boards/*/*.tcl boards/*/*.xdc boards/*/vivado/*.tcl \
+                     boards/*/vivado/*.xdc boards/*/quartus/*.tcl boards/*/quartus/*.sdc \
+                     rtl/*/*.xdc rtl/*/*/*.xdc tools/*.tcl)) \
+                   boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/program.sh
+$(BUILD)/fit_sources.pass: tools/fit_sources_check.py $(FIT_SOURCES_SRC) Makefile | $(BUILD)
+	python3 tools/fit_sources_check.py . --make
+	@touch $@
 
 # **QUUX'S CORE'S GUARDS ON THE BOARD NAME** (contract HD), each with its
 # negative control: a value just inside the rule elaborates and one just

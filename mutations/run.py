@@ -1655,6 +1655,27 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # EVERY FILE A BOARD'S FLOW READS IS IN THE TREE:
+    # `tools/fit_sources_check.py` walks each Vivado and Quartus script for
+    # what it reads.  Without `--make`, since the copy has no Makefile.
+    # Refusing is being caught.
+    "fit_sources": {
+        "kind": "script",
+        "sources": ["boards/kria-kr260/vivado/quux15_bitstream.tcl",
+                    "boards/arty-z7-20/vivado/quux15_bitstream.tcl",
+                    "boards/arty-z7-20/vivado/bitstream.tcl",
+                    "boards/arty-z7-20/vivado/tick.tcl",
+                    "boards/arty-z7-20/vivado/rams_check.tcl",
+                    "boards/de25-nano/quartus/project.tcl",
+                    "boards/de25-nano/quartus/sta_check.tcl",
+                    "boards/de25-nano/quartus/build.sh",
+                    "tools/fault_zynq.tcl"],
+        "cmd": ["tools/fit_sources_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # WHERE EACH BOARD'S MEMORY IS, written in several files no one build
     # reads together: the fabric's package, the DE25-Nano's restatement of it,
     # the programs' header, each board's reserved-memory node, the card
