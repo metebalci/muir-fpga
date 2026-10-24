@@ -4951,33 +4951,49 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 
 # ------------------------------------------------ and a QUUX checkpoint
 #
-# **QUUX'S FILE, THE CADR'S THREE LEGS.**  The package's check writes QUUX's
-# file from its own fixed synthetic machine through a modeled window
+# **QUUX'S FILE IS HELD TO muir'S OWN, BYTE FOR BYTE.**  The package's check
+# writes QUUX's file from its own fixed machine through a modeled window
 # (`checkpoint_test.c`'s `fill_quux`): the Kria KR260's 1920 by 1080 and a
 # period of 10 ns, the host's words of the Ethernet device, and muir's own
-# QUUX disk of 8,192 blocks as block-disk's pack.  muir's `quux` resumes it
-# under the flags those say, `--stop-after 0`, and saves it back BYTE FOR
-# BYTE; its report names the microcycles, the nanoseconds and the main
-# memory the model gave; and the file's SHA-256 is the value recorded here,
-# a golden value that moves as `CHECKPOINT_SHA` does.  The disk is a copy
-# in the work directory, so a resume never writes muir's own.
+# QUUX disk of 8,192 blocks as block-disk's pack.  Its devices are what a
+# history leaves in the fabric's registers, and `golden/src/quux_checkpoint
+# .rs` runs the same history on muir's machine through its register page ---
+# the devices reset, the timers turned on, the file device's command
+# answered, block-disk's read run off the end of its pack, keys pressed and
+# read, Ethernet frames sent, refused, received and dropped --- with the
+# processor's registers and memories set to the same poison, and writes
+# muir's file for it.  The pipeline's state between microcycles is muir's
+# own and private, so the generator composes it with muir's writer in
+# `Pipeline::save`'s order, and then has a fresh pipeline load the file and
+# save it again, which must give the same body.  The two files must be one
+# file: a field in the wrong place, crossed, of the wrong value or converted
+# wrongly from the fabric's words to muir's makes them differ, and
+# `quux_checkpoint --compare` says which of muir's sections moved.
+#
+# Then muir's `quux` resumes the package's file under the flags those say,
+# `--stop-after 0`, and saves it back BYTE FOR BYTE, and its report names the
+# microcycles, the nanoseconds and the main memory the model gave.  The disk
+# is a copy in the work directory, so a resume never writes muir's own.
 #
 # **THE MUTANTS ARE 11, 17, 18, 31 AND 39** (`chk_rtl.c`'s
 # `chk_rtl_mutation` names each), each caught when muir refuses the file,
-# saves other bytes, or the file is not the one the digest was recorded for;
-# and 40, the resume line without the video controller's size, by the
-# package's own check of the line.  It rides on `build/checkpoint.pass`,
-# which builds the program, the test's binaries in the one work directory
-# and muir.
-CHECKPOINT_QUUX_SHA := b80fb7a00b44f545a871add8490067ed47382bbf2596080049d04b6d1f7f1094
+# saves other bytes, or the file is not muir's own; and 40, the resume line
+# without the video controller's size, by the package's own check of the
+# line.  It rides on `build/checkpoint.pass`, which builds the program, the
+# test's binaries in the one work directory and muir.
 CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 327410129160 ns, 1MW of main memory
 CHECKPOINT_QUUX_FLAGS := --rtl --microcycle-ns 10 --memory-timing 247,130,10 --video-size 1920x1080 \
     --ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 \
     --stop-after 0
 CHECKPOINT_QUUX_MUTANTS := 11 17 18 31 39
+QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
 
-$(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass | $(BUILD)
-	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); \
+$(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux-muir.chk
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); G=$(QUUX_CHECKPOINT_BIN); \
+	 cmp $$W/quux.chk $$W/quux-muir.chk \
+	   || { echo "checkpoint.quux: QUUX's file is not muir's own for the same machine"; \
+	        $$G --compare $$W/quux.chk $$W/quux-muir.chk || true; exit 1; }; \
 	 cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
 	 F="$(CHECKPOINT_QUUX_FLAGS) --disk-pack $$W/quux-disk.img,0"; \
 	 $$M $$F --resume $$W/quux.chk --checkpoint $$W/quux-back.chk > $$W/quux-muir.log 2>&1 \
@@ -4987,15 +5003,9 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass | $(BUILD)
 	 grep -q "$(CHECKPOINT_QUUX_RESUMED)" $$W/quux-muir.log \
 	   || { echo "checkpoint.quux: muir did not resume the machine the model wrote:"; \
 	        grep '^resumed' $$W/quux-muir.log; exit 1; }; \
-	 echo "$(CHECKPOINT_QUUX_SHA)  $$W/quux.chk" | sha256sum -c --status - \
-	   || { echo "checkpoint.quux: the file is not the one this digest was recorded for."; \
-	        echo "checkpoint.quux: it is $$(sha256sum $$W/quux.chk | cut -d' ' -f1)."; \
-	        echo "checkpoint.quux: muir still takes it, so this is a change and not"; \
-	        echo "checkpoint.quux: necessarily a fault --- say what moved and record it."; \
-	        exit 1; }; \
-	 echo "checkpoint.quux: muir loaded $$(stat -c%s $$W/quux.chk) bytes and saved them back identically,"; \
-	 echo "checkpoint.quux: resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //'),"; \
-	 echo "checkpoint.quux: and the file is the one the digest was recorded for."; \
+	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, muir's own file for the same machine,"; \
+	 echo "checkpoint.quux: loaded and saved back identically by muir's quux,"; \
+	 echo "checkpoint.quux: resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
 	 for m in $(CHECKPOINT_QUUX_MUTANTS); do \
 	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
@@ -5007,8 +5017,8 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass | $(BUILD)
 	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
 	   elif ! cmp -s $$W/qmut-$$m.chk $$W/qmut-$$m-back.chk; then \
 	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
-	   elif ! echo "$(CHECKPOINT_QUUX_SHA)  $$W/qmut-$$m.chk" | sha256sum -c --status -; then \
-	     echo "checkpoint.quux: mutant $$m caught by the digest alone --- $$what"; \
+	   elif ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
 	   else \
 	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
 	   fi; \

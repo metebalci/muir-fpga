@@ -180,13 +180,26 @@ static void fill(struct model *m)
 // `img_dv15` with the Ethernet device's words after them and the keyboard's
 // FIFO at 64, and the halted pipeline's words of `img_tl15`; the face's word
 // 12 carries a word's `<63:32>` whole, and a write of selector 15 takes the
-// snapshot.  The machine behind it is a poison at every field's width,
-// with the few values a resume holds to the flags given it set as those
-// flags say: the clock's period, the video controller's size, the host's
-// words of the Ethernet device and block-disk's pack.  `build/checkpoint
-// .quux.pass` has muir's `quux` resume the file this writes and save it
-// back, and holds it to the digest recorded there; the package's own check
-// holds the transport and the refusals here.
+// snapshot.  The processor's registers and memories behind it are a poison
+// at every field's width, with the few values a resume holds to the flags
+// given it set as those flags say: the clock's period, the video
+// controller's size, the host's words of the Ethernet device and
+// block-disk's pack.
+//
+// **THE DEVICES ARE WHAT A HISTORY LEAVES, AND THE SAME HISTORY IS RUN IN
+// muir.**  `golden/src/quux_checkpoint.rs` drives muir's machine through its
+// register page at its clock --- the devices reset, the timers written and
+// turned on, the file device's command answered, block-disk's read run off
+// the end of its pack, keys pressed and read, the mouse moved, Ethernet
+// frames sent, refused, received and dropped --- and these are the words
+// the fabric's devices would hold after it, each constant below there under
+// the same name.  `build/checkpoint.quux.pass` holds the file this writes to
+// the file that generator writes, BYTE FOR BYTE, and has muir's `quux`
+// resume this one and save it back; the package's own check holds the
+// transport and the refusals here.  A field of the pipeline the core packs
+// into one readout word with others is poisoned by its own address on both
+// sides and packed here, so that a field taken from the wrong bits of its
+// word differs.
 //
 // The constants are the resume line's: the Kria KR260's 1920 by 1080 and a
 // period of 10 ns; the host's words of `ethernet_host_check`; and muir's
@@ -212,6 +225,43 @@ static void fill(struct model *m)
 #define Q_IP_ADDRESS (169u << 24 | 254u << 16 | 101u << 8 | 2u)
 #define Q_IP_NETMASK 0xFFFFFFFCu
 #define Q_IP_GATEWAY (169u << 24 | 254u << 16 | 101u << 8 | 1u)
+// The history's instants, units of 0.5 ns, and what it leaves.
+#define Q_PER_US     2000u		/* units a microsecond */
+#define Q_RESET_AT   (Q_NS - 20000001u)	/* word 104, every device reset */
+#define Q_T0_PERIOD  6000u		/* periodic, with its enable */
+#define Q_T0_ON      (Q_NS - 11000001u)
+#define Q_T1_PERIOD  16667u		/* one-shot, without */
+#define Q_T1_ON      (Q_NS - 19000003u)
+#define Q_T2_PERIOD  0x5A3C7Eu		/* never on, with its enable */
+// Block-disk: a read of two pages, four bytes a word, with the done
+// interrupt enabled, from six blocks before the end of the pack: the first
+// page moves four, the second two and then runs past the end, so DA is the
+// block that failed, the last memory address is the command list's second
+// word, and DONE is six blocks' time after START.
+#define Q_BD_CMD     0x12345800u
+#define Q_BD_CLP     0x000ABCDEu
+#define Q_BD_DA      (Q_DISK_BLOCKS - 6u)
+#define Q_BD_MOVED   6u
+#define Q_BD_START   (Q_NS - 5000777u)
+#define Q_BD_NOW     (Q_NS - 555u)	/* its status, the last read of it */
+#define Q_BLOCK_UNITS 200000u		/* `block_disk::BLOCK_NS`, in units */
+// The Ethernet device: rings of four and eight entries; five transmits, two
+// refused; six Ethernet frames of another type and nine IPv4 frames too
+// short dropped by the rules; two into the two buffers given and three with
+// none; one taken back, six more given and two more received; and a take
+// past 251, its index fault.
+#define Q_ETH_TX_BASE 0x0003000u
+#define Q_ETH_TX_LOG2 2u
+#define Q_ETH_RX_BASE 0x0002000u
+#define Q_ETH_RX_LOG2 3u
+#define Q_ETH_TX      5u
+#define Q_ETH_TX_REFUSED 2u
+#define Q_ETH_RX_GIVEN 7u
+#define Q_ETH_RX_FILLED 4u
+#define Q_ETH_RX_TAKEN 1u
+#define Q_ETH_TYPE_DROPS 6u
+#define Q_ETH_IPV4_DROPS 9u
+#define Q_ETH_RX_DROPS 3u
 
 struct qmodel {
 	uint64_t imem[IMG_IMEM_WORDS], prom[IMG_PROM_WORDS];
@@ -332,33 +382,35 @@ static void fill_quux(struct qmodel *m)
 	g[IMG_RG15_COMMITTED] = Q_CYCLES;
 
 	// The devices: timer 0 on and periodic with its enable, timer 1 on and
-	// one-shot, timer 2 off with no deadline; the file device on with its
+	// one-shot, each due a period after its turn-on, and timer 2 off with
+	// its enable, a period and no deadline; the file device on with its
 	// enable and an index fault, nothing open and nothing queued; block-disk
-	// with a pack and no transfer; black-on-white; the snapshot's instant.
+	// with a pack, its read past the end done; black-on-white; the
+	// snapshot's instant.
 	uint64_t *v = m->dv;
-	v[IMG_DV15_TIMER + 0] = (uint64_t)6000u << 8 | 4u | 1u;
-	v[IMG_DV15_TIMER + 1] = (uint64_t)16667u << 8 | 2u | 1u;
-	v[IMG_DV15_TIMER + 2] = 0;
-	v[IMG_DV15_DEADLINE + 0] = Q_NS + 1000001u;
-	v[IMG_DV15_DEADLINE + 1] = Q_NS + 33333u;
+	v[IMG_DV15_TIMER + 0] = (uint64_t)Q_T0_PERIOD << 8 | 4u | 1u;
+	v[IMG_DV15_TIMER + 1] = (uint64_t)Q_T1_PERIOD << 8 | 2u | 1u;
+	v[IMG_DV15_TIMER + 2] = (uint64_t)Q_T2_PERIOD << 8 | 4u;
+	v[IMG_DV15_DEADLINE + 0] = Q_T0_ON + (uint64_t)Q_T0_PERIOD * Q_PER_US;
+	v[IMG_DV15_DEADLINE + 1] = Q_T1_ON + (uint64_t)Q_T1_PERIOD * Q_PER_US;
 	v[IMG_DV15_DEADLINE + 2] = ~0ull;
 	v[IMG_DV15_FD] = 1u << 3 | 1u << 1 | 1u;
 	v[IMG_DV15_FD_CBASE] = Q_FD_CMD_BASE;
 	v[IMG_DV15_FD_RBASE] = Q_FD_RESP_BASE;
 	v[IMG_DV15_FD_LOGS] = Q_FD_RESP_LOG2 << 4 | Q_FD_CMD_LOG2;
 	v[IMG_DV15_FD_INDEXES] = 1ull << 32 | 1ull << 16 | 1u;
-	v[IMG_DV15_BD_CMD] = 0x12345805u;
-	v[IMG_DV15_BD_CLP] = 0x0ABCDEF0u;
-	v[IMG_DV15_BD_DA] = 0x0FEDCBA9u;
-	v[IMG_DV15_BD_LMA] = 0x01234567u;
-	v[IMG_DV15_BD_FLAGS] = 1u << 5 | 1u;	/* a pack on unit 0; a bad command */
-	v[IMG_DV15_BD_DONE] = Q_NS - 777u;
-	v[IMG_DV15_BD_NOW] = Q_NS - 555u;
+	v[IMG_DV15_BD_CMD] = Q_BD_CMD;
+	v[IMG_DV15_BD_CLP] = Q_BD_CLP;
+	v[IMG_DV15_BD_DA] = Q_BD_DA + Q_BD_MOVED;
+	v[IMG_DV15_BD_LMA] = Q_BD_CLP + 1u;
+	v[IMG_DV15_BD_FLAGS] = 1u << 5 | 1u << 1;	/* a pack on unit 0; past the end */
+	v[IMG_DV15_BD_DONE] = Q_BD_START + (uint64_t)Q_BD_MOVED * Q_BLOCK_UNITS;
+	v[IMG_DV15_BD_NOW] = Q_BD_NOW;
 	v[IMG_DV15_BOW] = 1u;
 	v[IMG_DV15_NS] = Q_NS;
 	v[IMG_DV15_RTC] = 0;
 	v[IMG_DV15_US] = Q_NS / 2000u;
-	v[IMG_DV15_TV_AT] = Q_NS - 99999u;
+	v[IMG_DV15_TV_AT] = Q_RESET_AT;
 	// Seventy key words pressed into sixty-four slots, the overflow set,
 	// and fifty-nine read: five waiting from slot 59, the FIFO's wrap
 	// among them.
@@ -367,18 +419,21 @@ static void fill_quux(struct qmodel *m)
 	v[IMG_DV15_INPUT] = (uint64_t)Q_KEYS_READ << 38 | (uint64_t)Q_KEYS_WAITING << 31 |
 			    1ull << 30 | 1ull << 29 | 1ull << 28 | 1ull << 27 |
 			    (uint64_t)Q_BUTTONS << 24 | (uint64_t)Q_MOUSE_Y << 12 | Q_MOUSE_X;
-	// The Ethernet device: on, with its enable, its rings and indexes, its
-	// counters, and the host's words, 253-257.
+	// The Ethernet device: on, with its enable and an index fault, its
+	// rings and indexes, its counters, and the host's words, 253-257.
 	uint64_t *e = &v[IMG_DV15_ETH];
-	e[0] = 2u << 8 | 3u << 4 | 1u << 1 | 1u;
-	e[1] = (uint64_t)0x0002000u << 32 | 0x0003000u;
-	e[2] = (uint64_t)7u << 48 | (uint64_t)9u << 32 | 5u << 16 | 5u;
-	e[3] = 7u;
-	e[4] = (uint64_t)Q_MAC_HI << 32 | 0x0302A050u;
+	e[0] = Q_ETH_RX_LOG2 << 8 | Q_ETH_TX_LOG2 << 4 | 1u << 3 | 1u << 1 | 1u;
+	e[1] = (uint64_t)Q_ETH_RX_BASE << 32 | Q_ETH_TX_BASE;
+	e[2] = (uint64_t)Q_ETH_RX_FILLED << 48 | (uint64_t)Q_ETH_RX_GIVEN << 32 | Q_ETH_TX << 16 | Q_ETH_TX;
+	e[3] = Q_ETH_RX_TAKEN;
+	e[4] = (uint64_t)Q_MAC_HI << 32 | Q_ETH_TX_REFUSED << 24 | Q_ETH_RX_DROPS << 16 |
+	       Q_ETH_IPV4_DROPS << 9 | Q_ETH_TYPE_DROPS << 4;
 	e[5] = (uint64_t)Q_MAC_LO << 32 | Q_IP_ADDRESS;
 	e[6] = (uint64_t)Q_IP_NETMASK << 32 | Q_IP_GATEWAY;
 
-	// The halted pipeline.
+	// The halted pipeline.  The micro stack's pending write, the OPCs and
+	// the console's three registers are each fields of muir's of their own,
+	// poisoned by their own address and packed into their word here.
 	uint64_t *t = m->tail;
 	t[IMG_TL15_NPC] = poison(IMG_SEL_TAIL, IMG_TL15_NPC, 14);
 	t[IMG_TL15_NPC_AFTER] = 1u << 14 | poison(IMG_SEL_TAIL, IMG_TL15_NPC_AFTER, 14);
@@ -392,17 +447,24 @@ static void fill_quux(struct qmodel *m)
 	t[IMG_TL15_OA_HIGH] = poison(IMG_SEL_TAIL, IMG_TL15_OA_HIGH, 64);
 	t[IMG_TL15_NEXT_INSTRD] = 1u;
 	t[IMG_TL15_LVMO] = poison(IMG_SEL_TAIL, IMG_TL15_LVMO, 32);
-	t[IMG_TL15_WRCYC] = 0;
-	t[IMG_TL15_SPC_WRITE] = 1u << 24 | poison(IMG_SEL_TAIL, IMG_TL15_SPC_WRITE, 24);
+	t[IMG_TL15_WRCYC] = 1u;
+	t[IMG_TL15_SPC_WRITE] = 1u << 24 | poison(IMG_SEL_TAIL, 113, 5) << 19 |
+				poison(IMG_SEL_TAIL, IMG_TL15_SPC_WRITE, 19);
 	t[IMG_TL15_MAP_WRITE] = 1u;
 	t[IMG_TL15_MAP_VMA] = poison(IMG_SEL_TAIL, IMG_TL15_MAP_VMA, 40);
 	t[IMG_TL15_MAP_MD] = poison(IMG_SEL_TAIL, IMG_TL15_MAP_MD, 40);
-	t[IMG_TL15_OPC_LOW] = poison(IMG_SEL_TAIL, IMG_TL15_OPC_LOW, 56);
-	t[IMG_TL15_OPC_HIGH] = poison(IMG_SEL_TAIL, IMG_TL15_OPC_HIGH, 56);
+	t[IMG_TL15_OPC_LOW] = t[IMG_TL15_OPC_HIGH] = 0;
+	for (unsigned k = 0; k < IMG_OPCS; ++k)
+		t[k < 4 ? IMG_TL15_OPC_LOW : IMG_TL15_OPC_HIGH] |=
+			poison(IMG_SEL_TAIL, 0200u + k, 14) << (14u * (k % 4u));
 	t[IMG_TL15_HALTED] = 1u;
 	t[IMG_TL15_COMMITTED] = Q_CYCLES;
 	t[IMG_TL15_NPC_PREV] = poison(IMG_SEL_TAIL, IMG_TL15_NPC_PREV, 14);
-	t[IMG_TL15_CONSOLE] = poison(IMG_SEL_TAIL, IMG_TL15_CONSOLE, 14) & ~(1ull << 6);
+	// The mode without the speed bits, which QUUX's has not; the clock
+	// control with RUN clear, a halted machine's; the OPC control.
+	t[IMG_TL15_CONSOLE] = (poison(IMG_SEL_TAIL, IMG_TL15_CONSOLE, 6) & ~3ull) |
+			      (poison(IMG_SEL_TAIL, 100u + IMG_TL15_CONSOLE, 5) & ~1ull) << 6 |
+			      poison(IMG_SEL_TAIL, 200u + IMG_TL15_CONSOLE, 3) << 11;
 	t[IMG_TL15_DEBUG_IR] = poison(IMG_SEL_TAIL, IMG_TL15_DEBUG_IR, 64);
 	m->cycles = Q_CYCLES;
 	m->ticks = Q_NS / 20u;

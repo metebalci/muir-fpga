@@ -109,6 +109,10 @@ name = "quux13_block_disk"
 path = "src/quux13_block_disk.rs"
 
 [[bin]]
+name = "quux_checkpoint"
+path = "src/quux_checkpoint.rs"
+
+[[bin]]
 name = "quux15"
 path = "src/quux15.rs"
 

@@ -416,12 +416,16 @@ What the file holds is the pipeline's checkpoint and the Ethernet device's
 (the two sections below). Two checks hold the board's writer to muir. The core's
 checkpoints group holds the file the board's own reader and writer make off the
 core to muir's own byte for byte. `make build/checkpoint.quux.pass` writes a
-QUUX file from the package's fixed synthetic machine through a modeled window
-(`checkpoint_test.c`'s `fill_quux`): muir's `quux` resumes it and saves it back
-byte for byte, its report names the microcycles, the nanoseconds and the main
-memory the model gave, and the file's digest is the value the Makefile records
-(`CHECKPOINT_QUUX_SHA`). Mutants 11, 17, 18, 31, 39 and 40 of `chk_rtl.c` are
-caught there.
+QUUX file from the package's fixed machine through a modeled window
+(`checkpoint_test.c`'s `fill_quux`), whose devices hold what a known history
+leaves in them. `golden/src/quux_checkpoint.rs` runs the same history on
+muir's machine through its register page, composes the pipeline's state in
+`Pipeline::save`'s order, has a fresh pipeline load the result and save it
+back unchanged, and writes muir's file for that machine. The two files must be
+the same file, byte for byte. muir's `quux` then resumes the package's file and
+saves it back byte for byte, and its report names the microcycles, the
+nanoseconds and the main memory the model gave. Mutants 11, 17, 18, 31, 39 and
+40 of `chk_rtl.c` are caught there.
 
 **Neither machine's checkpoint can be restored to the fabric.** The readout
 window only reads, so a checkpoint is resumed in muir and not on
