@@ -92,9 +92,9 @@ pub fn tail_hex(e: &Pipeline) -> String {
 /// `Pipeline::save`'s body with the cache written empty, no
 /// line held and the recency zero, the micro stack's pending word at the
 /// stack's 19 bits ([`tail_bytes`]), and the I/O board as muir's machine
-/// comes up: on revision 15 the network on it is not built, and nothing
-/// else of it is QUUX's, so the fabric has none of its time to give, and a
-/// resumed machine's board catches up with the clock at its first look.
+/// comes up: nothing of it is QUUX's, so the fabric has none of its time to
+/// give, and a resumed machine's board catches up with the clock at its
+/// first look.
 /// And the control store under the PROM zero, as muir's own machine holds
 /// it and the board's writer writes it: the traces' machine comes up all
 /// ones there, the fabric's power-on convention, which nothing fetches.
@@ -104,23 +104,17 @@ pub fn fabric_body(e: &Pipeline) -> Vec<u8> {
     for w in m.imem.iter_mut().skip(muir::machine::QUUX_PROM_BASE as usize) {
         *w = muir::isa::Insn::extended(0);
     }
-    let address = m.ioboard.chaos.as_ref().map(|c| c.address());
     m.ioboard = muir::ioboard::IoBoard::default();
-    if let Some(a) = address {
-        m.ioboard.plug_chaos(a, None, 0, false);
-    }
     let mut head = Writer::new();
     m.save(&mut head);
     let mut out = head.finish();
-    // **A TRANSMIT WAITING IS DUE AT THE CHECKPOINT'S INSTANT** on revision
-    // 16: the board's program sends the entries between 245 and 244 when it
-    // will, and the board's file has no instant of muir's to give, so it
-    // writes the snapshot's own, and a resumed machine sends them at once.
+    // **A TRANSMIT WAITING IS DUE AT THE CHECKPOINT'S INSTANT**: the board's
+    // program sends the entries between 245 and 244 when it will, and the
+    // board's file has no instant of muir's to give, so it writes the
+    // snapshot's own, and a resumed machine sends them at once.
     // `EthernetDevice::save`'s last fields are the due time, 6 bytes of MAC
     // address and three words.
-    if m.geometry.ethernet()
-        && let Some(_) = m.ethernet.head_due()
-    {
+    if m.ethernet.head_due().is_some() {
         let at = out.len() - 18 - 8;
         out[at..at + 8].copy_from_slice(&m.ns.to_le_bytes());
     }

@@ -314,17 +314,16 @@ to resume a checkpoint at any other address. A sidecar written before the
 address was named carries no `chaos-address`, and its line names none.
 A QUUX checkpoint's sidecar also carries the revision, the clock's period
 in units of 0.5 ns (the `sync-cycle-ticks` line) and the video controller's
-size, and its line names all three, the revision as the environment's
-`MUIR_QUUX_REVISION` before the command, the period as `--microcycle-ns` and
-the size, since muir's `quux` refuses a checkpoint of another revision,
-another period or another size:
+size, and its line names the period as `--microcycle-ns` and the size, since
+muir's `quux` refuses a checkpoint of another revision, another period or
+another size, and runs the one revision:
 
     revision: 16
     sync-cycle-ticks: 40
     video-size: 1920x1080
     running: yes
     ...
-    resume: MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 20 --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: quux --rtl --microcycle-ns 20 --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
 
 A sidecar written before the size was named carries no `video-size`, and its
 line names none: its checkpoint is 1280 by 1024, muir's default.
@@ -494,9 +493,8 @@ carries (the devices' word 15 `<4>`, which `chk_rtl_refusal` reads). Halt the
 machine between transfers. The halt itself does not wait for a walk, only for
 the processor's writes.
 
-The resume line names `MUIR_QUUX_REVISION=16` and `--microcycle-ns` at the
-bitstream's period, which muir refuses another at, as it refuses another
-memory timing or cache.
+The resume line names `--microcycle-ns` at the bitstream's period, which
+muir refuses another at, as it refuses another memory timing or cache.
 
 **The proof is the core's own testbench.** The checkpoints group of
 `golden/src/quux15_console.rs` halts programs of every kind at clocks spread

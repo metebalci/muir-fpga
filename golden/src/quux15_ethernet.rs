@@ -178,9 +178,6 @@ pub struct Watch {
 impl Watch {
     pub fn watch(&mut self, e: &Pipeline) {
         let m = e.machine();
-        if !m.geometry.ethernet() {
-            return;
-        }
         let d = &m.ethernet;
         let clock = e.clock();
         // 253-257 when they are not muir's defaults, once: the testbench

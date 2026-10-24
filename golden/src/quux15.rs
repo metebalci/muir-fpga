@@ -101,7 +101,7 @@ use muir::isa::asm::{
     POPJ, R, SETA, SETM, SETO, SETZ, SRC_MD, START_READ, START_WRITE, a_dest, a_src, filler, m_dest, m_src,
     src, target,
 };
-use muir::machine::{Geometry, Halt, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
+use muir::machine::{Halt, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
 use muir::micro::Micro;
 use muir::pipeline::port::LateModel;
 use muir::pipeline::{CACHE_WORDS, Mutation, Pipeline, PortTiming};
@@ -112,10 +112,6 @@ use muir::tlb;
 /// §10: revision 16 is revision 15's pipeline with the Ethernet device and no
 /// Chaosnet interface).
 const REVISION: u8 = 16;
-
-fn geometry() -> Geometry {
-    Geometry::QUUX_16
-}
 
 /// **A board revision 15 runs on**: its port's memory timing and its
 /// cache's words, `--board`'s.  The Kria KR260's are muir's defaults and
@@ -1161,16 +1157,13 @@ impl Case {
 fn machine(case: &Case) -> Machine {
     let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
     let mut m = Which::Quux.machine(&prom);
-    m.geometry = geometry();
-    // **REVISION 16 HAS NO CHAOSNET INTERFACE** (QUUX's Ethernet contract,
-    // section 8 R4): a machine built as another and given 16's geometry
-    // still has the one it was built with, which a checkpoint would carry,
-    // so it is taken out as muir's own `quux` takes it out
-    // (`Machine::plug_chaos`, which on 16 leaves the I/O board with none).
-    if !m.geometry.chaos() {
-        m.plug_chaos(0);
-        assert!(m.ioboard.chaos.is_none(), "revision 16's I/O board with a Chaosnet interface");
-    }
+    // **QUUX HAS NO CHAOSNET INTERFACE** (QUUX's Ethernet contract, section
+    // 8 R4): a machine built as a CADR and given QUUX's geometry still has
+    // the one it was built with, which a checkpoint would carry, so it is
+    // taken out as muir's own `quux` takes it out (`Machine::plug_chaos`,
+    // which on QUUX leaves the I/O board with none).
+    m.plug_chaos(0);
+    assert!(m.ioboard.chaos.is_none(), "QUUX's I/O board with a Chaosnet interface");
     m.main = vec![0; case.main_words.unwrap_or(MAIN)];
     if let Some((w, h)) = case.video {
         muir::tv::check_video_size(w, h, false).expect("a video controller muir takes");

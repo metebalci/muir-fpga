@@ -1016,7 +1016,7 @@ static void ethernet_host_check(const char *work)
 	b.eth_netmask = 0xFFFFFFFCu;
 	b.eth_gateway = 169u << 24 | 254u << 16 | 101u << 8 | 1u;
 	snprintf(b.checkpoint, sizeof b.checkpoint, "/mnt/card/q.chk");
-	static const char want[] = "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 "
+	static const char want[] = "quux --rtl --microcycle-ns 10 "
 		"--ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 "
 		"--resume q.chk";
 	char cmd[4096], side[400];
@@ -1407,7 +1407,7 @@ int main(int argc, char **argv)
 		qb.present = 1;
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
-		static const char want16[] = "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 "
+		static const char want16[] = "quux --rtl --microcycle-ns 10 "
 			"--video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want16) != 0) {
@@ -1441,8 +1441,8 @@ int main(int argc, char **argv)
 				saw_k += strcmp(line, "sync-cycle-ticks: 20") == 0;
 				saw_video += strcmp(line, "video-size: 1920x1080") == 0;
 				saw_run += strcmp(line, "running: yes") == 0;
-				saw_resume += strncmp(line, "resume: ", 8) == 0 &&
-					      strstr(line, "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 10 ");
+				saw_resume += strncmp(line, "resume: quux --rtl --microcycle-ns 10 ",
+						      sizeof "resume: quux --rtl --microcycle-ns 10 " - 1) == 0;
 			}
 			if (sf)
 				fclose(sf);
@@ -1457,7 +1457,7 @@ int main(int argc, char **argv)
 		qb.video_height = 1024;
 		qb.running = 0;
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, "MUIR_QUUX_REVISION=16 quux --rtl --microcycle-ns 9.5 --video-size 1280x1024 "
+		if (strcmp(cmd, "quux --rtl --microcycle-ns 9.5 --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
 			fail("QUUX's resume line at 9.5 ns", 1, 0);
 		// A sidecar of an older revision names no period: its file is

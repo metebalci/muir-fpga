@@ -312,8 +312,8 @@ pub struct Built {
 
 /// Each opcode's entry in OPDTB: `<16>` R, `<15>` P, `<14>` N, `<13:0>` the
 /// handler.
-fn opdtb(base: u64, o: u32) -> u32 {
-    let h = |off: u64| (base + off) as u32;
+fn opdtb(o: u32) -> u32 {
+    let h = |off: u64| off as u32;
     match o {
         op::R_ONLY => 1 << 16,
         op::POPJ => h(at::H1),
@@ -351,26 +351,26 @@ fn opdtb(base: u64, o: u32) -> u32 {
 }
 
 /// The specialised handler's entry: counts in `M[32]` and returns.
-pub fn special(base: u64) -> u32 {
-    (base + at::SPECIAL) as u32
+pub fn special() -> u32 {
+    at::SPECIAL as u32
 }
 
 /// The specialised handler that pushes M 31 and then A 31.
-pub fn read31(base: u64) -> u32 {
-    (base + at::READ31) as u32
+pub fn read31() -> u32 {
+    at::READ31 as u32
 }
 
 /// The specialised handler that stores the next code word and returns in
 /// the microcycle the store's grant begins.
-pub fn store_early(base: u64) -> u32 {
-    (base + at::STORE_EARLY) as u32
+pub fn store_early() -> u32 {
+    at::STORE_EARLY as u32
 }
 
 /// `A[a]` = `v` in as few dispatch-constant pieces as `v` needs, which is a
 /// fixed count for a fixed `v`.
 fn konst_short(p: &mut Prog, a: u64, v: impl WordValue) {
     let v = word_value(v);
-    let parts = konst_parts();
+    let parts = KONST_PARTS;
     let n = parts.iter().rposition(|&(pos, _)| v >> pos != 0).map_or(1, |i| i + 1);
     for (k, &(pos, w)) in parts[..n].iter().enumerate() {
         let piece = (v >> pos) & ((1 << w) - 1);
@@ -385,18 +385,17 @@ fn konst_short(p: &mut Prog, a: u64, v: impl WordValue) {
 
 /// The fixed part: the jump over it, the main loop and every handler.
 fn lay_fixed(p: &mut Prog) {
-    let base = p.base;
     let pad = |p: &mut Prog, off: u64| {
-        assert!(p.at() <= base + off, "fused: {:o} runs into {:o}", p.at(), base + off);
-        while p.at() < base + off {
+        assert!(p.at() <= off, "fused: {:o} runs into {:o}", p.at(), off);
+        while p.at() < off {
             p.i(filler().raw());
         }
     };
-    p.i(JUMP | target(base + at::SETUP) | ALWAYS | N);
+    p.i(JUMP | target(at::SETUP) | ALWAYS | N);
     p.fill(1);
     pad(p, QMLP);
     // The main loop.
-    p.i(JUMP | target(base + COND6) | P | (1 << 5) | 6);
+    p.i(JUMP | target(COND6) | P | (1 << 5) | 6);
     p.i(ALU | SETM | SRC_MD | m_dest(0o31));
     p.i(DISPATCH | m_src(0o31) | 3 << 10 | rot(OP_ROTATE) | d_len(5) | d_addr(OPDTB));
     p.i(ALU | SETA | a_src(A_MAIN) | fdest(0o15));
@@ -471,13 +470,13 @@ fn lay_fixed(p: &mut Prog) {
     // returns.
     pad(p, at::H16);
     p.i(count(counter(op::CALL_POPJ_FALSE)));
-    p.i(JUMP | P | target(base + at::ILLOP) | AEQM | a_src(A_ZERO) | m_src(1) | POPJ);
+    p.i(JUMP | P | target(at::ILLOP) | AEQM | a_src(A_ZERO) | m_src(1) | POPJ);
     p.fill(1);
     // The same with a true condition, `M[24]` = `A[54]`: it pushes its
     // return, and the POPJ returns to the main loop.
     pad(p, at::H17);
     p.i(count(counter(op::CALL_POPJ_TRUE)));
-    p.i(JUMP | P | target(base + at::ILLOP) | AEQM | a_src(A_ZERO) | m_src(M_ZERO) | POPJ);
+    p.i(JUMP | P | target(at::ILLOP) | AEQM | a_src(A_ZERO) | m_src(M_ZERO) | POPJ);
     p.fill(1);
     let push_index = ALU | SETM | src(3) | fdest(0o11);
     pad(p, at::RECORD);
@@ -517,7 +516,7 @@ fn lay_fixed(p: &mut Prog) {
     p.i(count(M_OTHERS) | POPJ);
     pad(p, at::ILLOP);
     p.i(count(M_ILLOP));
-    p.i(JUMP | target(base + at::ILLOP + 1) | ALWAYS | N);
+    p.i(JUMP | target(at::ILLOP + 1) | ALWAYS | N);
     p.fill(1);
     pad(p, at::SEQ_ON);
     p.i(ALU | SETA | a_src(A_SB_ON) | fdest(DEST_INTCTL));
@@ -570,7 +569,6 @@ fn lay_fixed(p: &mut Prog) {
 /// setups and the park, which the phase table names.
 fn lay(phases: &[Phase], marks: &[u64]) -> Built {
     let mut p = Prog::new();
-    let base = p.base;
     lay_fixed(&mut p);
     let mut c = Pool::new();
     // Once: the map, and every phase's code, each phase starting on a line
@@ -605,7 +603,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
     }
     // The dispatch memory: OPDTB, the returning table and the phases.
     for o in 0..=op::LAST {
-        let a = c.c(&mut p, opdtb(base, o));
+        let a = c.c(&mut p, opdtb(o));
         p.i(DISPATCH | DMEM_WRITE | d_addr(OPDTB + o as u64) | a_src(a));
     }
     for k in 0..2 {
@@ -617,14 +615,14 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
         p.konst(A_SCRATCH, to as u32); // a fixed length whatever the mark
         p.i(DISPATCH | DMEM_WRITE | d_addr(PHASES + k as u64) | a_src(A_SCRATCH));
     }
-    konst_short(&mut p, A_MAIN, (1 << 14) | (base + QMLP) as u32);
+    konst_short(&mut p, A_MAIN, (1 << 14) | QMLP as u32);
     konst_short(&mut p, A_ZERO, 0);
-    konst_short(&mut p, A_OTHER, (1 << 14) | (base + at::OTHER_R) as u32);
+    konst_short(&mut p, A_OTHER, (1 << 14) | at::OTHER_R as u32);
     konst_short(&mut p, A_SENTINEL, SENTINEL);
     konst_short(&mut p, A_LOCALP_2, LOCALP_2);
     konst_short(&mut p, A_WORD, WORD);
     konst_short(&mut p, A_AP, AP);
-    konst_short(&mut p, A_SB_ON, sequence_break());
+    konst_short(&mut p, A_SB_ON, SEQUENCE_BREAK);
     konst_short(&mut p, A_SB_OFF, 0);
     konst_short(&mut p, A_MAP_VA, r7(0, 0));
     konst_short(&mut p, A_MAP_W, level_2_store(CODE_PAGE));
@@ -643,7 +641,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
         idx.dedup();
         for &i in &idx {
             let o = i >> 3 & 0o37;
-            let mut e = if ph.stale { (base + at::ILLOP) as u32 } else { opdtb(base, o) };
+            let mut e = if ph.stale { at::ILLOP as u32 } else { opdtb(o) };
             if let Some(&(_, s)) = ph.specialised.iter().find(|&&(k, _)| k == i) {
                 e = s;
             }
@@ -659,7 +657,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
             p.to(aa, fdest(0o13));
             p.to(aw, fdest(0o12));
         }
-        let main = base + QMLP + if ph.other_main { 0o40 } else { 0 };
+        let main = QMLP + if ph.other_main { 0o40 } else { 0 };
         let register = (ph.enable as u32) << 31
             | (AP_AT as u32) << 24
             | (LOCALP_AT as u32) << 14
@@ -668,7 +666,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
         // clear is as long.
         p.konst(A_REGISTER, register);
         konst_short(&mut p, A_LC, starts[n] * 4);
-        konst_short(&mut p, A_INTCTL, if ph.sequence_break { sequence_break() } else { 0 });
+        konst_short(&mut p, A_INTCTL, if ph.sequence_break { SEQUENCE_BREAK } else { 0 });
         konst_short(&mut p, LOCALP_AT, LOCALP);
         konst_short(&mut p, A_PDL_POINTER, pdl_pointer(n));
         let word_at = |k: usize| (words[(starts[n] - r7(0, 0)) as usize + k], starts[n] + k as u32);
@@ -747,7 +745,6 @@ pub fn program(phases: &[Phase]) -> Built {
 /// each is skipped.
 pub fn fused_phases() -> Vec<Phase> {
     use op::*;
-    let base = BASE.load(std::sync::atomic::Ordering::Relaxed);
     let mut a = Phase::new(&[
         hw(POPJ, 0), hw(JUMP_R, 5),
         hw(DISPATCH_R, 1), hw(N, 0),
@@ -771,7 +768,7 @@ pub fn fused_phases() -> Vec<Phase> {
         hw(POPJ, 3), hw(R_ONLY, 0),
         hw(DISPATCH_R, 2), hw(END, 0),
     ]);
-    a.specialised = vec![(hw(JUMP_R, 5) >> 6, special(base))];
+    a.specialised = vec![(hw(JUMP_R, 5) >> 6, special())];
     let mut b = Phase::new(&[hw(POPJ, 0), hw(POPJ, 0), hw(JUMP_R, 5), hw(DISPATCH_R, 0), hw(POPJ, 1), hw(END, 0)]);
     b.other_main = true;
     let mut c = Phase::new(&[hw(POPJ, 0), hw(POPJ, 0), hw(JUMP_R, 0), hw(DISPATCH_R, 0), hw(POPJ, 1), hw(END, 0)]);
@@ -835,7 +832,6 @@ pub fn operand_phases() -> Vec<Phase> {
 /// halfword over.  A 31 written alone after SEQ_OFF reads A memory again.
 pub fn prefetch_phases() -> Vec<Phase> {
     use op::*;
-    let base = BASE.load(std::sync::atomic::Ordering::Relaxed);
     let mut a = Phase::new(&[
         hw(POPJ, 0), hw(POPJ, 1),            // 0: entered by a fetch
         hw(POPJ, 2), hw(RET_READ31, 0),      // 1: fused on the buffer
@@ -860,7 +856,7 @@ pub fn prefetch_phases() -> Vec<Phase> {
         hw(POPJ, 3), hw(END, 0),             // 18
     ]);
     a.sequence_break = false;
-    a.specialised = vec![(hw(POPJ, 7) >> 6, read31(base)), (hw(STORE_NEXT, 1) >> 6, store_early(base))];
+    a.specialised = vec![(hw(POPJ, 7) >> 6, read31()), (hw(STORE_NEXT, 1) >> 6, store_early())];
     a.store_next = Some(5);
     a.store_early = Some(13);
     a.store_start = Some(6);
@@ -885,8 +881,4 @@ pub const M_WORDS: [(&str, u64); 6] = [
     ("other opcodes", M_OTHERS),
 ];
 
-pub const PDL_WORD: u32 = WORD;
-pub const PDL_LOCALP: u32 = LOCALP;
-pub const PDL_AP: u32 = AP;
-pub const PDL_LOCALP_2: u32 = LOCALP_2;
 pub const PDL_SENTINEL: u32 = SENTINEL;

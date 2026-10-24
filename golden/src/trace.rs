@@ -54,20 +54,9 @@ pub const TIMING: TimingModel = TimingModel::Fpga;
 /// which has to be chosen before the machine runs.
 #[allow(dead_code)]
 pub fn engine(machine: Machine) -> Rtl {
-    engine_on(machine, TIMING)
-}
-
-/// The same, on `timing`: [`TIMING`] for the CADR, and for QUUX its
-/// synchronous microcycle, `TimingModel::Sync`, which keeps the same grid
-/// (`machine_axis::take_timing` says which).
-pub fn engine_on(machine: Machine, timing: TimingModel) -> Rtl {
     assert_eq!(TICK_NS, muir::clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
-    assert!(
-        matches!(timing, TimingModel::Fpga | TimingModel::Sync { .. }),
-        "a trace for the fabric is taken on its grid, fpga or sync, not {timing:?}"
-    );
     let mut e = Rtl::new(machine);
-    e.set_timing_model(timing);
+    e.set_timing_model(TIMING);
     e
 }
 

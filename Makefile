@@ -1095,7 +1095,7 @@ $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
 # nothing but a program could otherwise fill, and the end state is read out of
 # the arrays themselves.
 $(BUILD)/dispatch_write_order.golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
-                                      $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
+                                      golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin dispatch_write_order > $@
 
 $(BUILD)/obj_dispatch_write_order/Vcadr_machine: $(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $(BUILD)
@@ -1113,24 +1113,16 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 
 # ------------------------------------------------------ QUUX's boot PROM
 #
-# **REVISION 15 BOOTS FROM PROM 2002 ASSEMBLED FOR IT** (contract G3
-# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which every
-# revision 15 flow carries by default (`quux15_bitstream.tcl`'s `PROM`, and
-# the DE25-Nano's `build.sh`'s).  It comes from muir-sys's revision-15 build
-# of PROM 2002, its `promh.mcr` kept in the
-# gitignored `ref/system-2002-rev15/` and held to its digest, read by muir's
-# own reader at revision 15's geometry (`golden/src/prom.rs`); the image is
-# held to its digest as well.  Nothing in `make check` reads it.
-QUUX15_PROM_2002 ?= ref/system-2002-rev15/promh.mcr
-QUUX15_PROM_2002_MCR_SHA256 := 3d93319a8e851f5f14a2fcd66cd1ed21abb33049c355edf8cc893c791fb4b124
+# **QUUX BOOTS FROM PROM 2002**, `boot_prom.quux15.hex`, a 64-bit word a
+# line, which every QUUX flow carries by default (`quux15_bitstream.tcl`'s
+# `PROM`, and the DE25-Nano's `build.sh`'s).  It is muir's own,
+# `data/quux-promh.mcr` read by `prom::quux_boot_prom` (`golden/src/prom.rs`),
+# and the image is held to its digest.  Nothing in `make check` reads it.
 QUUX15_PROM_2002_SHA256 := 2b27752f9327d5ed3e61c7af39777d8ebf7e6ab971f6fdaa2e56bfe1c88cdb1c
-$(BUILD)/boot_prom.quux15.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml $(QUUX15_PROM_2002) | $(BUILD)
-	echo "$(QUUX15_PROM_2002_MCR_SHA256)  $(QUUX15_PROM_2002)" | sha256sum --quiet -c - \
-	    || { echo "boot_prom.quux15.hex: $(QUUX15_PROM_2002) is not revision 15's PROM 2002"; exit 1; }
-	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 --revision 15 \
-	    --mcr $(abspath $(QUUX15_PROM_2002)) > $@.tmp
+$(BUILD)/boot_prom.quux15.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin prom -- --machine quux > $@.tmp
 	echo "$(QUUX15_PROM_2002_SHA256)  $@.tmp" | sha256sum --quiet -c - \
-	    || { echo "boot_prom.quux15.hex: the image is not revision 15's PROM 2002"; rm -f $@.tmp; exit 1; }
+	    || { echo "boot_prom.quux15.hex: the image is not PROM 2002's"; rm -f $@.tmp; exit 1; }
 	mv $@.tmp $@
 
 # ----------------------------------------------- QUUX's multiply and divide
@@ -1251,13 +1243,12 @@ $(BUILD)/quux15_axi3.quux.pass: $(BUILD)/obj_quux15_axi3/Vquux15_axi3_harness
 # boot PROM: `golden/src/quux.rs --program <name>` assembles it with muir's
 # `isa::asm` and traces it on muir's `rtl` engine, and the whole machine is
 # built with that program as its PROM image and held to the trace by the
-# machine check's own testbench, row for row.  **Each program is traced on
-# both machines** in muir: `quux_<name>.golden` on the CADR is the CADR's
-# side of the difference and is part of `make check`.  The generator
-# asserts, at the
-# end of each run, the values muir's own `tests/quux.rs` holds, so a program
-# that stopped reaching its feature fails there and writes no trace.
-QUUX_GOLDEN := golden/src/quux.rs golden/src/fused.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
+# machine check's own testbench, row for row.  `quux_<name>.golden` is
+# traced on the CADR, the CADR's side of the difference, and is part of
+# `make check`.  The generator asserts, at the end of each run, the values
+# muir's own `tests/quux.rs` holds, so a program that stopped reaching its
+# feature fails there and writes no trace.
+QUUX_GOLDEN := golden/src/quux.rs golden/src/fused.rs golden/src/trace.rs golden/Cargo.toml
 
 # Kept: pattern rules make these intermediate, and make deletes an
 # intermediate file after the run, which would rebuild every model each time.
@@ -1566,7 +1557,7 @@ $(BUILD)/quux15_generator.quux.pass: $(QUUX15_GOLDEN) $(QUUX15_PROGRAMS:%=$(BUIL
 	@touch $@
 
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
-	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
+	$(GOLDEN) --release --bin quux -- --program $* > $@
 
 $(BUILD)/obj_quux_%/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_quux_$* \
@@ -2740,7 +2731,7 @@ QUUX16_RESUME_CHK := $(BUILD)/quux15_ckpt/eth-hostwords-74999.p20.chk
 QUUX16_RESUME_HOST := --ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1
 $(BUILD)/quux16_resume.quux.pass: $(BUILD)/quux15_checkpoints.quux.pass | $(BUILD)
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir-sim/Cargo.toml --bin quux --target-dir $(MUIR_TARGET)
-	@set -e; export MUIR_RC=/dev/null MUIR_QUUX_REVISION=16; F=$(QUUX16_RESUME_CHK); W=$(BUILD)/quux16_resume; \
+	@set -e; export MUIR_RC=/dev/null; F=$(QUUX16_RESUME_CHK); W=$(BUILD)/quux16_resume; \
 	 mkdir -p $$W; R="$(QUUX_BIN) --rtl --microcycle-ns 10 --rtc 1790119057 --stop-after 0"; \
 	 $$R $(QUUX16_RESUME_HOST) --resume $$F --checkpoint $$W/back.chk > $$W/host.log 2>&1 \
 	   || { echo "quux16_resume: muir REFUSED the file under its host's flags:"; grep '^quux:' $$W/host.log; exit 1; }; \
@@ -3256,7 +3247,7 @@ de25: $(if $(DE25_QUUX),$(QUUX15_DE25_SRC) $(QUUX15_DE25_PROM) $(BUILD)/sync_pro
 # it was skipped and is not written, so it runs again where Quartus is.  QUUX
 # is synthesized with the transfer test program as its boot PROM (`PROM`),
 # which `make check` builds, because nothing in `make check` reads PROM
-# 2002's image (`QUUX15_PROM_2002`, above).
+# 2002's image (`boot_prom.quux15.hex`, above).
 DE25_SYN_FLOW := boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/project.tcl \
                  $(wildcard boards/de25-nano/quartus/*.sdc) boards/de25-nano/quartus/rams_check.tcl
 $(BUILD)/de25_syn.pass: $(MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) $(DE25_SYN_FLOW) \
@@ -4986,7 +4977,7 @@ CHECKPOINT_QUUX_FLAGS := --rtl --microcycle-ns 10 --memory-timing 247,130,10 --v
 CHECKPOINT_QUUX_MUTANTS := 11 17 18 31 39
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass | $(BUILD)
-	@set -e; export MUIR_RC=/dev/null MUIR_QUUX_REVISION=16; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); \
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); \
 	 cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
 	 F="$(CHECKPOINT_QUUX_FLAGS) --disk-pack $$W/quux-disk.img,0"; \
 	 $$M $$F --resume $$W/quux.chk --checkpoint $$W/quux-back.chk > $$W/quux-muir.log 2>&1 \

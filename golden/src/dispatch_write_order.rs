@@ -36,11 +36,9 @@
 //!   `dispatch-held-by-wait-0` load VMA there, and
 //!   `md-loaded-as-a-write-starts` loads MD.
 //! - **A read in the microcycle that writes the same memory gets the NEW
-//!   word on the CADR and the OLD word on QUUX**: on the CADR the board's
-//!   race settled as muir's netlist model settles it, and on QUUX as QUUX
-//!   defines it (`Geometry::old_word_while_written`).  A `POPJ` in a dispatch
-//!   write (`popj-0` to `-3`, and `x-popj-*` and QUUX's `q-popj-*`, whose
-//!   read finishes inside the microcycle or which wait for it), `MAP(MD)`
+//!   word**: the board's race settled as muir's netlist model settles it.
+//!   A `POPJ` in a dispatch write (`popj-0` to `-3`, and `x-popj-*`, whose
+//!   read finishes inside the microcycle), `MAP(MD)`
 //!   after a map write (`map-source-after-write`), and a dispatch on a map
 //!   bit after one (`map-dispatch-after-write`).
 //! - **The micro-stack is `SPC<18:0>`** (SPCW0-18 and SPCO0-18 on page
@@ -48,18 +46,12 @@
 //!   stack sources put `SPCO<18:0>` on `M<18:0>`, `SPCO18` by the 74S373 at
 //!   SPCLCH 4A07.  `spc-push-high-bits`, this file's own, pushes a word with
 //!   `<18>` and the bits above it set and reads it back by both sources.
-//! - **QUUX has no hung microcycle**: a microcycle that reads `MD` with a
-//!   read in flight waits whole cycles and runs once, whole, so its writes
-//!   take their addresses from the word read (`dispatch-on-md-gap-*` and
-//!   `map-write-into-hang` on QUUX).
 //!
 //! **The format**, one program after another:
 //!
 //! ```text
 //! program NAME ROWS          a program and how many microcycles it runs
-//! prom ADDR WORD             the boot PROM, every word the program has;
-//!                            on QUUX a jump to 0, the PROM being at 36000
-//! imem ADDR WORD             on QUUX, the program, in the control store's RAM
+//! prom ADDR WORD             the boot PROM, every word the program has
 //! l2 IDX WORD                the level-2 map before the boot
 //! dmem IDX WORD              the dispatch memory before the boot
 //! main PHYS WORD             main memory before the boot
@@ -69,35 +61,20 @@
 //! end spcptr P               its pointer
 //! end dmem IDX WORD          each nonzero dispatch word at the end
 //! end l1 IDX WORD            each nonzero level-1 entry
-//! end l2 IDX WORD            each nonzero level-2 entry: the CADR's 1024, QUUX's 2048
-//! end pdl IDX WORD           each nonzero PDL word: the CADR's 1024, QUUX's 16384
+//! end l2 IDX WORD            each nonzero level-2 entry, of 1024
+//! end pdl IDX WORD           each nonzero PDL word, of 1024
 //! done
 //! ```
 //!
 //! Every value is hexadecimal. A memory the lists name no entry of is zero
 //! everywhere, and the testbench checks every word of it.
-//!
-//! **AND ON REVISION 13** (`--machine quux --revision 13`, contract G2,
-//! appendix A1.7): the same programs on `Geometry::QUUX`, the machine at
-//! `WORD_BITS` 40, as muir's own test runs them there (its `as_quux`): the
-//! map's stores and words in revision 13's forms (`MAP_MD_13`,
-//! `MAP_STORE_13`, a level-1 store with its block in `<38:32>`), virtual page
-//! 0 of 1024 words onto physical page 0, so that the word read is at
-//! `VADDR` itself, and the dumps at revision 13's sizes.
 
-mod machine_axis;
+
 mod trace;
 
 use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::isa::asm::*;
-
-/// Revision 13 (`--revision 13`), set before anything is built.
-static REV13: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn rev13() -> bool {
-    REV13.load(std::sync::atomic::Ordering::Relaxed)
-}
 
 // --- the programs, as muir's test builds them -------------------------------
 
@@ -108,19 +85,6 @@ fn constant(v: u32, r: u64, out: &mut Vec<Insn>) {
     for b in (0..32).rev() {
         let c = if (v >> b) & 1 != 0 { CARRY_IN } else { 0 };
         out.push(Insn::new(ALU | M_PLUS_M | c | m_src(r) | a_src(r) | m_dest(r)));
-    }
-}
-
-/// `v`, up to 40 bits, into M memory `r` on revision 13: the field by
-/// [`constant`], the tag into `scratch` the same way, and a DPB of the tag's
-/// eight bits at `<39:32>`, revision 13's fields (A1.1: length - 1 at
-/// `IR<11:6>`, the rotate at `IR<5:0>`).
-fn constant40(v: u64, r: u64, scratch: u64, out: &mut Vec<Insn>) {
-    constant(v as u32, r, out);
-    let tag = (v >> 32) as u32;
-    if tag != 0 {
-        constant(tag, scratch, out);
-        out.push(Insn::new(BYTE | DPB | (7 << 6) | 32 | m_src(scratch) | a_src(r) | m_dest(r)));
     }
 }
 
@@ -207,45 +171,18 @@ const OLD_L2: u32 = 0o1234567 & !(1 << 18);
 const NEW_L2: u32 = 0o7654321;
 const MAP_STORE: u32 = (1 << 25) | NEW_L2;
 
-/// Revision 13's (muir's `MAP_MD_13` and its fellows): `MD` for the map
-/// writes, `VA<27:15>` 100 and `VA<14:10>` 3, level 2 addressed at 3 in
-/// block 0; the level-2 words, `<22>`, the map bit a dispatch's `IR<8>`
-/// takes, clear before and set after; the store, `VMA<28>`, level 2 only.
-const MAP_MD_13: u32 = (0o100 << 15) | (3 << 10) | 2;
-const OLD_L2_13: u32 = OLD_L2;
-const NEW_L2_13: u32 = NEW_L2 | 1 << 22;
-const MAP_STORE_13: u32 = (1 << 28) | NEW_L2_13;
-
-/// The map's `MD` and level-2 store, and level 2's word 3 before it, on
-/// the revision the run is.
-fn map_md() -> u32 {
-    if rev13() { MAP_MD_13 } else { MAP_MD }
-}
-fn map_store() -> u32 {
-    if rev13() { MAP_STORE_13 } else { MAP_STORE }
-}
-fn old_l2() -> u32 {
-    if rev13() { OLD_L2_13 } else { OLD_L2 }
-}
-
 fn map_write_then(name: &str, then: Vec<Insn>) -> Program {
-    map_store_then(name, map_store() as u64, then)
+    map_store_then(name, MAP_STORE, then)
 }
 
-/// A level-1 store: entry 15 at the level-1 index `MAP_MD` names; on
-/// revision 13 the entry in `<38:32>` and `<29>` enabling (A1.7).
+/// A level-1 store: entry 15 at the level-1 index `MAP_MD` names.
 const MAP_STORE_L1: u32 = (0o15 << 27) | (1 << 26);
-const MAP_STORE_L1_13: u64 = (0o15 << 32) | (1 << 29);
 
 /// `map_write_then` with the store word `store`.
-fn map_store_then(name: &str, store: u64, then: Vec<Insn>) -> Program {
+fn map_store_then(name: &str, store: u32, then: Vec<Insn>) -> Program {
     let mut p = vec![filler()];
-    constant(map_md(), 1, &mut p);
-    if rev13() {
-        constant40(store, 2, 0o17, &mut p);
-    } else {
-        constant(store as u32, 2, &mut p);
-    }
+    constant(MAP_MD, 1, &mut p);
+    constant(store, 2, &mut p);
     constant(AT_OLD_DPC, 7, &mut p);
     constant(AT_NEW_DPC, 8, &mut p);
     p.push(Insn::new(ALU | SETZ | m_dest(5)));
@@ -263,7 +200,7 @@ fn map_store_then(name: &str, store: u64, then: Vec<Insn>) -> Program {
         p[at + 1] = halt_here(at + 1);
     }
     let mut prog = program(name, p, 240);
-    prog.l2.push((3, old_l2()));
+    prog.l2.push((3, OLD_L2));
     prog
 }
 
@@ -273,21 +210,9 @@ const PHYS: u32 = (0o100 << 8) | 5;
 const READ_WORD: u32 = (0o100 << 13) | (7 << 8) | 5;
 const MD_BEFORE: u32 = MAP_MD;
 
-/// [`MD_BEFORE`] on the revision the run is: revision 13's map `MD`.
-fn md_before() -> u32 {
-    if rev13() { MAP_MD_13 } else { MD_BEFORE }
-}
-
-/// The level-2 entry [`VADDR`] is read through and the physical word it
-/// reaches: entry 1 onto physical page 100; on revision 13 virtual page 0,
-/// of 1024 words, onto physical page 0, so that the word is at `VADDR`
-/// (muir's `as_quux` and `PHYS_13`).
-fn page_of_vaddr() -> (usize, u32) {
-    if rev13() { (0, (1 << 27) | (1 << 26)) } else { (1, (1 << 23) | (1 << 22) | 0o100) }
-}
-fn phys() -> u32 {
-    if rev13() { VADDR } else { PHYS }
-}
+/// The level-2 entry [`VADDR`] is read through: entry 1 onto physical page
+/// 100.
+const PAGE_OF_VADDR: (usize, u32) = (1, (1 << 23) | (1 << 22) | 0o100);
 const HELD_CYCLES: u64 = 400;
 const PDL_POINTER: u64 = (0o14 << 19) | (0o37 << 14);
 const PDL_TOP: u64 = (0o10 << 19) | (0o37 << 14);
@@ -306,7 +231,7 @@ fn read_then(name: &str, setup: &[(u32, u64)], then: Vec<Insn>) -> Program {
 /// the grid and the NXM timer's oscillator.
 fn read_then_pre(name: &str, pre: usize, setup: &[(u32, u64)], then: Vec<Insn>) -> Program {
     let mut p = vec![filler()];
-    constant(md_before(), 1, &mut p);
+    constant(MD_BEFORE, 1, &mut p);
     constant(VADDR, 12, &mut p);
     constant(0o20, 14, &mut p);
     for &(v, r) in setup {
@@ -326,8 +251,8 @@ fn read_then_pre(name: &str, pre: usize, setup: &[(u32, u64)], then: Vec<Insn>) 
     let here = p.len();
     p.push(halt_here(here));
     let mut prog = program(name, p, HELD_CYCLES);
-    prog.l2.push(page_of_vaddr());
-    prog.main.push((phys(), READ_WORD));
+    prog.l2.push(PAGE_OF_VADDR);
+    prog.main.push((PHYS, READ_WORD));
     prog
 }
 
@@ -364,7 +289,7 @@ fn ilong(i: Insn) -> Insn {
 /// word, zero; M 5 says which (`AT_NEW_DPC` returned, `AT_OLD_DPC` fell).
 fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Program {
     let mut p = vec![filler()];
-    constant(md_before(), 1, &mut p);
+    constant(MD_BEFORE, 1, &mut p);
     constant(VADDR, 12, &mut p);
     constant(AT_OLD_DPC, 7, &mut p);
     constant(AT_NEW_DPC, 8, &mut p);
@@ -393,7 +318,7 @@ fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Pro
     p[RET_PC as usize + 1] = halt_here(RET_PC as usize + 1);
     let mut prog = program(name, p, HELD_CYCLES);
     prog.speed = NORMAL_SPEED;
-    prog.l2.push(page_of_vaddr());
+    prog.l2.push(PAGE_OF_VADDR);
     prog
 }
 
@@ -408,7 +333,7 @@ fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Pro
 // (`a_popj_dispatch_write_whose_read_finishes_inside_its_hung_microcycle_takes_the_new_word`).
 fn hung_popj(name: &str, pre: usize, n: usize, i: usize, xl: bool) -> Program {
     let mut p = vec![filler()];
-    constant(md_before(), 1, &mut p);
+    constant(MD_BEFORE, 1, &mut p);
     constant(VADDR, 12, &mut p);
     constant(AT_OLD_DPC, 7, &mut p);
     constant(AT_NEW_DPC, 8, &mut p);
@@ -441,7 +366,7 @@ fn hung_popj(name: &str, pre: usize, n: usize, i: usize, xl: bool) -> Program {
     p[OLD_DPC as usize + 1] = halt_here(OLD_DPC as usize + 1);
     let mut prog = program(name, p, HELD_CYCLES);
     prog.speed = NORMAL_SPEED;
-    prog.l2.push(page_of_vaddr());
+    prog.l2.push(PAGE_OF_VADDR);
     prog.dmem.push((E as usize, OLD_DPC));
     prog.dmem.push((E as usize + 1, NEW_DPC));
     prog
@@ -472,7 +397,7 @@ fn edge_tie(name: &str, speed: u16, pre: usize, n: usize, il: usize, nxm: bool, 
     } else {
         then.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | VMA));
     }
-    let store = [(map_store(), 2)];
+    let store = [(MAP_STORE, 2)];
     let setup: &[(u32, u64)] = if map { &store } else { &[] };
     let mut prog = read_then_pre(name, pre, setup, then);
     let first = prog.prom.iter().position(|w| w.raw() == (ALU | SETM | m_src(1) | a_src(3) | MD)).unwrap() - pre;
@@ -481,9 +406,8 @@ fn edge_tie(name: &str, speed: u16, pre: usize, n: usize, il: usize, nxm: bool, 
     }
     prog.speed = speed;
     if nxm {
-        // A page past main memory's end: physical page 20000 of 256 words,
-        // and on revision 13 page 4000 of 1024, past its 32 boards.
-        prog.l2[0] = if rev13() { (0, (1 << 27) | (1 << 26) | 0o4000) } else { (1, (1 << 23) | (1 << 22) | 0o20000) };
+        // A page past main memory's end: physical page 20000 of 256 words.
+        prog.l2[0] = (1, (1 << 23) | (1 << 22) | 0o20000);
         prog.main.clear();
     }
     prog
@@ -494,7 +418,6 @@ fn edge_tie(name: &str, speed: u16, pre: usize, n: usize, il: usize, nxm: bool, 
 // through level-2 entry 2, as MIT's boot PROM reaches it (`promh.text`).
 const MODE_VADDR: u32 = 0o1005;
 const MODE_PAGE: u32 = (1 << 23) | (1 << 22) | 0o37766;
-const MODE_PHYS: u32 = 0o17773005;
 /// `SPY<1:0>` = `{SPEED1, SPEED0}` = normal.
 const MODE_NORMAL: u32 = 2;
 
@@ -508,14 +431,7 @@ fn speed_written(name: &str, pad: usize) -> Program {
 /// `long` after the write's start under `ILONG` if one is named.
 fn speed_written_from(name: &str, from: u16, word: u32, pad: usize, long: Option<usize>) -> Program {
     let mut p = vec![filler()];
-    // On revision 13 the same physical word, past main memory's 32 boards
-    // there and so nothing's, through virtual page 2 of 1024 words.
-    let (vaddr, page) = if rev13() {
-        ((2 << 10) | (MODE_PHYS & 0o1777), (1 << 27) | (1 << 26) | (MODE_PHYS >> 10))
-    } else {
-        (MODE_VADDR, MODE_PAGE)
-    };
-    constant(vaddr, 20, &mut p);
+    constant(MODE_VADDR, 20, &mut p);
     constant(word, 21, &mut p);
     p.push(Insn::new(ALU | SETM | m_src(21) | a_src(3) | MD));
     for _ in 0..pad {
@@ -528,12 +444,12 @@ fn speed_written_from(name: &str, from: u16, word: u32, pad: usize, long: Option
     let here = p.len();
     p.push(halt_here(here));
     let mut prog = program(name, p, 200);
-    prog.l2.push((2, page));
+    prog.l2.push((2, MODE_PAGE));
     prog.speed = from;
     prog
 }
 
-fn programs(which: machine_axis::Which) -> Vec<Program> {
+fn programs() -> Vec<Program> {
     let mut all = Vec::new();
     for (k, (old, new)) in POPJ_CASES.into_iter().enumerate() {
         all.push(popj_program(&format!("popj-{k}"), old, new));
@@ -547,10 +463,10 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     ));
     // And level 1: `MAP(MD)<28:24>` in the instruction after a level-1 store,
     // this file's own.  Level 2 is still read through the entry level 1
-    // held, on both machines.
+    // held.
     all.push(map_store_then(
         "map-level-1-source-after-write",
-        if rev13() { MAP_STORE_L1_13 } else { MAP_STORE_L1 as u64 },
+        MAP_STORE_L1,
         vec![
             Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(10)),
             Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(11)),
@@ -594,7 +510,7 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     }
     all.push(read_then(
         "map-store-held-by-wait",
-        &[(map_store(), 2)],
+        &[(MAP_STORE, 2)],
         vec![
             filler(),
             Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP),
@@ -603,7 +519,7 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     ));
     all.push(read_then(
         "map-write-into-hang",
-        &[(map_store(), 2)],
+        &[(MAP_STORE, 2)],
         vec![
             Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP),
             Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)),
@@ -653,7 +569,7 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     let here = p.len();
     p.push(halt_here(here));
     let mut prog = program("md-loaded-as-a-write-starts", p, HELD_CYCLES);
-    prog.l2.push(page_of_vaddr());
+    prog.l2.push(PAGE_OF_VADDR);
     all.push(prog);
     // Measured on the fabric with `CADR_GAP_MONITOR`, and muir's `rtl`
     // returns through the new word in all three (M 5 = `AT_NEW_DPC`).
@@ -696,27 +612,6 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     ] {
         all.push(hung_popj(&format!("x-popj-{pre}-{n}-{i}-{}", xl as u8), pre, n, i, xl));
     }
-    // **ON QUUX, THE SAME PROGRAMS AND muir's OWN OF QUUX**: every program
-    // above runs on QUUX as well, where a RAM read in its own write cycle
-    // gives the old word and a microcycle that reads MD with a read in
-    // flight waits whole cycles and runs once (`on_quux_*` in muir's test).
-    // And `quux_hung_popj_one_word`'s shapes: the read brings back a word
-    // with `MD_BEFORE`'s low three bits, so the dispatch writes and reads
-    // one word, which holds `OLD_DPC` with `R` clear; the old word goes
-    // there and leaves the stack pointer at 1.
-    if which == machine_axis::Which::Quux {
-        let low = md_before() & 7;
-        for pre in [0, 2, 4] {
-            for n in 3..8 {
-                for xl in [false, true] {
-                    let mut p = hung_popj(&format!("q-popj-{pre}-{n}-0-{}", xl as u8), pre, n, 0, xl);
-                    p.dmem = vec![(E as usize + low as usize, OLD_DPC)];
-                    p.main = vec![(phys(), low)];
-                    all.push(p);
-                }
-            }
-        }
-    }
     all
 }
 
@@ -729,60 +624,18 @@ fn nonzero<T: Copy + Default + PartialEq + std::fmt::LowerHex>(tag: &str, words:
 }
 
 fn main() {
-    // `--machine quux` runs the programs on QUUX (`machine_axis.rs`), and the
-    // testbench reads which machine from the header's `machine:` line.
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let which = machine_axis::take(&mut args);
-    let timing = machine_axis::take_timing(which, &mut args);
-    if let Some(i) = args.iter().position(|a| a == "--revision") {
-        match args.get(i + 1).map(String::as_str) {
-            Some("13") if which == machine_axis::Which::Quux => REV13.store(true, std::sync::atomic::Ordering::Relaxed),
-            v => {
-                eprintln!("dispatch_write_order: --revision is 13, with --machine quux, not {v:?}");
-                std::process::exit(2);
-            }
-        }
-        args.drain(i..i + 2);
-    }
-    if let Some(a) = args.first() {
-        eprintln!(
-            "dispatch_write_order: unknown argument `{a}`; usage: dispatch_write_order \
-             [--machine cadr|quux] [--sync-cycle-ticks K [--sync-ilong-ticks L]]"
-        );
-        std::process::exit(2);
-    }
-    let quux = which == machine_axis::Which::Quux;
-    if quux && !rev13() {
-        eprintln!("dispatch_write_order: QUUX is revision 13, --revision 13; revision 12 is retired");
+    if let Some(a) = std::env::args().nth(1) {
+        eprintln!("dispatch_write_order: unknown argument `{a}`; it takes none");
         std::process::exit(2);
     }
     println!("{}", trace::COLUMNS);
-    println!(
-        "# generated by golden/src/dispatch_write_order.rs from muir's rtl engine, machine: {}{}{}",
-        which.name(),
-        if rev13() { ", revision 13" } else { "" },
-        machine_axis::timing_suffix(which, timing)
-    );
+    println!("# generated by golden/src/dispatch_write_order.rs from muir's rtl engine, machine: cadr");
     println!("{}", trace::RADIX);
 
-    for p in programs(which) {
-        // **ON QUUX THE PROGRAM RUNS OUT OF THE CONTROL STORE'S RAM**, from
-        // 0, where every address it names was chosen, and the PROM at 36000
-        // (contract Q2) is a jump to it.  So the program is written into the
-        // RAM before the boot, as the memories below are, and the PROM is two
-        // words; the trap cycle, the jump and the word after it it inhibits
-        // are two rows more than the CADR's.
-        let stub = [Insn::new(JUMP | target(0) | ALWAYS | N), filler()];
-        let (prom, ram, rows) = if quux { (&stub[..], &p.prom[..], p.rows + 2) } else { (&p.prom[..], &[][..], p.rows) };
-        let mut m = which.machine(prom);
-        if rev13() {
-            m.geometry = muir::machine::Geometry::QUUX;
-            m.main = vec![0; 32 << 16];
-            m.set_board_name("").expect("dispatch_write_order: no board name");
-        }
-        for (k, i) in ram.iter().enumerate() {
-            m.imem[k] = *i;
-        }
+    for p in programs() {
+        let rows = p.rows;
+        let mut m = muir::machine::Machine::new();
+        m.load_prom(&p.prom);
         for &(k, w) in &p.l2 {
             m.l2_map[k] = w;
         }
@@ -793,15 +646,11 @@ fn main() {
             m.main[a as usize] = u64::from(w);
         }
         println!("program {} {:x}", p.name, rows);
-        // QUUX has no speed bits: its programs run at its one rate.
-        if p.speed != 0 && !quux {
+        if p.speed != 0 {
             println!("speed {:x}", p.speed);
         }
-        for (k, i) in prom.iter().enumerate() {
+        for (k, i) in p.prom.iter().enumerate() {
             println!("prom {k:x} {:x}", i.raw());
-        }
-        for (k, i) in ram.iter().enumerate() {
-            println!("imem {k:x} {:x}", i.raw());
         }
         for &(k, w) in &p.l2 {
             println!("l2 {k:x} {w:x}");
@@ -813,13 +662,11 @@ fn main() {
             println!("main {a:x} {w:x}");
         }
 
-        let mut e = trace::engine_on(m, timing);
+        let mut e = trace::engine(m);
         e.boot();
         // The speed, as a console leaves the mode register once the boot has
         // let go of it (`Rtl::reset` clears the register).
-        if !quux {
-            e.machine_mut().mode.write(p.speed);
-        }
+        e.machine_mut().mode.write(p.speed);
         let mut t = trace::Trace::new(&e);
         for cycle in 0..rows {
             match t.row(&mut e, cycle) {
@@ -839,14 +686,10 @@ fn main() {
         println!("end spcptr {:x}", mm.spcptr);
         let dmem: Vec<u32> = mm.dmem.iter().map(|&w| w & 0o377777).collect();
         nonzero("dmem", &dmem);
-        // Level 1's 2,048 entries, the CADR's and revision 12's; revision
-        // 13's 8,192.
-        nonzero("l1", &mm.l1_map[..if rev13() { 8192 } else { 2048 }]);
-        // The machine's own sizes: the CADR's 1024 each, QUUX's 2048 entries
-        // of level 2 and 16K words of PDL, revision 13's 4,096 of level 2.
-        let (l2_words, pdl_words) = if rev13() { (4096, 16384) } else if quux { (2048, 16384) } else { (1024, 1024) };
-        nonzero("l2", &mm.l2_map[..l2_words]);
-        nonzero("pdl", &mm.pdl[..pdl_words]);
+        // Level 1's 2,048 entries, and the CADR's 1024 of level 2 and of PDL.
+        nonzero("l1", &mm.l1_map[..2048]);
+        nonzero("l2", &mm.l2_map[..1024]);
+        nonzero("pdl", &mm.pdl[..1024]);
         println!("done");
         eprintln!(
             "dispatch_write_order: {:<24} {} microcycles, {} ns ({} stalled), PC {:o}, M5 {:o} M13 {:o}",

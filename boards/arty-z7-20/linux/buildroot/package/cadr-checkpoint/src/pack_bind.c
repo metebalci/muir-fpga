@@ -258,17 +258,11 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 	// muir is two executables, and the machine is the one named: `quux` for
 	// QUUX, `cadr` for the CADR.
 	//
-	// **QUUX's REVISION**, which muir's `quux` takes from the environment
-	// and not from a flag, and refuses a checkpoint of another revision at:
-	// so the line starts with the assignment a shell takes for that one
-	// command.  **AND ITS CLOCK PERIOD**, `sync_k` in units of 0.5 ns, muir's
+	// **QUUX's CLOCK PERIOD**, `sync_k` in units of 0.5 ns, muir's
 	// `--microcycle-ns`, which it refuses a checkpoint of another period
 	// at.  A sidecar older than the lines, or of an older revision, names
-	// neither.
+	// none.
 	if (b->quux) {
-		if (b->revision == IMG_QUUX_REVISION)
-			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
-					       "MUIR_QUUX_REVISION=%u ", b->revision);
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0, "quux --rtl");
 		if (b->sync_k && b->revision == IMG_QUUX_REVISION)
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
