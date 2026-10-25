@@ -23152,8 +23152,10 @@ set prom build/boot_prom.quux15.hex
 @note The operand address is formed over the copy of M-AP alone: a fused
 @note return that steps M-AP itself loads PDL-INDEX over the old base.
 @old
-                            (land_m_we && land_m_addr == n_mdreg[28:24]) ? land_data[13:0] : ap,
+        nidx = op_addr_over(mdop_arg, mdop_delta,
+                            (land_m_we && wb_base_m) ? land_data[13:0] : ap,
 @new
+        nidx = op_addr_over(mdop_arg, mdop_delta,
                             ap,
 @end
 
@@ -23164,8 +23166,10 @@ set prom build/boot_prom.quux15.hex
 @note fused return that writes A-LOCALP itself loads PDL-INDEX over the old
 @note base.
 @old
-                            (land_a_we && land_a_addr == n_mdreg[23:14]) ? land_data[13:0] : localp);
+                            (land_m_we && wb_base_m) ? land_data[13:0] : ap,
+                            (land_a_we && wb_base_a) ? land_data[13:0] : localp);
 @new
+                            (land_m_we && wb_base_m) ? land_data[13:0] : ap,
                             localp);
 @end
 
@@ -23237,7 +23241,7 @@ set prom build/boot_prom.quux15.hex
 @note is formed over the copy of M-AP before WB's write of it lands: a halt
 @note that ends in that clock keeps the old base.
 @old
-                                  (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap,
+                                  (land_m_we && wb_base_m) ? land_data[13:0] : ap,
 @new
                                   ap,
 @end
@@ -23249,7 +23253,7 @@ set prom build/boot_prom.quux15.hex
 @note is formed over the copy of A-LOCALP before WB's write of it lands: a
 @note halt that ends in that clock keeps the old base.
 @old
-                                  (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp);
+                                  (land_a_we && wb_base_a) ? land_data[13:0] : localp);
 @new
                                   localp);
 @end
@@ -23260,7 +23264,7 @@ set prom build/boot_prom.quux15.hex
 @note The PDL address field on M-AP reads the copy, not the M-AP write the
 @note word in WB lands now (muir-sim's bug before ecae9ab).
 @old
-            2'd0:    formed = (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap;
+            2'd0:    formed = (land_m_we && wb_base_m) ? land_data[13:0] : ap;
 @new
             2'd0:    formed = ap;
 @end
@@ -23271,7 +23275,7 @@ set prom build/boot_prom.quux15.hex
 @note The PDL address field on A-LOCALP reads the copy, not the A-LOCALP
 @note write the word in WB lands now.
 @old
-            2'd1:    formed = (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp;
+            2'd1:    formed = (land_a_we && wb_base_a) ? land_data[13:0] : localp;
 @new
             2'd1:    formed = localp;
 @end
@@ -23300,23 +23304,80 @@ set prom build/boot_prom.quux15.hex
 @mutation quux15-a-localp-copy-misses-its-write
 @check quux15_mainloop_quux
 @file rtl/machine/quux15_core.sv
-@note The copy of A-LOCALP does not take the A write at the address the
-@note register names.
+@note The copy of A-LOCALP does not take the A write its EX matched as
+@note A-LOCALP's.
 @old
-      if (land_a_we && running && land_a_addr == md_reg_now[23:14]) localp <= land_data[13:0];
+      if (land_a_we && running && wb_base_a) localp <= land_data[13:0];
 @new
-      if (land_a_we && running && land_a_addr == md_reg_now[23:14] + 10'd1) localp <= land_data[13:0];
+      if (land_a_we && running && wb_base_a && 1'b0) localp <= land_data[13:0];
 @end
 
 @mutation quux15-m-ap-copy-misses-its-write
 @check quux15_mainloop_quux
 @file rtl/machine/quux15_core.sv
-@note The copy of M-AP does not take the M write at the address the register
-@note names.
+@note The copy of M-AP does not take the M write its EX matched as M-AP's.
 @old
-      if (land_m_we && running && land_m_addr == md_reg_now[28:24]) ap <= land_data[13:0];
+      if (land_m_we && running && wb_base_m) ap <= land_data[13:0];
 @new
-      if (land_m_we && running && land_m_addr == md_reg_now[28:24] + 5'd1) ap <= land_data[13:0];
+      if (land_m_we && running && wb_base_m && 1'b0) ap <= land_data[13:0];
+@end
+
+@mutation quux15-base-matched-as-ex-leaves-the-register
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A base write is matched against the register as its own word leaves
+@note it, after its destination-5 write: a word that writes destination 5
+@note and M-AP, or a fused return whose slot writes the register, leaves
+@note the copy where micro would not.
+@old
+        wb_base_a <= nx_a_we && nx_a_addr == mdreg[23:14];
+        wb_base_m <= nx_m_we && nx_m_addr == mdreg[28:24];
+@new
+        wb_base_a <= nx_a_we && nx_a_addr == n_mdreg[23:14];
+        wb_base_m <= nx_m_we && nx_m_addr == n_mdreg[28:24];
+@end
+
+@mutation quux15-base-a-bit-dropped
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note No A write is carried to WB as A-LOCALP's: its copy, the forward
+@note into the next word and RD's count never see one.
+@old
+        wb_base_a <= nx_a_we && nx_a_addr == mdreg[23:14];
+@new
+        wb_base_a <= 1'b0;
+@end
+
+@mutation quux15-base-m-bit-dropped
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note No M write is carried to WB as M-AP's: its copy, the forward into
+@note the next word and RD's count never see one.
+@old
+        wb_base_m <= nx_m_we && nx_m_addr == mdreg[28:24];
+@new
+        wb_base_m <= 1'b0;
+@end
+
+@mutation quux15-base-in-flight-by-address-only
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD counts a base still being written by its address under the
+@note register as it stands now, not by the match WB's word made in EX:
+@note a field on M-AP right after a word that writes destination 5 and
+@note M-AP forms its index early over the stale copy.
+@old
+      if (chk_a && wb_a_we && (wb_a_addr == a || wb_base_a)) h = 1'b1;
+      if (chk_m && wb_m_we && (wb_m_addr == m || wb_base_m)) h = 1'b1;
+    end
+    if (chk_a && land_a_we && (land_a_addr == a || wb_base_a)) h = 1'b1;
+    if (chk_m && land_m_we && (land_m_addr == m || wb_base_m)) h = 1'b1;
+@new
+      if (chk_a && wb_a_we && (wb_a_addr == a)) h = 1'b1;
+      if (chk_m && wb_m_we && (wb_m_addr == m)) h = 1'b1;
+    end
+    if (chk_a && land_a_we && (land_a_addr == a)) h = 1'b1;
+    if (chk_m && land_m_we && (land_m_addr == m)) h = 1'b1;
 @end
 
 @mutation quux15-macro-dispatch-index-not-written

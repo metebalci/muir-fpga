@@ -21,7 +21,10 @@
 //!             `a_pdl_field_reads_a_base_the_word_before_wrote`); and a fused
 //!             return whose own popping word writes A-LOCALP or M-AP, the
 //!             handler reading its operand where that write puts it
-//!             (`own_base`, halted at every clock in `halts` too)
+//!             (`own_base`, halted at every clock in `halts` too); and a
+//!             base write matched against the register as its writer finds
+//!             it, the next word or the writer itself writing destination 5
+//!             (`base_match`)
 
 use muir::isa::asm::{
     ALU, ALWAYS, CARRY_IN, DISPATCH, JUMP, M_PLUS_C, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ,
@@ -527,6 +530,11 @@ fn d_timing() -> Vec<(String, Preset)> {
 /// RD counting the return's own write as a base still being written:
 ///
 /// - `own`: the return writes A-LOCALP;
+/// - `ownreg`: the return writes A-LOCALP, and the microcycle after it,
+///   which loads PDL-INDEX, writes the MACRO-DISPATCH register naming
+///   A-LOCALP elsewhere, which the rules forbid (H8a §3.3): the return's
+///   write is matched against the register as the return finds it, and the
+///   address is formed over that write;
 /// - `ownap`: the return steps M-AP;
 /// - `jumpret`: the return is a jump with R, whose target's bits stand
 ///   where an ALU word's M destination names M-AP: a jump writes no base,
@@ -548,12 +556,13 @@ pub fn own_base(ds: &[bool]) -> Vec<(String, Preset)> {
         let on = if d { "d" } else { "nod" };
         for (what, reg, old, new) in [
             ("own", 5u32, LOCALP + 2, LOCALP_NEW + 2),
+            ("ownreg", 5u32, LOCALP + 2, LOCALP_NEW + 2),
             ("ownap", 6u32, AP + 1 + 2, AP + 2 + 2),
             ("jumpret", 6u32, AP + 1 + 2, AP + 2 + 2),
         ] {
             let mut p = ml_machine(d, &[hw(3, 0, 0), hw(0o11, reg, 2), hw(1, 0, 0), hw(7, 0, 0)], &[]);
             let ret = match what {
-                "own" => {
+                "own" | "ownreg" => {
                     let to = p.k(LOCALP_NEW);
                     ALU | SETA | a_src(to) | a_dest(LOCALP_AT) | POPJ
                 }
@@ -561,6 +570,11 @@ pub fn own_base(ds: &[bool]) -> Vec<(String, Preset)> {
                 _ => JUMP | ALWAYS | R | N | target(AP_TARGET),
             };
             put_at(&mut p, OP_3, ret);
+            if what == "ownreg" {
+                let d_bit = if d { macro_dispatch::D_ENABLE } else { 0 };
+                let r = p.k(Word::from(macro_dispatch::word(QMLP as u16, LOCALP_AT as u16 + 1, AP_AT as u8) | d_bit));
+                put_at(&mut p, OP_3 + 1, ALU | SETA | a_src(r) | fd(5));
+            }
             put_at(&mut p, OP_11, ALU | SETM | src(0o5) | m_dest(0o27));
             put_at(&mut p, OP_11 + 1, filler().raw() | POPJ);
             put_at(&mut p, OP_11 + 2, ALU | SETM | m_src(0o31) | fd(0o11));
@@ -637,6 +651,63 @@ pub fn field_macro() -> Vec<(String, Preset)> {
         p.fill(1);
         p.stop();
         v.push((format!("gap{gap}"), p));
+    }
+    v
+}
+
+/// **A base write matched against the register as its writer finds it**
+/// (contract H8a §3.4; muir's
+/// `a_base_write_followed_by_destination_5_loads_the_copy` and
+/// `a_destination_5_word_writing_m_ap_loads_the_copy`): the register at
+/// the start names A-LOCALP at A 0 and M-AP at M 0, and its copies are 0.
+///
+/// - `then5-gap<g>`: a write of A 0, 1234, then after `g` fillers a word
+///   that writes destination 5 with a register naming A-LOCALP at A 1: the
+///   write of A 0 loads the copy, though the register names A 1 by the
+///   time it lands at WB;
+/// - `own5-gap<g>`: a word that writes destination 5 with a register naming
+///   M-AP at M 1, its M address M 0: its M write loads the copy of M-AP
+///   with the register's `<13:0>`, 100, matched against the register as
+///   the word finds it.
+///
+/// After `g` more fillers a word with the PDL address field over that base
+/// writes PDL-INDEX with the index the copy makes, and the next reads the
+/// PDL buffer there into M 27. The buffer's words at that index and at the
+/// one over the stale copy each name their address.
+pub fn base_match() -> Vec<(String, Preset)> {
+    let fd = |c: u64| c << 19 | 0o36 << 14;
+    let mut v = Vec::new();
+    for gap in 0..3 {
+        for what in ["then5", "own5"] {
+            let mut p = Preset::new();
+            let (base, delta, new, register) = if what == "then5" {
+                (1, 3i8, 0o1234u64, macro_dispatch::word(QMLP as u16, 1, 0))
+            } else {
+                (0, 2i8, QMLP, macro_dispatch::word(QMLP as u16, 0, 1))
+            };
+            let want = new + delta as u64;
+            let stale = delta as u64;
+            let (kreg, knew, kwant) = (p.k(Word::from(register)), p.k(new), p.k(want));
+            for at in [want, stale] {
+                let (ka, kv) = (p.k(at), p.k(0o1000000 | at));
+                p.op(ALU | SETA | a_src(ka) | fd(0o13));
+                p.op(ALU | SETA | a_src(kv) | fd(0o12));
+            }
+            p.fill(2);
+            if what == "then5" {
+                p.op(ALU | SETA | a_src(knew) | a_dest(0));
+                p.fill(gap);
+                p.op(ALU | SETA | a_src(kreg) | fd(5));
+            } else {
+                p.op(ALU | SETA | a_src(kreg) | 5 << 19);
+            }
+            p.fill(gap);
+            p.op(ALU | SETA | a_src(kwant) | fd(0o13) | pdl_field(base, delta));
+            p.op(ALU | SETM | src(0o5) | m_dest(0o27));
+            p.fill(1);
+            p.stop();
+            v.push((format!("{what}-gap{gap}"), p));
+        }
     }
     v
 }

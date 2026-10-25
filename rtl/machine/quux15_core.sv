@@ -576,6 +576,10 @@ module quux15_core #(
 
   logic        wb_v, wb_nop, wb_m31;
   logic        wb_a_we, wb_m_we, wb_pdl_we, wb_pdl_at_index, wb_imem_we;
+  // Whether WB's A write and its M write are of A-LOCALP and M-AP: matched
+  // in EX against the register as the word found it, before its own
+  // destination-5 write (contract H8a §3.4, `AmWrite::bases`).
+  logic        wb_base_a, wb_base_m;
   logic [9:0]  wb_a_addr;
   logic [4:0]  wb_m_addr;
   logic [39:0] wb_data;
@@ -805,7 +809,8 @@ module quux15_core #(
   // main loop's address and where A-LOCALP and M-AP are); the index,
   // destination 6; the MACRO DISPATCH MEMORY, destination 7, read in RD and
   // in EX; the copies of A-LOCALP and M-AP, fourteen bits, which follow the
-  // writes of the words the register names; and the operand address a fused
+  // writes of the words the register names as each writer finds it; and the
+  // operand address a fused
   // return arms, loaded into PDL-INDEX as the microcycle after it ends.
   logic [31:0] mdreg;
   logic [9:0]  mdindex;
@@ -1238,7 +1243,9 @@ module quux15_core #(
             || (!ir[25] && ir[18:14] == mdreg[28:24]));
   endfunction
   // **A base copy still being written** (`base_in_flight`): a word in EX or
-  // WB that writes A at `a` or M at `m`, or WB's write landing now.
+  // WB that writes A at `a` or M at `m`, or WB's write landing now; or WB's
+  // word whose write its EX matched as a base's (`wb_base_a`, `wb_base_m`),
+  // the register having moved since.
   function automatic logic base_in_flight(input logic chk_a, input logic [9:0] a,
                                           input logic chk_m, input logic [4:0] m);
     logic h;
@@ -1248,11 +1255,11 @@ module quux15_core #(
       if (chk_m && !ex_ir[25] && ex_ir[18:14] == m) h = 1'b1;
     end
     if (wb_v && !wb_nop) begin
-      if (chk_a && wb_a_we && wb_a_addr == a) h = 1'b1;
-      if (chk_m && wb_m_we && wb_m_addr == m) h = 1'b1;
+      if (chk_a && wb_a_we && (wb_a_addr == a || wb_base_a)) h = 1'b1;
+      if (chk_m && wb_m_we && (wb_m_addr == m || wb_base_m)) h = 1'b1;
     end
-    if (chk_a && land_a_we && land_a_addr == a) h = 1'b1;
-    if (chk_m && land_m_we && land_m_addr == m) h = 1'b1;
+    if (chk_a && land_a_we && (land_a_addr == a || wb_base_a)) h = 1'b1;
+    if (chk_m && land_m_we && (land_m_addr == m || wb_base_m)) h = 1'b1;
     return h;
   endfunction
 
@@ -2204,10 +2211,11 @@ module quux15_core #(
         if ((ex_alu || ex_byte) && ex_word[48]) begin
           // B as the word finds it: M-AP and A-LOCALP from the copies, or a
           // write of either by the word in WB, which lands at this edge (d1,
-          // as the word's operands take it; `pdl_field_index`).
+          // as the word's operands take it; `pdl_field_index`), a base's as
+          // its EX matched it.
           unique case (ex_word[50:49])
-            2'd0:    formed = (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap;
-            2'd1:    formed = (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp;
+            2'd0:    formed = (land_m_we && wb_base_m) ? land_data[13:0] : ap;
+            2'd1:    formed = (land_a_we && wb_base_a) ? land_data[13:0] : localp;
             2'd2:    formed = pdl_ptr;
             default: formed = pdl_idx;
           endcase
@@ -2395,14 +2403,14 @@ module quux15_core #(
       // `end_of_microcycle`: the operand address the microcycle before armed
       // loads PDL-INDEX, over the word's own write, executed or nopped, and
       // over the bases as the word leaves them (`bases`): the copies, or a
-      // write of either by the word in WB, which lands at this edge, at the
-      // address the register names as EX leaves it (the copies' own write,
-      // below) --- the return's own write of its base, in WB now;
+      // write of either by the word in WB, which lands at this edge, a
+      // base's as its EX matched it (the copies' own write, below) --- the
+      // return's own write of its base, in WB now;
       // NEXT INSTRD steps LC, fetching with NEEDFETCH.
       if (mdop_v)
         nidx = op_addr_over(mdop_arg, mdop_delta,
-                            (land_m_we && land_m_addr == n_mdreg[28:24]) ? land_data[13:0] : ap,
-                            (land_a_we && land_a_addr == n_mdreg[23:14]) ? land_data[13:0] : localp);
+                            (land_m_we && wb_base_m) ? land_data[13:0] : ap,
+                            (land_a_we && wb_base_a) ? land_data[13:0] : localp);
       if (next_instrd) begin
         stepped = step_lc(nlc, nlc_nf, nintctl[3]);
         if (stepped[35]) begin
@@ -2633,8 +2641,8 @@ module quux15_core #(
     c_res.opa_known = 1'b1;
     c_res.opa_addr = commit ? op_addr(ex_op_arg, ex_op_delta)
                    : op_addr_over(mdop_arg, mdop_delta,
-                                  (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap,
-                                  (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp);
+                                  (land_m_we && wb_base_m) ? land_data[13:0] : ap,
+                                  (land_a_we && wb_base_a) ? land_data[13:0] : localp);
   end
 
   // **D DECIDES AT ITS WORD'S ARRIVAL** (`d_decides`; A15b.9): in the clock
@@ -3032,8 +3040,8 @@ module quux15_core #(
   // have (`fuse_barred`); a change that lets EX fuse one stops here.
   always_ff @(posedge clk) begin
     if (!core_rst && errhalt == 2'd0 && commit && !ex_nop && ex_op_v && (redirect || ex_restore)
-        && ((nx_a_we && nx_a_addr == n_mdreg[23:14]) || (nx_m_we && nx_m_addr == n_mdreg[28:24])
-            || (land_a_we && land_a_addr == n_mdreg[23:14]) || (land_m_we && land_m_addr == n_mdreg[28:24]))) begin
+        && ((nx_a_we && nx_a_addr == mdreg[23:14]) || (nx_m_we && nx_m_addr == mdreg[28:24])
+            || (land_a_we && wb_base_a) || (land_m_we && wb_base_m))) begin
       $display("quux15_core: a fused return at %o restores an operand address over a base still being written",
                ex_pc);
       $finish;
@@ -3155,11 +3163,11 @@ module quux15_core #(
       // D's M 31 at its word's arrival, WB empty then.
       if (d_m31) mmem[5'o31] <= d_m31_word;
       if (land_spc) spc[spc_w_ptr] <= spc_w_word;
-      // The copies of A-LOCALP and M-AP take the writes landing now at the
-      // addresses the register names as EX leaves it (`a_written`,
-      // `m_written`).
-      if (land_a_we && running && land_a_addr == md_reg_now[23:14]) localp <= land_data[13:0];
-      if (land_m_we && running && land_m_addr == md_reg_now[28:24]) ap <= land_data[13:0];
+      // The copies of A-LOCALP and M-AP take the writes landing now that
+      // their EX matched as a base's, against the register as the word
+      // found it (`bases_written`).
+      if (land_a_we && running && wb_base_a) localp <= land_data[13:0];
+      if (land_m_we && running && wb_base_m) ap <= land_data[13:0];
       if (d_m31 && running && md_reg_now[23:14] == 10'o31) localp <= d_m31_word[13:0];
       if (d_m31 && running && md_reg_now[28:24] == 5'o31) ap <= d_m31_word[13:0];
 
@@ -3260,6 +3268,11 @@ module quux15_core #(
         wb_m31 <= !ex_nop && writes_m31(ex_ir);
         wb_a_we <= nx_a_we; wb_a_addr <= nx_a_addr;
         wb_m_we <= nx_m_we; wb_m_addr <= nx_m_addr;
+        // Matched now, against the register as this word finds it: its own
+        // destination-5 write lands at this edge, the next word's before
+        // this write lands at WB (`base_hits`).
+        wb_base_a <= nx_a_we && nx_a_addr == mdreg[23:14];
+        wb_base_m <= nx_m_we && nx_m_addr == mdreg[28:24];
         wb_data <= x_ob;
         wb_pdl_we <= nx_pdl_we; wb_pdl_at_index <= nx_pdl_at_index;
         wb_pdl_addr <= nx_pdl_addr; wb_pdl_data <= x_ob;

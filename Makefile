@@ -202,7 +202,9 @@ CADR_LAT = $(BUILD)/machine.lat.pass $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.lat.pass)
 # muir's checkpoint; and the main loop's (`golden/src/quux15_main.rs`,
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
 # and A-LOCALP, and a fused return whose own popping word writes A-LOCALP or
-# M-AP, its handler reading the operand over the new base; and a store and its page check before a return with N, fused
+# M-AP, its handler reading the operand over the new base, and a base write
+# matched against the register as its writer finds it, the next word or the
+# writer itself writing destination 5; and a store and its page check before a return with N, fused
 # into an operand's handler that reads the PDL buffer in its first word
 # (`storeret`), under the port's timings and the seeded memory model.  And
 # the keyboard and the mouse (`golden/src/quux15_input.rs`, `input`): key

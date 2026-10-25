@@ -1723,6 +1723,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
                 })
                 .collect();
             v.extend(quux15_main::field_macro().into_iter().map(|(n, p)| p.case(&format!("field-{n}"))));
+            v.extend(quux15_main::base_match().into_iter().map(|(n, p)| p.case(&format!("basematch-{n}"))));
             v
         }
         "storeret" => quux15_main::store_return(period).into_iter().map(|(_, c)| c).collect(),
