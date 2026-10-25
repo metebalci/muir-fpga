@@ -1449,7 +1449,8 @@ int main(int argc, char **argv)
 		// line survives the file, and the command it prints is muir's
 		// `quux` with everything muir needs to take the file as the board
 		// ran it: the clock's period, which muir refuses a checkpoint of
-		// another period at, and the video controller's size.  No memory
+		// another period at, the board's memory timing, which it refuses
+		// another timing at, and the video controller's size.  No memory
 		// flag: muir builds the machine with the checkpoint's own memory.
 		// The CADR's
 		// is `cadr` with its timing model and its boards.  Held whole,
@@ -1463,13 +1464,44 @@ int main(int argc, char **argv)
 		qb.video_width = 1920;
 		qb.video_height = 1080;
 		qb.running = 1;
+		// The board's memory timing is one name, the preset's: its figures
+		// go into the declaration, its name into the binding.
+		{
+			struct chk_declared td;
+			memset(&td, 0, sizeof td);
+			const struct chk_memory_timing *kt = chk_memory_timing("kria");
+			if (!kt || bind_memory_timing(&qb, &td, "kria") != 0)
+				fail("the Kria's memory timing, no preset", 0, 1);
+			else if (td.timing[0] != kt->read_ns || td.timing[1] != kt->write_ns ||
+				 td.timing[2] != kt->occupancy_ns || strcmp(qb.memory_timing, "kria") != 0)
+				fail("the Kria's memory timing, declared", td.timing[0], kt->read_ns);
+			struct binding nb;
+			bind_init(&nb);
+			memset(&td, 0, sizeof td);
+			if (bind_memory_timing(&nb, &td, "kr260") != -1 || nb.memory_timing[0] ||
+			    td.timing[0] || td.timing[1] || td.timing[2])
+				fail("a memory timing muir has no preset of, taken", 1, 0);
+			// Every preset is named on the line by its own name.
+			for (const struct chk_memory_timing *t = chk_memory_timings; t->name; ++t) {
+				struct binding pb = qb;
+				char line[4096], want[64];
+				if (bind_memory_timing(&pb, &td, t->name) != 0)
+					fail("a preset of the table, refused", 1, 0);
+				bind_resume_command(&pb, "q.chk", line, sizeof line);
+				snprintf(want, sizeof want, " --memory-timing %s ", t->name);
+				if (!strstr(line, want)) {
+					fprintf(stderr, "the %s resume line is [%s]\n", t->name, line);
+					fail("a resume line without its board's --memory-timing", 1, 0);
+				}
+			}
+		}
 		qb.u[0].present = 1;
 		snprintf(qb.u[0].path, sizeof qb.u[0].path, "/mnt/card/packs/disk-pack-0.img");
 		snprintf(qb.u[0].format, sizeof qb.u[0].format, "vhd-dynamic");
 		qb.present = 1;
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
-		static const char want16[] = "quux --rtl --microcycle-ns 10 "
+		static const char want16[] = "quux --rtl --microcycle-ns 10 --memory-timing kria "
 			"--video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want16) != 0) {
@@ -1486,6 +1518,8 @@ int main(int argc, char **argv)
 			fail("the sidecar lost the revision, the period or the run state",
 			     ((uint64_t)rd.revision << 16) | (rd.sync_k << 8) | (unsigned)rd.running,
 			     (16u << 16) | (20u << 8) | 1u);
+		else if (strcmp(rd.memory_timing, "kria") != 0)
+			fail("the sidecar lost the memory timing", 1, 0);
 		else {
 			// `--verify` prints the line from the sidecar it read.
 			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
@@ -1496,22 +1530,34 @@ int main(int argc, char **argv)
 		{
 			FILE *sf = fopen(side, "r");
 			char line[8192];
-			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0, saw_video = 0;
+			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0, saw_video = 0, saw_timing = 0;
 			while (sf && fgets(line, sizeof line, sf)) {
 				line[strcspn(line, "\n")] = '\0';
 				saw_rev += strcmp(line, "revision: 16") == 0;
 				saw_k += strcmp(line, "sync-cycle-ticks: 20") == 0;
 				saw_video += strcmp(line, "video-size: 1920x1080") == 0;
+				saw_timing += strcmp(line, "memory-timing: kria") == 0;
 				saw_run += strcmp(line, "running: yes") == 0;
 				saw_resume += strncmp(line, "resume: quux --rtl --microcycle-ns 10 ",
 						      sizeof "resume: quux --rtl --microcycle-ns 10 " - 1) == 0;
 			}
 			if (sf)
 				fclose(sf);
-			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1 || saw_video != 1)
-				fail("the sidecar's revision, period, running, resume and video size lines",
-				     (uint64_t)saw_video * 10000 + saw_rev * 1000 + saw_k * 100 + saw_run * 10 +
-				     saw_resume, 11111);
+			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1 || saw_video != 1 ||
+			    saw_timing != 1)
+				fail("the sidecar's revision, period, running, resume, video size and timing lines",
+				     (uint64_t)saw_timing * 100000 + saw_video * 10000 + saw_rev * 1000 +
+				     saw_k * 100 + saw_run * 10 + saw_resume, 111111);
+		}
+		// A sidecar naming a timing muir has no preset of is refused.
+		{
+			FILE *sf = fopen(side, "w");
+			if (sf) {
+				fprintf(sf, "format: %s\nmachine: quux\nmemory-timing: 247,130,10\n", BIND_FORMAT);
+				fclose(sf);
+			}
+			if (bind_read(&rd, side, err, sizeof err) != -1)
+				fail("a sidecar's memory timing that is no preset, taken", 1, 0);
 		}
 		// A period of 9.5 ns names its half, and 1280 by 1024 its size.
 		qb.sync_k = 19;
@@ -1519,7 +1565,7 @@ int main(int argc, char **argv)
 		qb.video_height = 1024;
 		qb.running = 0;
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, "quux --rtl --microcycle-ns 9.5 --video-size 1280x1024 "
+		if (strcmp(cmd, "quux --rtl --microcycle-ns 9.5 --memory-timing kria --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
 			fail("QUUX's resume line at 9.5 ns", 1, 0);
 		// A sidecar of an older revision names no period: its file is
@@ -1542,7 +1588,7 @@ int main(int argc, char **argv)
 				fclose(sf);
 			}
 			if (bind_read(&rd, side, err, sizeof err) != 0 || rd.running != -1 ||
-			    rd.revision != 0 || rd.sync_k != 0 || rd.video_width != 0)
+			    rd.revision != 0 || rd.sync_k != 0 || rd.video_width != 0 || rd.memory_timing[0])
 				fail("an old sidecar's run state, revision or K", (unsigned)rd.running, 0);
 			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
 			if (strcmp(cmd, "quux --rtl --resume q.chk") != 0)
@@ -2198,6 +2244,35 @@ int main(int argc, char **argv)
 		qdecl.cylinders[0] = Q_DISK_BLOCKS;
 		qdecl.heads[0] = 1u;
 		qdecl.blocks_per_track[0] = 1u;
+		// **AND ITS SIDECAR, AS THE BOARD WRITES IT**: the Kria KR260's,
+		// its memory timing that board's preset, the declaration's figures
+		// and the resume line's name from the one call `cadr-checkpoint`
+		// makes.  The pack is muir's own QUUX disk, named as the copy in
+		// the work directory that `build/checkpoint.quux.pass` resumes, so
+		// that a resume never writes muir's own.
+		struct binding fb;
+		bind_init(&fb);
+		fb.quux = 1;
+		{
+			char spec[512], err[512] = "";
+			snprintf(spec, sizeof spec, "%s/quux-disk.img,0", q8);
+			if (bind_add(&fb, spec, err, sizeof err) != 0)
+				fail("QUUX's fixture's disk, bound", 0, 1);
+			snprintf(fb.u[0].path, sizeof fb.u[0].path, "%s/quux-disk.img", work);
+		}
+		fb.boards = Q_UNITS;
+		fb.revision = 16;
+		fb.sync_k = Q_PERIOD;
+		fb.video_width = qi.video_width;
+		fb.video_height = qi.video_height;
+		fb.eth = 1;
+		memcpy(fb.eth_mac, qi.q15.eth.mac, sizeof fb.eth_mac);
+		fb.eth_address = qi.q15.eth.address;
+		fb.eth_netmask = qi.q15.eth.netmask;
+		fb.eth_gateway = qi.q15.eth.gateway;
+		fb.running = 0;
+		if (bind_memory_timing(&fb, &qdecl, "kria") != 0)
+			fail("the Kria's memory timing, no preset", 0, 1);
 		struct chk qb;
 		chk_init(&qb);
 		chk_rtl_body(&qb, &qi, &qdecl);
@@ -2221,6 +2296,58 @@ int main(int argc, char **argv)
 		if (quux_out && chk_write_file(quux_out, "rtl", Q_UNITS, &qb) != 0) {
 			perror(quux_out);
 			return 1;
+		}
+		// **EVERY BOARD'S FILE OF THE SAME MACHINE**, each beside its
+		// sidecar: the Kria's as `quux_out`, `<name>.chk`, and each other
+		// preset's as `<name>-<preset>.chk`, whose bodies differ from the
+		// Kria's in the port's three figures alone.  muir's `quux` resumes
+		// each under its sidecar's resume line and nothing else.
+		if (quux_out) {
+			char stem[400];
+			if (snprintf(stem, sizeof stem, "%s", quux_out) >= (int)sizeof stem) {
+				fprintf(stderr, "%s: too long a path\n", quux_out);
+				return 1;
+			}
+			const size_t sl = strlen(stem);
+			if (sl <= 4 || strcmp(stem + sl - 4, ".chk") != 0) {
+				fprintf(stderr, "%s: QUUX's file is named <name>.chk\n", quux_out);
+				return 1;
+			}
+			stem[sl - 4] = '\0';
+			for (const struct chk_memory_timing *t = chk_memory_timings; t->name; ++t) {
+				const int kria = strcmp(t->name, "kria") == 0;
+				char path[sizeof fb.checkpoint], side[sizeof path + sizeof BIND_SUFFIX];
+				char err[1024] = "";
+				if (kria)
+					snprintf(path, sizeof path, "%s", stem);
+				else
+					snprintf(path, sizeof path, "%s-%s", stem, t->name);
+				strcat(path, ".chk");
+				struct binding pb = fb;
+				struct chk_declared pd = qdecl;
+				if (bind_memory_timing(&pb, &pd, t->name) != 0) {
+					fail("a preset of the table, refused", 1, 0);
+					continue;
+				}
+				if (!kria) {
+					struct chk pbody;
+					chk_init(&pbody);
+					chk_rtl_body(&pbody, &qi, &pd);
+					const int wrote = !pbody.broken &&
+						chk_write_file(path, "rtl", Q_UNITS, &pbody) == 0;
+					chk_free(&pbody);
+					if (!wrote) {
+						perror(path);
+						return 1;
+					}
+				}
+				snprintf(pb.checkpoint, sizeof pb.checkpoint, "%s", path);
+				snprintf(side, sizeof side, "%s%s", path, BIND_SUFFIX);
+				if (bind_write(&pb, side, err, sizeof err) != 0) {
+					fprintf(stderr, "%s: %s\n", side, err);
+					return 1;
+				}
+			}
 		}
 		// **AND THE HOLE IS READ WHERE IT STANDS**: the file written from
 		// a body with main memory in its hole is the file written from the

@@ -42,14 +42,34 @@ struct chk_declared {
 	// **QUUX'S** (A15b.13), which its file states and a resume is refused
 	// on when they differ: the real-time clock, the host's (0) or
 	// counted from `rtc_start` at the machine's instant `rtc_base`, muir's
-	// `--rtc`; the memory's timing, muir's `--memory-timing`, the Kria's
-	// when all three are 0; and the cache's words, 65,536 when 0.
+	// `--rtc`; the memory's timing, muir's `--memory-timing` in ns, written
+	// as given, which is the board's preset (`chk_memory_timing`) on a
+	// board; and the cache's words, 65,536 when 0.
 	int rtc_counted;
 	uint32_t rtc_start;
 	uint64_t rtc_base;
 	uint64_t timing[3];
 	uint32_t cache_words;
 };
+
+// **muir's PRESETS OF `--memory-timing`**, by the names its flag takes:
+// `PortTiming::KRIA`, `ARTY` and `DE25` in muir's `src/pipeline/port.rs`,
+// the read, the write and the occupancy in ns.  muir refuses a checkpoint
+// whose port's timing is not the resuming machine's, so a board's QUUX
+// checkpoint declares its own board's preset (`cadr_board.h`'s
+// `CADR_BOARD_MEMORY_TIMING`) and its resume line names it.
+// `tools/memory_timing_pin.py` holds this table, and the preset each board
+// names, to muir's at the pinned commit.
+struct chk_memory_timing {
+	const char *name;
+	uint64_t read_ns, write_ns, occupancy_ns;
+};
+
+// The preset `name` names, or NULL for a name muir has no preset of.
+const struct chk_memory_timing *chk_memory_timing(const char *name);
+
+// The table, ended by an entry whose name is NULL.
+extern const struct chk_memory_timing chk_memory_timings[];
 
 // The whole body, `Machine::save` then the `Rtl` tail, in muir's order: the
 // CADR's, or QUUX's for an image `img_alloc_revision` made as QUUX's, whose

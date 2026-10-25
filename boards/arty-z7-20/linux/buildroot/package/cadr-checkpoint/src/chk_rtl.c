@@ -674,13 +674,31 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 // no line held and the recency bytes zero.  A drained cache's words are main
 // memory's, so a cold one moves when a read is answered, never what it reads.
 #define MUIR_REVISION_16_MARK (0200u | 16u)
-#define MUIR_KRIA_READ_NS 247u
-#define MUIR_KRIA_WRITE_NS 130u
-#define MUIR_KRIA_OCCUPANCY_NS 10u
 #define MUIR_CACHE_WORDS_15 65536u
 #define MUIR_LINE_WORDS_15 8u
 #define MUIR_L1_WORDS_13 8192u
 #define MUIR_XBUS_NXM 01u
+
+// muir's presets of `--memory-timing` (`chk_rtl.h`): `PortTiming::KRIA`,
+// `ARTY` and `DE25`, in `src/pipeline/port.rs`'s order of the three.
+const struct chk_memory_timing chk_memory_timings[] = {
+#if CHK_MUTATE == 61
+	{ "kria", 247u, 130u, 10u },
+#else
+	{ "kria", 344u, 215u, 10u },
+#endif
+	{ "arty", 290u, 120u, 16u },
+	{ "de25", 600u, 485u, 40u },
+	{ NULL, 0u, 0u, 0u },
+};
+
+const struct chk_memory_timing *chk_memory_timing(const char *name)
+{
+	for (const struct chk_memory_timing *t = chk_memory_timings; name && t->name; ++t)
+		if (strcmp(t->name, name) == 0)
+			return t;
+	return NULL;
+}
 
 // `Timers::save` on the pipeline: the snapshot's words, the deadline already
 // muir's, in units of 0.5 ns (`quux15_devices.sv`).
@@ -937,10 +955,9 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 
 	// --- the pipeline -----------------------------------------------------
 	chk_u64(w, x->period);					/* READ entry 21 */
-	const int kria = !d->timing[0] && !d->timing[1] && !d->timing[2];
-	chk_u64(w, kria ? MUIR_KRIA_READ_NS : d->timing[0]);	/* DECLARED */
-	chk_u64(w, kria ? MUIR_KRIA_WRITE_NS : d->timing[1]);
-	chk_u64(w, kria ? MUIR_KRIA_OCCUPANCY_NS : d->timing[2]);
+	chk_u64(w, d->timing[0]);				/* DECLARED, the board's */
+	chk_u64(w, d->timing[1]);
+	chk_u64(w, d->timing[2]);
 	const uint32_t cache = d->cache_words ? d->cache_words : MUIR_CACHE_WORDS_15;
 	chk_u32(w, cache);					/* DECLARED */
 	chk_u32(w, 0);						/* no line held */
@@ -1482,6 +1499,12 @@ const char *chk_rtl_mutation(void)
 	return "the resume line's --ip-address with the host part's length for the prefix's";
 #elif CHK_MUTATE == 58
 	return "the sidecar's ip-gateway line not read back";
+#elif CHK_MUTATE == 59
+	return "QUUX's resume line without the board's --memory-timing";
+#elif CHK_MUTATE == 60
+	return "QUUX's resume line naming the Kria's --memory-timing on every board";
+#elif CHK_MUTATE == 61
+	return "the Kria's memory timing written 247,130,10, the stale figures";
 #else
 	return NULL;
 #endif

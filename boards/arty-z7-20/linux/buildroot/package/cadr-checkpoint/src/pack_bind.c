@@ -268,6 +268,17 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       " --microcycle-ns %u%s", b->sync_k / 2u,
 					       b->sync_k % 2u ? ".5" : "");
+		// **AND THE BOARD'S MEMORY TIMING**, muir's preset by its name,
+		// which muir refuses a checkpoint of another timing at.
+#if CHK_MUTATE == 60
+		if (b->memory_timing[0])
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       " --memory-timing kria");
+#elif CHK_MUTATE != 59
+		if (b->memory_timing[0])
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       " --memory-timing %s", b->memory_timing);
+#endif
 		// **AND THE VIDEO CONTROLLER'S SIZE**, which muir takes as
 		// `--video-size` and refuses a checkpoint of another size at:
 		// 1280x1024 is its default, and the Kria KR260's is not.
@@ -320,6 +331,18 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 				       prefix_of(b->eth_netmask), g);
 	}
 	snprintf(out + at, at < n ? n - at : 0, " --resume %s", chk);
+}
+
+int bind_memory_timing(struct binding *b, struct chk_declared *d, const char *preset)
+{
+	const struct chk_memory_timing *t = chk_memory_timing(preset);
+	if (!t)
+		return -1;
+	d->timing[0] = t->read_ns;
+	d->timing[1] = t->write_ns;
+	d->timing[2] = t->occupancy_ns;
+	snprintf(b->memory_timing, sizeof b->memory_timing, "%s", t->name);
+	return 0;
 }
 
 int bind_halt_mark(const char *path, uint64_t cycles)
@@ -404,6 +427,8 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	if (b->quux) {
 		fprintf(f, "revision: %u\n", b->revision);
 		fprintf(f, "sync-cycle-ticks: %u\n", b->sync_k);
+		if (b->memory_timing[0])
+			fprintf(f, "memory-timing: %s\n", b->memory_timing);
 		if (b->video_width)
 			fprintf(f, "video-size: %ux%u\n", b->video_width, b->video_height);
 		if (b->eth) {
@@ -649,6 +674,14 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			b->revision = (unsigned)strtoul(v, NULL, 10);
 		} else if ((v = field(line, "sync-cycle-ticks")) != NULL) {
 			b->sync_k = (unsigned)strtoul(v, NULL, 10);
+		} else if ((v = field(line, "memory-timing")) != NULL) {
+			if (!chk_memory_timing(v)) {
+				note(err, errlen, "%s: memory-timing \"%s\", which is none of "
+				     "muir's presets", path, v);
+				fclose(f);
+				return -1;
+			}
+			snprintf(b->memory_timing, sizeof b->memory_timing, "%s", v);
 		} else if ((v = field(line, "video-size")) != NULL) {
 			unsigned w = 0, h = 0;
 			if (sscanf(v, "%ux%u", &w, &h) != 2 || w == 0 || h == 0) {

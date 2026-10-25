@@ -29326,3 +29326,74 @@ source [file join [file dirname [file normalize [info script]]] sta_shared.tcl]
 @new
         set top   cadr_kr260_faults
 @end
+
+# ======================================================================
+# QUUX'S MEMORY TIMING IS muir'S, BOARD BY BOARD
+# ======================================================================
+#
+# A board's QUUX checkpoint declares its memory port's timing, and muir
+# refuses one whose timing is not the resuming machine's.  The board's
+# resume line names muir's preset for the board, so the figures the board's
+# writer declares (`chk_rtl.c`'s `chk_memory_timings`) and the preset each
+# board names (`cadr_board.h`) must be muir's (`PortTiming` in its
+# `src/pipeline/port.rs`) at the pin.  `tools/memory_timing_pin.py` holds
+# them; `build/checkpoint.quux.pass` resumes each board's file under its own
+# resume line, with its own mutants 59 to 61 for the line and the figures.
+
+@mutation memory-timing-the-kria-at-the-stale-figures
+@check memory_timing_pin_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The Kria's figures as the writer first had them, 247, 130 and 10,
+@note which muir's preset no longer is: every Kria checkpoint refused.
+@old
+	{ "kria", 344u, 215u, 10u },
+@new
+	{ "kria", 247u, 130u, 10u },
+@end
+
+@mutation memory-timing-the-kria-and-arty-figures-swapped
+@check memory_timing_pin_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note Two boards' presets swapped in the table, each name keeping its place.
+@old
+	{ "kria", 344u, 215u, 10u },
+#endif
+	{ "arty", 290u, 120u, 16u },
+@new
+	{ "kria", 290u, 120u, 16u },
+#endif
+	{ "arty", 344u, 215u, 10u },
+@end
+
+@mutation memory-timing-the-de25-occupancy-off-by-one
+@check memory_timing_pin_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note One figure of one preset a nanosecond out.
+@old
+	{ "de25", 600u, 485u, 40u },
+@new
+	{ "de25", 600u, 485u, 41u },
+@end
+
+@mutation memory-timing-the-kria-names-the-arty-preset
+@check memory_timing_pin_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h
+@note The Kria KR260 names another board's preset: its file declares the
+@note Arty's figures and its resume line says `--memory-timing arty`, which
+@note muir takes, and is not the Kria's port.
+@old
+#define CADR_BOARD_MEMORY_TIMING "kria"
+@new
+#define CADR_BOARD_MEMORY_TIMING "arty"
+@end
+
+@mutation memory-timing-the-arty-and-de25-names-swapped
+@check memory_timing_pin_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h
+@note The Arty names the DE25-Nano's preset, one half of the two boards'
+@note names swapped.
+@old
+#define CADR_BOARD_MEMORY_TIMING "arty"
+@new
+#define CADR_BOARD_MEMORY_TIMING "de25"
+@end

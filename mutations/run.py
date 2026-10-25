@@ -2570,6 +2570,27 @@ for _r in ("mdmem", "dmem", "tdp", "validmap"):
         "machine": "quux",
     }
 
+# **muir's MEMORY TIMING PRESETS AT THE PIN** (the Makefile's
+# `memory_timing_pin.quux.pass`): `tools/memory_timing_pin.py` builds a
+# program per board over `chk_rtl.c`'s table and `cadr_board.h`, and holds
+# the table and each board's preset to muir's `port.rs` at the commit
+# `muir.commit` names, read from this repository's pin and muir beside it.
+# It exits 1 on a difference and 2 when a build fails.
+CHECKS["memory_timing_pin_quux"] = {
+    "kind": "script",
+    "sources": [_Q15CHK_PKG + "cadr-checkpoint/src/chk_rtl.c",
+                _Q15CHK_PKG + "cadr-common/src/cadr/cadr_board.h"],
+    "cmd": ["tools/memory_timing_pin.py", ".", "--repo", REPO,
+            "--muir", os.path.join(os.path.dirname(REPO), "muir-sim"),
+            "--work", "memory_timing_pin"],
+    "broken_rc": 2,
+    "top": None,
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
 # Revision 15's Kria KR260 top level, linted as `build/quux15_kr260.pass`
 # lints it (`quux15_kr260_check`): its elaboration checks, the DDR map's
 # bases and main memory's size against the board's reservation, among them.

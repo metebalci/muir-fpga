@@ -664,6 +664,14 @@ int main(int argc, char **argv)
 	struct chk_declared decl;
 	memset(&decl, 0, sizeof decl);
 	decl.chaos_address = (uint32_t)chaos;
+	// QUUX's memory timing is the board's preset of muir's
+	// (`cadr_board.h`), declared in the file and named on the resume line.
+	if (quux && bind_memory_timing(&bind, &decl, CADR_BOARD_MEMORY_TIMING) != 0) {
+		say("this board's memory timing, %s, is none of muir's presets",
+		    CADR_BOARD_MEMORY_TIMING);
+		img_free(&img);
+		return 1;
+	}
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!bind.u[u].present)
 			continue;

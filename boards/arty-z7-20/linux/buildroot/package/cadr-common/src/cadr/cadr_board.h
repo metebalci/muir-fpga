@@ -138,6 +138,10 @@
 // MIT's debug cable: no Pmod on this board, so eight of JP1's pins
 // (docs/debug-cable.md).
 #define CADR_BOARD_DEBUG_CONNECTOR "JP1's pins 31 to 38"
+// QUUX's memory port's timing, as muir's `--memory-timing` names this
+// board's preset (`PortTiming::DE25`): the checkpoint declares its figures
+// and the resume line names it (`cadr-checkpoint`'s `chk_rtl.h`).
+#define CADR_BOARD_MEMORY_TIMING "de25"
 
 #define CADR_BOARD_PACK_HEX      40000000
 #define CADR_BOARD_CHAOS_HEX     40001000
@@ -170,6 +174,9 @@
 #define CADR_BOARD_TALLY         "the EMIO tally"
 // MIT's debug cable, on one Pmod (docs/debug-cable.md).
 #define CADR_BOARD_DEBUG_CONNECTOR "Pmod JA"
+// QUUX's memory port's timing, muir's preset for this board
+// (`PortTiming::ARTY`).
+#define CADR_BOARD_MEMORY_TIMING "arty"
 
 #define CADR_BOARD_PACK_HEX      40000000
 #define CADR_BOARD_CHAOS_HEX     40001000
@@ -204,6 +211,9 @@
 #define CADR_BOARD_TALLY         "the EMIO tally"
 // MIT's debug cable, on the carrier's first Pmod (docs/debug-cable.md).
 #define CADR_BOARD_DEBUG_CONNECTOR "PMOD1"
+// QUUX's memory port's timing, muir's preset for this board
+// (`PortTiming::KRIA`).
+#define CADR_BOARD_MEMORY_TIMING "kria"
 
 #define CADR_BOARD_PACK_HEX      A0000000
 #define CADR_BOARD_CHAOS_HEX     A0001000

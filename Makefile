@@ -318,7 +318,7 @@ QUUX_PENDING_WHY :=
 CHECK_QUUX = $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass $(BUILD)/display_out_kr260.quux15.pass \
        $(BUILD)/muldiv.quux.pass $(BUILD)/quux15_input_module.quux.pass \
        $(BUILD)/quux15_block_walk.quux.pass \
-       $(BUILD)/checkpoint.quux.pass \
+       $(BUILD)/checkpoint.quux.pass $(BUILD)/memory_timing_pin.quux.pass \
        $(BUILD)/de25_syn.pass \
        $(BUILD)/quux15_axi_narrow128.quux.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
@@ -4992,65 +4992,115 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # wrongly from the fabric's words to muir's makes them differ, and
 # `quux_checkpoint --compare` says which of muir's sections moved.
 #
-# Then muir's `quux` resumes the package's file under the flags those say,
-# `--stop-after 0`, and saves it back BYTE FOR BYTE, and its report names the
-# microcycles, the nanoseconds and the main memory the model gave.  The disk
-# is a copy in the work directory, so a resume never writes muir's own.
+# **THEN EVERY BOARD'S FILE IS RESUMED AS ITS RESUME LINE SAYS, AND BY
+# NOTHING ELSE.**  The package's check writes the same machine as each board
+# writes it, the port's timing that board's preset of muir's (`chk_rtl.h`):
+# `quux.chk`, the Kria's, and `quux-arty.chk` and `quux-de25.chk`, each with
+# its sidecar.  muir's `quux` resumes each under the sidecar's `resume:` line,
+# run as written in the work directory with `--stop-after 0` and the file to
+# save back added and no flag of this rule's, and saves it back BYTE FOR
+# BYTE, and its report names the microcycles, the nanoseconds and the main
+# memory the model gave.  So a timing the file and its line disagree on, a
+# line that names none on a board whose preset is not muir's default, or a
+# preset whose figures are not muir's, is refused here.  The disk is a copy
+# in the work directory, so a resume never writes muir's own.
 #
-# **THE MUTANTS ARE 11, 17, 18, 31 AND 39** (`chk_rtl.c`'s
-# `chk_rtl_mutation` names each), each caught when muir refuses the file,
-# saves other bytes, or the file is not muir's own; and 40, the resume line
-# without the video controller's size, by the package's own check of the
-# line.  It rides on `build/checkpoint.pass`, which builds the program, the
+# **THE MUTANTS ARE 11, 17, 18, 31, 39 AND 61** (`chk_rtl.c`'s
+# `chk_rtl_mutation` names each), each caught when muir refuses a board's
+# file under its line, saves other bytes, or the Kria's file is not muir's
+# own; 40, the resume line without the video controller's size, by the
+# package's own check of the line; and 59 and 60, the resume line without
+# the board's memory timing and naming the Kria's on every board, by the
+# package's own check of the line and by muir refusing a board's file under
+# it.  It rides on `build/checkpoint.pass`, which builds the program, the
 # test's binaries in the one work directory and muir.
 CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 327410129160 ns, 1MW of main memory
-CHECKPOINT_QUUX_FLAGS := --rtl --microcycle-ns 10 --memory-timing 247,130,10 --video-size 1920x1080 \
-    --ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 \
-    --stop-after 0
-CHECKPOINT_QUUX_MUTANTS := 11 17 18 31 39
+CHECKPOINT_QUUX_MUTANTS := 11 17 18 31 39 61
+CHECKPOINT_QUUX_LINE_MUTANTS := 59 60
 QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
+# `resume <file> <saved back> <log>`: the file resumed by muir's `quux` under
+# its sidecar's resume line, run in the work directory as written.
+CHECKPOINT_QUUX_RESUME = resume() { \
+	   line=$$(sed -n 's/^resume: quux //p' $$1$(CHECKPOINT_BIND_SUFFIX)); \
+	   [ -n "$$line" ] || { echo "checkpoint.quux: $$1$(CHECKPOINT_BIND_SUFFIX) has no QUUX resume line"; return 1; }; \
+	   cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
+	   ( cd $$W && $$M $$line --stop-after 0 --checkpoint $$2 ) > $$3 2>&1; \
+	 }
+CHECKPOINT_BIND_SUFFIX := .packs
+CHECKPOINT_QUUX_FILES := quux quux-arty quux-de25
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux-muir.chk
-	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); G=$(QUUX_CHECKPOINT_BIN); \
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(abspath $(QUUX_BIN)); G=$(QUUX_CHECKPOINT_BIN); \
+	 $(CHECKPOINT_QUUX_RESUME); \
 	 cmp $$W/quux.chk $$W/quux-muir.chk \
 	   || { echo "checkpoint.quux: QUUX's file is not muir's own for the same machine"; \
 	        $$G --compare $$W/quux.chk $$W/quux-muir.chk || true; exit 1; }; \
-	 cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
-	 F="$(CHECKPOINT_QUUX_FLAGS) --disk-pack $$W/quux-disk.img,0"; \
-	 $$M $$F --resume $$W/quux.chk --checkpoint $$W/quux-back.chk > $$W/quux-muir.log 2>&1 \
-	   || { echo "checkpoint.quux: muir REFUSED QUUX's file"; grep '^quux:' $$W/quux-muir.log; exit 1; }; \
-	 cmp $$W/quux.chk $$W/quux-back.chk \
-	   || { echo "checkpoint.quux: muir loaded QUUX's file and saved DIFFERENT bytes"; exit 1; }; \
-	 grep -q "$(CHECKPOINT_QUUX_RESUMED)" $$W/quux-muir.log \
-	   || { echo "checkpoint.quux: muir did not resume the machine the model wrote:"; \
-	        grep '^resumed' $$W/quux-muir.log; exit 1; }; \
+	 for f in $(CHECKPOINT_QUUX_FILES); do \
+	   resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f-muir.log \
+	     || { echo "checkpoint.quux: muir REFUSED $$f.chk under its resume line:"; \
+	          grep '^resume:' $$W/$$f.chk$(CHECKPOINT_BIND_SUFFIX); grep '^quux:' $$W/$$f-muir.log; exit 1; }; \
+	   cmp $$W/$$f.chk $$W/$$f-back.chk \
+	     || { echo "checkpoint.quux: muir loaded $$f.chk and saved DIFFERENT bytes"; exit 1; }; \
+	   grep -q "$(CHECKPOINT_QUUX_RESUMED)" $$W/$$f-muir.log \
+	     || { echo "checkpoint.quux: muir did not resume the machine the model wrote in $$f.chk:"; \
+	          grep '^resumed' $$W/$$f-muir.log; exit 1; }; \
+	   echo "checkpoint.quux: $$f.chk resumed by its own line --- $$(sed -n 's/^resume: quux //p' $$W/$$f.chk$(CHECKPOINT_BIND_SUFFIX) | grep -o -e '--memory-timing [a-z0-9]*')"; \
+	 done; \
 	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, muir's own file for the same machine,"; \
-	 echo "checkpoint.quux: loaded and saved back identically by muir's quux,"; \
+	 echo "checkpoint.quux: each board's loaded and saved back identically by muir's quux under its resume line,"; \
 	 echo "checkpoint.quux: resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
 	 for m in $(CHECKPOINT_QUUX_MUTANTS); do \
 	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/qmut-$$m.out; exit 1; }; \
-	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
-	   cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
-	   if ! $$M $$F --resume $$W/qmut-$$m.chk --checkpoint $$W/qmut-$$m-back.chk \
-	            > $$W/qmut-$$m.log 2>&1; then \
-	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
-	   elif ! cmp -s $$W/qmut-$$m.chk $$W/qmut-$$m-back.chk; then \
-	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
-	   elif ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then \
-	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
-	   else \
-	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
-	   fi; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); caught=; \
+	   for f in qmut-$$m qmut-$$m-arty qmut-$$m-de25; do \
+	     [ -z "$$caught" ] || break; \
+	     if ! resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f.log; then caught="muir refused $$f.chk"; \
+	     elif ! cmp -s $$W/$$f.chk $$W/$$f-back.chk; then caught="muir saved other bytes of $$f.chk"; fi; \
+	   done; \
+	   if [ -z "$$caught" ] && ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then caught="not muir's own file"; fi; \
+	   [ -n "$$caught" ] || { echo "checkpoint.quux: mutant $$m SURVIVED every leg --- $$what"; exit 1; }; \
+	   echo "checkpoint.quux: mutant $$m caught, $$caught --- $$what"; \
 	 done; \
 	 if $$W/checkpoint_test-40 $$W $(Q8_DISKS) > $$W/mut-40.out 2>&1; then \
 	   echo "checkpoint.quux: mutant 40 SURVIVED the resume line's check"; exit 1; \
 	 fi; \
 	 grep -q "resume line is 0x1, the reference says 0x0" $$W/mut-40.out \
 	   || { echo "checkpoint.quux: mutant 40 failed, and not on the resume line: BROKEN"; cat $$W/mut-40.out; exit 1; }; \
-	 echo "checkpoint.quux: mutant 40 caught by the resume line's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-40.out)"
+	 echo "checkpoint.quux: mutant 40 caught by the resume line's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-40.out)"; \
+	 for m in $(CHECKPOINT_QUUX_LINE_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1; then \
+	     echo "checkpoint.quux: mutant $$m SURVIVED the resume line's check"; exit 1; \
+	   fi; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
+	   grep -q "a resume line without its board's --memory-timing is 0x1" $$W/qmut-$$m.out \
+	     || { echo "checkpoint.quux: mutant $$m failed, and not on the memory timing: BROKEN"; cat $$W/qmut-$$m.out; exit 1; }; \
+	   refused=; \
+	   for f in qmut-$$m qmut-$$m-arty qmut-$$m-de25; do \
+	     resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f.log || refused="$$refused $$f.chk"; \
+	   done; \
+	   [ -n "$$refused" ] || { echo "checkpoint.quux: mutant $$m: muir took every board's file under its line --- $$what"; exit 1; }; \
+	   echo "checkpoint.quux: mutant $$m caught by the resume line's check, and muir refused$$refused --- $$what"; \
+	 done
+	@touch $@
+
+# **AND THE PRESETS ARE muir'S AT THE PIN** (`tools/memory_timing_pin.py`):
+# `chk_rtl.c`'s table of muir's `--memory-timing` presets against
+# `PortTiming`'s in muir's `src/pipeline/port.rs` at the commit `muir.commit`
+# names, and the preset each board names in `cadr_board.h`, read from a
+# program built with that board's define: the Kria KR260 `kria`, the Arty
+# Z7-20 `arty` and the DE25-Nano `de25`.  Its records are in
+# `mutations/list.txt`.
+MEMORY_TIMING_PIN_SRC := tools/memory_timing_pin.py muir.commit \
+    boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c \
+    boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
+    $(CHECKPOINT_SRC)/chk_rtl.h $(CHECKPOINT_SRC)/chk.c $(CHECKPOINT_SRC)/chk.h \
+    $(Q15CHK_PKG)/cadr-readout/src/readout.c $(Q15CHK_PKG)/cadr-readout/src/readout.h \
+    $(Q15CHK_PKG)/cadr-readout/src/cadr_image.h $(wildcard $(Q15CHK_PKG)/cadr-common/src/cadr/*.h)
+$(BUILD)/memory_timing_pin.quux.pass: $(MEMORY_TIMING_PIN_SRC) | $(BUILD)
+	python3 tools/memory_timing_pin.py . --muir $(MUIR)/muir-sim --work $(BUILD)/memory_timing_pin
 	@touch $@
 
 # ------------------------------------ the I/O board's two Linux programs

@@ -121,6 +121,12 @@ struct binding {
 	// of another size at.  0 on the CADR and in a sidecar written before
 	// the size was named.
 	unsigned video_width, video_height;
+	// **AND QUUX's MEMORY TIMING**, the name of muir's preset the board
+	// declares (`cadr_board.h`'s `CADR_BOARD_MEMORY_TIMING`), which muir's
+	// `--memory-timing` takes and muir refuses a checkpoint of another
+	// timing at.  Empty on the CADR and in a sidecar written before the
+	// timing was named, whose resume then names none.
+	char memory_timing[8];
 	// **AND QUUX's 253-257**, the board's Ethernet device's, which muir's
 	// `--ethernet-mac`, `--ip-address` and `--ip-gateway` give and muir
 	// refuses a checkpoint of others at (QUUX's Ethernet contract, section
@@ -247,5 +253,12 @@ unsigned bind_chaos_address(struct chaos_face *f, int asked, unsigned asked_addr
 // clock's period, the video controller's size and the Ethernet device's
 // host words.
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);
+
+// **QUUX's MEMORY TIMING IS THE BOARD'S PRESET**, from one name: its figures
+// into the checkpoint's declaration and its name into the binding, whose
+// resume line names it as `--memory-timing` (`chk_rtl.h`'s
+// `chk_memory_timing`).  0, or -1 for a name muir has no preset of.
+struct chk_declared;
+int bind_memory_timing(struct binding *b, struct chk_declared *d, const char *preset);
 
 #endif

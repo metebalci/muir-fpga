@@ -313,17 +313,19 @@ was written at, and its line names it as `--chaos-address`, since muir refuses
 to resume a checkpoint at any other address. A sidecar written before the
 address was named carries no `chaos-address`, and its line names none.
 A QUUX checkpoint's sidecar also carries the revision, the clock's period
-in units of 0.5 ns (the `sync-cycle-ticks` line) and the video controller's
-size, and its line names the period as `--microcycle-ns` and the size, since
-muir's `quux` refuses a checkpoint of another revision, another period or
-another size, and runs the one revision:
+in units of 0.5 ns (the `sync-cycle-ticks` line), the board's memory timing
+and the video controller's size, and its line names the period as
+`--microcycle-ns`, the timing as `--memory-timing` and the size, since
+muir's `quux` refuses a checkpoint of another revision, another period,
+another memory timing or another size, and runs the one revision:
 
     revision: 16
     sync-cycle-ticks: 40
+    memory-timing: kria
     video-size: 1920x1080
     running: yes
     ...
-    resume: quux --rtl --microcycle-ns 20 --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: quux --rtl --microcycle-ns 20 --memory-timing kria --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
 
 A sidecar written before the size was named carries no `video-size`, and its
 line names none: its checkpoint is 1280 by 1024, muir's default.
@@ -422,10 +424,13 @@ leaves in them. `golden/src/quux_checkpoint.rs` runs the same history on
 muir's machine through its register page, composes the pipeline's state in
 `Pipeline::save`'s order, has a fresh pipeline load the result and save it
 back unchanged, and writes muir's file for that machine. The two files must be
-the same file, byte for byte. muir's `quux` then resumes the package's file and
-saves it back byte for byte, and its report names the microcycles, the
-nanoseconds and the main memory the model gave. Mutants 11, 17, 18, 31, 39 and
-40 of `chk_rtl.c` are caught there.
+the same file, byte for byte. The package also writes the same machine as each
+other board writes it, its memory timing that board's preset, each file with
+its sidecar. muir's `quux` then resumes each file under its sidecar's resume
+line, with no flag of the check's own but the stop and the file to save back,
+and saves it back byte for byte, and its report names the microcycles, the
+nanoseconds and the main memory the model gave. Mutants 11, 17, 18, 31, 39,
+40, 59, 60 and 61 of `chk_rtl.c` and `pack_bind.c` are caught there.
 
 **Neither machine's checkpoint can be restored to the fabric.** The readout
 window only reads, so a checkpoint is resumed in muir and not on
@@ -499,6 +504,17 @@ the processor's writes.
 
 The resume line names `--microcycle-ns` at the bitstream's period, which
 muir refuses another at, as it refuses another memory timing or cache.
+
+**The memory timing is muir's preset for the board.** The file declares the
+memory port's read, write and occupancy in ns, and the resume line names the
+preset by the name muir's `--memory-timing` takes: `kria` on the Kria KR260,
+`arty` on the Arty Z7-20 and `de25` on the DE25-Nano (`cadr_board.h`'s
+`CADR_BOARD_MEMORY_TIMING`). The figures are muir's `PortTiming` presets in
+its `src/pipeline/port.rs`, copied into `chk_rtl.c`'s `chk_memory_timings`.
+`memory_timing_pin.quux.pass` holds that table, and the preset each board
+names, to muir's at the pinned commit, and `checkpoint.quux.pass` resumes
+each board's file of the package's machine in muir under the file's own
+resume line and nothing else.
 
 **The proof is the core's own testbench.** The checkpoints group of
 `golden/src/quux15_console.rs` halts programs of every kind at clocks spread

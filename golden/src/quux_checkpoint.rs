@@ -162,12 +162,12 @@ fn machine() -> Machine {
     m
 }
 
-/// The memory timing `chk_rtl.c` declares for the Kria KR260 when the board
-/// is given none, and the resume's `--memory-timing 247,130,10`.
-const Q_TIMING: PortTiming = PortTiming { read_ns: 247, write_ns: 130, occupancy_ns: 10 };
+/// The memory timing a Kria KR260's checkpoint declares, muir's own preset
+/// for the board, and the resume line's `--memory-timing kria`.
+const Q_TIMING: PortTiming = PortTiming::KRIA;
 
 /// The pipeline on it, at the period, that memory timing and the default
-/// cache: `--microcycle-ns 10 --memory-timing 247,130,10`.
+/// cache: `--microcycle-ns 10 --memory-timing kria`.
 fn pipeline(m: Machine) -> Pipeline {
     let mut p = Pipeline::new(m);
     p.configure(Q_PERIOD, Q_TIMING, CACHE_WORDS);
