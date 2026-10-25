@@ -1787,7 +1787,7 @@ read beside its count may be a clock apart. Lost is set when an address
 arrives with the probe's queue full or an answer with it empty, which would
 put the timing out of step with the bridge; saturated when a count reaches all
 ones, which stops both directions. A latency over 2^20 - 1 clocks, about 26 ms
-at 25 ns and 21 ms at 20 ns, reads short.
+at the two boards' 25 ns, reads short.
 
 `build/quux15_face.pass` drives each of these words over AXI: every key, a key
 with a strobe off, another value, and the word's own read-back written, which
@@ -1899,7 +1899,7 @@ The word is 32 bits on the CADR and 40 on QUUX. The build is page 2's word 32,
 as in `status`. The line reads like one of these:
 
     machine: CADR, 32-bit words; build e7aaa180 (commit e7aaa18, tree clean)
-    machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), 40-bit words, period 20 ns; build 78f0f670 (commit 78f0f67, tree clean)
+    machine: QUUX revision 16, MACHINE-ID 51550104 (revision 16, processor type 4), 40-bit words, period 25 ns; build 78f0f670 (commit 78f0f67, tree clean)
 
 On the DE25-Nano the build reads `no build stamp`, for the reason the section
 above gives. An entry that is neither machine's answer reads `NOT KNOWN`, and

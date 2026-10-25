@@ -31,6 +31,10 @@ clocks of `PERIOD_NS`.  For each period asked, this reads back the display's
 from the top's arithmetic.  A top that left any of them at its tick count
 passes at 10 ns and is caught at every other period.
 
+**THE BOARD'S PERIOD**: 25 ns, the top's own `PERIOD_NS` (and the core's
+`period` pin it ties) and the bitstream flow's default when no period is
+asked, each held to the figure written here.
+
 **THE VALUE IS READ AT THE INSTANCE, NOT INFERRED FROM THE TEXT**: Verilator
 elaborates the top at each period, after a lint with `-Wall`, and writes its
 tree as JSON, as `tools/machine_param_check.py` does for the other tops.
@@ -47,14 +51,19 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from machine_param_check import name_of, params_at_cell  # noqa: E402
+from machine_param_check import name_of, params_at_cell, walk  # noqa: E402
 import ethernet_page_check  # noqa: E402
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TOP = "quux15_kr260"
-# The periods the board's fits are asked for, its own 20 ns among them, and
+# The periods the board's fits are asked for, its own 25 ns among them, and
 # 10 ns, the tick, where a figure left at its tick count agrees by accident.
-PERIODS = (10, 13, 18, 19, 20)
+PERIODS = (10, 13, 18, 19, 20, 21, 25)
+# The board's period, written here apart from the top and from the
+# bitstream's flow: what a build that names no period gets.
+OWN = 25
+BITSTREAM_TCL = "boards/kria-kr260/vivado/quux15_bitstream.tcl"
+TCLSH = os.environ.get("TCLSH", "tclsh")
 # Contract HD: the Kria's video controller.  Written here apart from the top.
 VIDEO = (1920, 1080)
 # Contract HD: the Kria's board name, feature words 20-24.  Written here apart
@@ -95,6 +104,78 @@ def check(want, got, why, what):
             ", ".join("%s=%d" % kv for kv in sorted(want.items()))))
     else:
         say(True, "%s: %s" % (what, ", ".join("%s=%d" % kv for kv in sorted(got.items()))))
+
+
+def the_top(tree):
+    tops = []
+    walk(tree, lambda n: tops.append(n)
+         if n.get("type") == "MODULE" and n.get("origName") == TOP else None)
+    return tops[0] if len(tops) == 1 else None
+
+
+def pin_const(tree, name, pin):
+    """The constant the top's cell `name`'s pin `pin` is tied to, or None."""
+    top = the_top(tree)
+    cells = []
+    if top is not None:
+        walk(top, lambda n: cells.append(n)
+             if n.get("type") == "CELL" and n.get("name") == name else None)
+    if len(cells) != 1:
+        return None
+    for p in cells[0].get("pinsp") or []:
+        if p.get("name") == pin:
+            e = p.get("exprp") or []
+            if len(e) == 1 and e[0].get("type") == "CONST":
+                return int(e[0]["name"].split("h")[-1], 16)
+    return None
+
+
+def top_param(tree, name):
+    """A constant parameter of the top level itself."""
+    top = the_top(tree)
+    found = []
+    if top is not None:
+        for n in top.get("stmtsp") or []:
+            if n.get("type") == "VAR" and n.get("name") == name and n.get("isParam"):
+                v = n.get("valuep") or []
+                if len(v) == 1 and v[0].get("type") == "CONST":
+                    found.append(int(v[0]["name"].split("h")[-1], 16))
+    return found[0] if len(found) == 1 else None
+
+
+def own_period(sources, scratch):
+    """The top elaborated with no period given, and the bitstream's flow asked
+    for none: each is the board's period."""
+    want = OWN
+    base = [VERILATOR, "-DCADR_DDR_MAP_KR260", "-Irtl/machine", "-Irtl/plumbing",
+            "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260", "--top-module", TOP]
+    mdir = tempfile.mkdtemp(dir=scratch)
+    rc, out = run(base[:1] + ["--json-only", "-Mdir", mdir] + base[1:] + sources)
+    if rc != 0:
+        say(False, "the top's own period: the JSON dump failed:\n%s" % out.strip())
+        return
+    with open(os.path.join(mdir, "V%s.tree.json" % TOP)) as f:
+        tree = json.load(f)
+    shutil.rmtree(mdir, True)
+    got = top_param(tree, "PERIOD_NS")
+    what = "the top's own PERIOD_NS is %d ns, the board's" % want
+    say(got == want, what if got == want else "%s --- it is %s" % (what, got))
+    got = pin_const(tree, "u_core", "period")
+    what = "the top's own period reaches u_core's period pin as %d" % (2 * want)
+    say(got == 2 * want, what if got == 2 * want else "%s --- it is tied to %s" % (what, got))
+    # The flow's own: its lines that set the revision and the period, run
+    # with neither REVISION nor PERIOD_NS set, as Vivado would run them.
+    with open(BITSTREAM_TCL) as f:
+        lines = [l for l in f if l.startswith(("set revision ", "set period "))]
+    script = os.path.join(scratch, "period.tcl")
+    with open(script, "w") as f:
+        f.write("unset -nocomplain ::env(REVISION)\nunset -nocomplain ::env(PERIOD_NS)\n")
+        f.writelines(lines)
+        f.write("puts $period\n")
+    rc, out = run([TCLSH, script])
+    what = "%s builds at %d ns when no period is asked" % (BITSTREAM_TCL, want)
+    say(rc == 0 and out.strip() == str(want), what if rc == 0 and out.strip() == str(want)
+        else "%s --- it gives %r" % (what, out.strip()))
 
 
 def at_period(period, sources, scratch):
@@ -176,6 +257,7 @@ def main():
     os.makedirs("build", exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="quux15_kr260_param.", dir="build")
     try:
+        own_period(sources, scratch)
         for p in PERIODS:
             at_period(p, sources, scratch)
         ethernet_page_check.refuses_another(run, [VERILATOR, "-DCADR_DDR_MAP_KR260", "-Irtl/machine",

@@ -90,8 +90,8 @@
 module quux15_kr260 #(
     parameter string PROM_HEX = "build/quux15_transfer_prom.hex",
     // **THE PERIOD**, in nanoseconds: the MMCM's divide below, the one place
-    // it is decided on this board.
-    parameter int unsigned PERIOD_NS = 20,
+    // it is decided on this board: the board's, 25 ns.
+    parameter int unsigned PERIOD_NS = 25,
     // **THE REVISION**, QUUX's: 16, MACHINE-ID's revision field, the only one
     // built (QUUX's Ethernet contract, §10).
     parameter int unsigned REVISION = 16

@@ -1358,10 +1358,10 @@ same edge as the clear wins. The console's word 42 reads both and clears them
 low, so there nothing changes. Every QUUX top level drives both.
 
 **The sleep's second is the period's.** The top computes `SECOND_T` from its
-period, a second to the nearest clock: 50,000,000 at 20 ns.
+period, a second to the nearest clock: 40,000,000 at 25 ns.
 
 `build/display_out_kr260.quux15.pass` builds the display as this board does and
-runs the memory side at 20 ns. Beside the QUUX configurations it adds three:
+runs the memory side at 25 ns. Beside the QUUX configurations it adds three:
 black-on-white, every pixel compared against the picture shown the other way;
 the port slowed and the clear pulsed once the underrun is up, which must take
 it down and see it rise again; and every beat answered with an error for two

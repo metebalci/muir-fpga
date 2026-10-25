@@ -26014,6 +26014,28 @@ set prom build/boot_prom.quux15.hex
   localparam int unsigned SECOND_T = 100_000_000 + 0 * PERIOD_NS;
 @end
 
+@mutation quux15-kr260-own-period-at-20
+@check quux15_kr260_param
+@file boards/kria-kr260/quux15_kr260.sv
+@note The top built at 20 ns when no period is given, which its fit misses
+@note by 0.054 ns, not the board's 25 ns.
+@old
+    parameter int unsigned PERIOD_NS = 25,
+@new
+    parameter int unsigned PERIOD_NS = 20,
+@end
+
+@mutation quux15-kr260-bitstream-period-at-20
+@check quux15_kr260_param
+@file boards/kria-kr260/vivado/quux15_bitstream.tcl
+@note The bitstream's flow builds at 20 ns when no period is asked, which
+@note its fit misses by 0.054 ns, not the board's 25 ns.
+@old
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 25}]
+@new
+set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 20}]
+@end
+
 # ---------------------------------------------------------------------------
 # **REVISION 15'S KEYBOARD AND MOUSE** (contract Q3; G3 revision 15, A15b.3;
 # MP2b rulings Q4 and rulings 2 Q1): `rtl/machine/quux15_input.sv` on the

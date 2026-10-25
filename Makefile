@@ -278,7 +278,7 @@ QUUX15_PERIODS_redirect := 36 20
 # `CACHE_WORDS`.  The Kria KR260's are muir's defaults, so its traces carry
 # no board in their names; another board's do, `.p<P>.<board>.golden`.
 # The periods are in units of 0.5 ns, the boards' periods for revisions 15
-# and 16: the Kria's 20 ns, the Arty Z7-20's 50 ns and the DE25-Nano's 25 ns.
+# and 16: the Kria's 25 ns, the Arty Z7-20's 50 ns and the DE25-Nano's 25 ns.
 # A board's period moves here and nowhere else.
 # `boardcache` is the board's cache at its own
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
@@ -291,7 +291,7 @@ QUUX15_BOARDS := kria de25 arty
 QUUX15_CACHE_kria := 65536
 QUUX15_CACHE_de25 := 16384
 QUUX15_CACHE_arty := 4096
-QUUX15_PERIOD_kria := 40
+QUUX15_PERIOD_kria := 50
 QUUX15_PERIOD_de25 := 50
 QUUX15_PERIOD_arty := 100
 quux15_board_tag = $(if $(filter kria,$(1)),,.$(1))
@@ -2817,9 +2817,11 @@ $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stu
 # the video controller's 1920 by 1080 at the core, the face and the display
 # output, the display's raster `display_raster.mk`'s, and every time in
 # clocks --- the display's second, the lamp's hold, the mouse's step ---
-# the period's, at each period the board's fits are asked for and at 10 ns.
+# the period's, at each period the board's fits are asked for and at 10 ns;
+# and the board's 25 ns, the top's own period and the bitstream flow's.
 $(BUILD)/quux15_kr260_param.pass: tools/quux15_kr260_param_check.py tools/machine_param_check.py \
         tools/ethernet_page_check.py $(QED16_SRC)/qed_face.h $(QED16_SRC)/qed_face_fabric.c \
+        boards/kria-kr260/vivado/quux15_bitstream.tcl \
                                   $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                                   boards/kria-kr260/display_raster.mk | $(BUILD)
 	VERILATOR=$(VERILATOR) python3 tools/quux15_kr260_param_check.py \
@@ -4034,13 +4036,13 @@ $(BUILD)/display_out_kr260.quux.pass: $(BUILD)/obj_display_out_kr260_quux/Vcadr_
 
 # **AND AS REVISION 15'S KRIA BUILDS IT** (`boards/kria-kr260/quux15_kr260.sv`):
 # the same picture and raster, the memory side at the machine's period,
-# 20 ns, the board's and the slowest its fits have been asked for, where the fetch
+# 25 ns, the board's and the slowest its fits have been asked for, where the fetch
 # has the fewest clocks a line to keep up in; and its configurations W, U
 # and R, the `bow` and `err_clear` that board drives.
 $(BUILD)/obj_display_out_kr260_quux15/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
                                                          tb/cadr_display_out_tb.cpp \
                                                          boards/kria-kr260/display_raster.mk | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=20000' \
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX -DCADR_DISPLAY_CLK_PS=25000' \
 	    -Mdir $(BUILD)/obj_display_out_kr260_quux15 \
 	    $(DISPLAY_KR260_G) -GPIC_W=1920 -GPIC_H=1080 -GWORDS_PER_LINE=60 -GCOLOR_BASE=470024192 \
 	    --top-module cadr_display_out \
