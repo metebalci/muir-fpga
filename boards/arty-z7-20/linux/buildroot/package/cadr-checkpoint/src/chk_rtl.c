@@ -1483,8 +1483,6 @@ const char *chk_rtl_mutation(void)
 	return "a machine whose counter stands taken as halted, SRUN up and FLAG-1 naming no halt";
 #elif CHK_MUTATE == 50
 	return "QUUX taken as halted on SRUN down, its pipeline's halted bit not asked";
-#elif CHK_MUTATE == 51
-	return "the sidecar's resume line naming the checkpoint by the board's path";
 #elif CHK_MUTATE == 52
 	return "the Chaosnet interface's six bytes of version 54 left out, version 49's interface";
 #elif CHK_MUTATE == 53
@@ -1505,6 +1503,20 @@ const char *chk_rtl_mutation(void)
 	return "QUUX's resume line naming the Kria's --memory-timing on every board";
 #elif CHK_MUTATE == 61
 	return "the Kria's memory timing written 247,130,10, the stale figures";
+#elif CHK_MUTATE == 62
+	return "the sidecar's resume line naming the checkpoint beside the sidecar, ./<name>, again";
+#elif CHK_MUTATE == 63
+	return "the sidecar's resume line built apart from the printed one, naming the checkpoint beside the sidecar";
+#elif CHK_MUTATE == 64
+	return "the resume line's checkpoint made absolute, where it stands on the board";
+#elif CHK_MUTATE == 65
+	return "the packs named as the capture gave them, the bay's absolute path";
+#elif CHK_MUTATE == 66
+	return "a checkpoint outside the pack folder taken, named as the capture gave it";
+#elif CHK_MUTATE == 67
+	return "the checkpoint named as the capture gave it, not from the pack folder";
+#elif CHK_MUTATE == 68
+	return "a folder whose name begins with the pack folder's taken as in it";
 #else
 	return NULL;
 #endif

@@ -265,7 +265,7 @@ VHD's header, never by its size. The program links that test from
 says what the file is and how many blocks of 1,024 bytes it holds in place of
 the geometry:
 
-    pack: unit=0 bytes=4197888 format=dynamic-vhd blocks=8192 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
+    pack: unit=0 bytes=4197888 format=dynamic-vhd blocks=8192 read-only=no sha256=... file=./disk-pack-0.img
 
 **The content of each.** Nothing in muir can check this and nothing in the
 fabric can either, so it is recorded: a SHA-256 of every byte of every pack,
@@ -289,7 +289,7 @@ resumed checkpoint and compares it with the file it read, and a field of ours
 anywhere in that stream would break it.
 
     format: cadr-checkpoint-packs 1
-    checkpoint: muir-20260911-193000.chk
+    checkpoint: checkpoints/muir-20260911-193000.chk
     checkpoint-bytes: 561465
     checkpoint-sha256: 9bc7...
     taken: 2026-09-11T19:30:00+0300
@@ -302,13 +302,33 @@ anywhere in that stream would break it.
     machine-halted-first: yes
     packs-program-stopped: unknown
     packs: 1
-    pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
-    resume: cadr --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --chaos-address 177201 --resume muir-20260911-193000.chk
+    pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=./disk-pack-0.img
+    resume: cadr --rtl --timing-model fpga --disk-pack ./disk-pack-0.img,0 --main-memory-boards 32 --chaos-address 177201 --resume checkpoints/muir-20260911-193000.chk
 
 `running` says whether the file records the machine running (`yes`, it was
 running when the program halted it) or halted (`no`). The `resume` line is
 the command, to be run as written, that resumes the file as the board ran
-it. A CADR checkpoint's sidecar carries the Chaosnet address the checkpoint
+it. It is the line the program prints when it writes the checkpoint, the
+same string.
+
+**Run the resume line from the pack folder.** Its paths, like the
+`checkpoint` and `file=` lines', are the pack folder's, whatever form the
+capture was given them in: the pack as `./disk-pack-0.img` and the checkpoint
+as its path from the pack folder, `checkpoints/<name>.chk`. The pack folder is
+`--pack-dir`, `/mnt/card/packs` unless it is given, and `--pack-dir
+/mnt/card/packs` and `--pack-dir .` run there write the same line. A file's
+folder is resolved and its own name kept. The line runs from the pack folder
+on the card, and from any folder the files are copied to in the card's
+layout: the pack in the folder, and the checkpoint and its sidecar in its
+`checkpoints/`.
+
+**A checkpoint or a pack outside the pack folder is refused**, before the
+machine is halted and before anything is written, because a line naming it
+could not be run from the pack folder. A pack named with `--pack` is held to
+the same rule, so a bay elsewhere is named with `--pack-dir`. So is a
+checkpoint whose folder is not there.
+
+A CADR checkpoint's sidecar carries the Chaosnet address the checkpoint
 was written at, and its line names it as `--chaos-address`, since muir refuses
 to resume a checkpoint at any other address. A sidecar written before the
 address was named carries no `chaos-address`, and its line names none.
@@ -325,7 +345,7 @@ another memory timing or another size, and runs the one revision:
     video-size: 1920x1080
     running: yes
     ...
-    resume: quux --rtl --microcycle-ns 25 --memory-timing kria --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: quux --rtl --microcycle-ns 25 --memory-timing kria --video-size 1920x1080 --disk-pack ./disk-pack-0.img,0 --resume checkpoints/muir-20261003-101500.chk
 
 A sidecar written before the size was named carries no `video-size`, and its
 line names none: its checkpoint is 1280 by 1024, muir's default.
@@ -357,9 +377,10 @@ then spend a day blaming on the fabric.
 
 So the binding is checked before the resume, not after. Either
 
-    cadr-checkpoint --verify muir-20260911-193000.chk.packs
+    cadr-checkpoint --verify checkpoints/muir-20260911-193000.chk.packs
 
-which re-reads every pack and the checkpoint and names any that has changed,
+from the pack folder, as the resume line is run, which re-reads every pack
+and the checkpoint and names any that has changed,
 or `sha256sum` on each pack by hand against the digests in the file. The
 program says both, every time it writes a checkpoint. `--verify` needs no
 board and no fabric; a pack that lives somewhere else on the resuming machine
@@ -426,11 +447,13 @@ muir's machine through its register page, composes the pipeline's state in
 back unchanged, and writes muir's file for that machine. The two files must be
 the same file, byte for byte. The package also writes the same machine as each
 other board writes it, its memory timing that board's preset, each file with
-its sidecar. muir's `quux` then resumes each file under its sidecar's resume
-line, with no flag of the check's own but the stop and the file to save back,
+its sidecar, laid out as the card holds them: the pack in a pack folder, and
+each file and its sidecar in its `checkpoints/`. muir's `quux` then resumes
+each file under its sidecar's resume line, run from the pack folder, with no
+flag of the check's own but the stop and the file to save back,
 and saves it back byte for byte, and its report names the microcycles, the
 nanoseconds and the main memory the model gave. Mutants 11, 17, 18, 31, 39,
-40, 59, 60 and 61 of `chk_rtl.c` and `pack_bind.c` are caught there.
+40, 59, 60, 61 and 62 of `chk_rtl.c` and `pack_bind.c` are caught there.
 
 **Neither machine's checkpoint can be restored to the fabric.** The readout
 window only reads, so a checkpoint is resumed in muir and not on
@@ -514,7 +537,7 @@ its `src/pipeline/port.rs`, copied into `chk_rtl.c`'s `chk_memory_timings`.
 `memory_timing_pin.quux.pass` holds that table, and the preset each board
 names, to muir's at the pinned commit, and `checkpoint.quux.pass` resumes
 each board's file of the package's machine in muir under the file's own
-resume line and nothing else.
+resume line, run from the pack folder, and nothing else.
 
 **The proof is the core's own testbench.** The checkpoints group of
 `golden/src/quux15_console.rs` halts programs of every kind at clocks spread
@@ -638,9 +661,12 @@ capture one command.
 
     cadr-checkpoint -o /mnt/card/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
 
-It halts the machine, reads it, digests the packs it finds in
-`/mnt/card/packs`, writes the checkpoint and the sidecar, and starts the
-machine again. Make `/mnt/card/packs/checkpoints` first; `cadr-disk-packs`
+It halts the machine, reads it, digests the packs it finds in the pack
+folder, `/mnt/card/packs`, writes the checkpoint and the sidecar into its
+`checkpoints/`, and starts the machine again. It names the pack and the
+checkpoint from the pack folder, and so does the line it prints, which is its
+sidecar's resume line: run that line, and `--verify`, from the pack folder.
+Make `/mnt/card/packs/checkpoints` first; `cadr-disk-packs`
 stats only the eight `disk-pack-N.img` names, so a directory beside them is
 invisible to it. Digesting a T-300 is 269 MB read off the card and hashed, so
 it takes a while, and the machine is halted throughout, which is the point.
@@ -648,22 +674,27 @@ it takes a while, and the machine is halted throughout, which is the point.
 If you want the packs held still by something stronger than the halt — no
 program that writes packs running at all — there is a longer way, and it has
 one trap in it: **the init script's `stop` unmounts the card**, so it has to be
-brought back read-only before the packs can be digested, and the checkpoint
-then has nowhere on the card to go. That `stop` also writes the board's clock
-to `clock` at the root of the card before it unmounts it, which is one small
-write and is not a pack.
+mounted again before the packs can be digested. That `stop` also writes the
+board's clock to `clock` at the root of the card before it unmounts it, which
+is one small write and is not a pack.
 
     cadr-checkpoint --halt
     /etc/init.d/S80cadr-disk-packs stop
-    mount -t vfat -o ro /dev/mmcblk0p1 /mnt/card
+    mount -t vfat /dev/mmcblk0p1 /mnt/card
     cadr-checkpoint --already-halted --leave-halted --packs-stopped \
-        -o /tmp/$(date +%Y%m%d-%H%M%S).chk
+        -o /mnt/card/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
     umount /mnt/card
     /etc/init.d/S80cadr-disk-packs start
     cadr-checkpoint --start
 
-On a card of the older two-partition shape that mount is `/dev/mmcblk0p2`, and
-the bay is that partition's own root rather than `packs/` in it.
+The card is mounted read-write, because the checkpoint goes into the pack
+folder's `checkpoints/` like any other; with `cadr-disk-packs` stopped,
+nothing writes the packs. A read-only mount leaves the checkpoint nowhere to
+go but outside the pack folder, in `/tmp` for one, and the program refuses
+that before it reads anything: a resume line naming `/tmp` could not be run
+from the pack folder. On a card of the older two-partition shape that mount
+is `/dev/mmcblk0p2`, and the bay is that partition's own root rather than
+`packs/` in it, so it is named with `--pack-dir`.
 
 `--already-halted` refuses to read a machine that is still retiring
 microcycles, so the order cannot be got wrong silently, and both it and
@@ -675,9 +706,10 @@ machine as running when the count still stands there, since it was running
 until that halt; `--start` takes the note away. `--packs-stopped` is
 the operator saying that nothing was writing the packs; the program cannot
 see that for itself, so the sidecar records it as `unknown` when it is not
-said rather than claiming something nothing checked. `/tmp` is RAM here, and
-the checkpoint has to be copied off before the board is rebooted.
+said rather than claiming something nothing checked.
 
 Either way, copy the `.chk` and its `.packs` sidecar off the board together —
 they are one thing — and the pack itself if the checkpoint is to be resumed
-anywhere but on the card it came from.
+anywhere but on the card it came from, in the card's layout: the pack in a
+folder, and the two files in its `checkpoints/`. The resume line then runs
+from that folder.

@@ -11,6 +11,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,6 +160,115 @@ int bind_scan(struct binding *b, const char *dir, char *err, size_t errlen)
 	return found;
 }
 
+// **`path` AS THE PACK FOLDER NAMES IT**: its folder resolved, the file's own
+// name kept, so that a pack that is a link stays the name in the bay, and the
+// whole made relative to the pack folder resolved.  Into `rel`, `<name>` or
+// `<sub>/<name>`.  0, 1 when `path` is not in the pack folder, -1 with
+// `errno` when a folder cannot be resolved.
+static int folder_name(const char *folder_real, const char *path, char *rel, size_t n)
+{
+	char dir[PATH_MAX], dir_real[PATH_MAX];
+	const char *slash = strrchr(path, '/');
+	const char *base = slash ? slash + 1 : path;
+	if (!*base || !strcmp(base, ".") || !strcmp(base, "..")) {
+		errno = EISDIR;
+		return -1;
+	}
+	if (!slash)
+		snprintf(dir, sizeof dir, ".");
+	else if (slash == path)
+		snprintf(dir, sizeof dir, "/");
+	else
+		snprintf(dir, sizeof dir, "%.*s", (int)(slash - path), path);
+	if (!realpath(dir, dir_real))
+		return -1;
+	// The root as the pack folder holds everything under it.
+	const size_t fl = strcmp(folder_real, "/") == 0 ? 0 : strlen(folder_real);
+	if (strcmp(dir_real, folder_real) == 0) {
+		snprintf(rel, n, "%s", base);
+		return 0;
+	}
+#if CHK_MUTATE == 68
+	if (strncmp(dir_real, folder_real, fl) == 0) {
+		const char *sub = dir_real + fl + (dir_real[fl] == '/');
+#else
+	if (strncmp(dir_real, folder_real, fl) == 0 && dir_real[fl] == '/') {
+		const char *sub = dir_real + fl + 1;
+#endif
+		snprintf(rel, n, "%s/%s", sub, base);
+		return 0;
+	}
+	return 1;
+}
+
+int bind_relative(struct binding *b, const char *pack_dir, const char *chk, char *err,
+		  size_t errlen)
+{
+	char folder_real[PATH_MAX], rel[PATH_MAX];
+	static char named[BIND_UNITS][sizeof b->u[0].path];
+	for (unsigned u = 0; u < BIND_UNITS; ++u)
+		memcpy(named[u], b->u[u].path, sizeof named[u]);
+	if (!realpath(pack_dir, folder_real)) {
+		note(err, errlen, "the pack folder %s: %s", pack_dir, strerror(errno));
+		return -1;
+	}
+#if CHK_MUTATE != 65
+	for (unsigned u = 0; u < BIND_UNITS; ++u) {
+		if (!b->u[u].present)
+			continue;
+		const int r = folder_name(folder_real, b->u[u].path, rel, sizeof rel);
+		if (r < 0) {
+			note(err, errlen, "unit %u %s: %s", u, b->u[u].path, strerror(errno));
+			return -1;
+		}
+		if (r > 0) {
+			note(err, errlen,
+			     "unit %u %s is not in the pack folder %s.  The resume line names "
+			     "every file from the pack folder, and this one it cannot name: put "
+			     "the pack in the pack folder, or name that folder with --pack-dir",
+			     u, b->u[u].path, pack_dir);
+			return -1;
+		}
+		if (strlen(rel) + 3 > sizeof b->u[u].path) {
+			note(err, errlen, "unit %u %s: the name is too long", u, b->u[u].path);
+			return -1;
+		}
+		memcpy(named[u], "./", 2);
+		memcpy(named[u] + 2, rel, strlen(rel) + 1);
+	}
+#endif
+	const int r = folder_name(folder_real, chk, rel, sizeof rel);
+	if (r < 0) {
+		note(err, errlen, "the checkpoint %s: its folder: %s", chk, strerror(errno));
+		return -1;
+	}
+	if (r > 0) {
+#if CHK_MUTATE == 66
+		snprintf(rel, sizeof rel, "%.*s", (int)(sizeof rel - 1), chk);
+#else
+		note(err, errlen,
+		     "the checkpoint %s is not in the pack folder %s.  Its resume line "
+		     "names the pack and the checkpoint from the pack folder, and a "
+		     "checkpoint outside it cannot be named from there: write it into "
+		     "the pack folder's checkpoints/, as -o %s/checkpoints/<name>.chk",
+		     chk, pack_dir, pack_dir);
+		return -1;
+#endif
+	}
+	if (strlen(rel) + 1 > sizeof b->checkpoint) {
+		note(err, errlen, "the checkpoint %s: the name is too long", chk);
+		return -1;
+	}
+	for (unsigned u = 0; u < BIND_UNITS; ++u)
+		memcpy(b->u[u].path, named[u], sizeof b->u[u].path);
+#if CHK_MUTATE == 67
+	snprintf(b->checkpoint, sizeof b->checkpoint, "%.*s", (int)(sizeof b->checkpoint - 1), chk);
+#else
+	memcpy(b->checkpoint, rel, strlen(rel) + 1);
+#endif
+	return 0;
+}
+
 int bind_add(struct binding *b, const char *spec, char *err, size_t errlen)
 {
 	struct bind_pack p;
@@ -250,9 +360,20 @@ static unsigned prefix_of(uint32_t netmask)
 	return n;
 }
 
-void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n)
+void bind_resume_command(const struct binding *b, char *out, size_t n)
 {
 	size_t at = 0;
+	// **THE CHECKPOINT IS THE BINDING's OWN NAME FOR IT**, the one the
+	// sidecar's `checkpoint:` line records, and no caller names another.
+	const char *chk = b->checkpoint;
+#if CHK_MUTATE == 64
+	// A relative name made absolute, where the file stands on the board.
+	char board[sizeof b->checkpoint + sizeof BIND_DIR + 1];
+	if (chk[0] != '/') {
+		snprintf(board, sizeof board, "%s/%s", BIND_DIR, chk);
+		chk = board;
+	}
+#endif
 	// The CADR's fabric keeps muir-fpga's grid and the checkpoint says so,
 	// and muir refuses a checkpoint resumed under another timing model.
 	// muir is two executables, and the machine is the one named: `quux` for
@@ -370,7 +491,8 @@ void bind_halt_unmark(const char *path)
 	remove(path);
 }
 
-int bind_write(const struct binding *b, const char *path, char *err, size_t errlen)
+int bind_write(const struct binding *b, const char *path, char *resume, size_t rn, char *err,
+	       size_t errlen)
 {
 	FILE *f = fopen(path, "w");
 	if (!f) {
@@ -397,6 +519,10 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 		"#     sha256sum <the pack>\n"
 		"# or, with this file in hand,\n"
 		"#     cadr-checkpoint --verify <this file>\n"
+		"#\n"
+		"# Its paths are the pack folder's.  Run the `resume:` line and\n"
+		"# `--verify` from there, with the pack in it and this file and the\n"
+		"# checkpoint in its `checkpoints/`, as the card holds them.\n"
 		"#\n"
 		"# One `key: value` a line.  A `pack:` line's fields are `name=value`\n"
 		"# separated by single spaces, and `file=` is LAST because a path may\n"
@@ -468,21 +594,32 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 				b->u[u].read_only ? "yes" : "no", b->u[u].sha256,
 				b->u[u].path);
 	}
-	// **THE LINE NAMES THE CHECKPOINT BESIDE THIS FILE**, as `./<name>`,
-	// the way a pack is named: the sidecar travels with the checkpoint, and
-	// the directory it had on the board is wrong once both are copied
-	// elsewhere.  The `checkpoint:` line above keeps the board's path, and
-	// the console's `To resume:` line, spoken on the board, keeps it too.
-	char cmd[4096], beside[sizeof b->checkpoint + 2];
+	// **THE LINE IS THE ONE `cadr-checkpoint` PRINTS**, and the same
+	// string: `bind_resume_command` of this binding, given back through
+	// `resume` for the program to print.  Its paths are the `checkpoint:`
+	// and `file=` lines' above, which `bind_relative` makes the pack
+	// folder's, so the line runs from the pack folder (`docs/checkpoint.md`).
+	// It once named the checkpoint as `./<name>`,
+	// beside this file, while its packs stayed relative to the pack folder,
+	// and no one folder ran it.
+	char cmd[4096];
+#if CHK_MUTATE == 62 || CHK_MUTATE == 63
+	// The checkpoint named beside this file again: in the line written
+	// and given back (62), or in the line written alone (63).
+	struct binding beside = *b;
 	const char *slash = strrchr(b->checkpoint, '/');
-	snprintf(beside, sizeof beside, "./%s", slash ? slash + 1 : b->checkpoint);
-#if CHK_MUTATE == 51
-	(void)beside;
-	bind_resume_command(b, b->checkpoint, cmd, sizeof cmd);
+	snprintf(beside.checkpoint, sizeof beside.checkpoint, "./%.*s",
+		 (int)(sizeof beside.checkpoint - 3), slash ? slash + 1 : b->checkpoint);
+	bind_resume_command(&beside, cmd, sizeof cmd);
 #else
-	bind_resume_command(b, beside, cmd, sizeof cmd);
+	bind_resume_command(b, cmd, sizeof cmd);
 #endif
 	fprintf(f, "resume: %s\n", cmd);
+#if CHK_MUTATE == 63
+	bind_resume_command(b, cmd, sizeof cmd);
+#endif
+	if (resume && rn)
+		snprintf(resume, rn, "%s", cmd);
 	const int ok = !ferror(f);
 	if (fclose(f) != 0 || !ok) {
 		note(err, errlen, "%s: %s", path, strerror(errno));

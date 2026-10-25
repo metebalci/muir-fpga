@@ -134,9 +134,12 @@ install: all
 #
 # `CHK` names a file for it to write, which is how `build/checkpoint.pass`
 # gets something for muir to open, and `QUUXCHK` QUUX's, which
-# `build/checkpoint.quux.pass` has muir's `quux` resume and save back.
+# `build/checkpoint.quux.pass` has muir's `quux` resume and save back.  QUUX's
+# is written as the card holds one, `<pack folder>/checkpoints/<name>.chk`,
+# and the folder is made here.
 check: $(WORK)/checkpoint_test
 	$(Q8_VERIFY)
+	$(if $(QUUXCHK),mkdir -p $(dir $(QUUXCHK)))
 	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QUUXCHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
@@ -155,19 +158,22 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # The list and the loops in the repository's own Makefile are two statements
 # of one set, and each check runs whatever its loop names: 1 to 8, 19, 52 and
 # 53 are the CADR's, judged by `build/checkpoint.pass` on muir's round trip
-# and the digest; 32 to 37, 49 to 51 and 54 to 58, the run state's, QUUX's
-# main memory's words, the halt's (`readout.c`'s `ro_found`), the sidecar's
-# resume line, the CADR's Chaosnet address and QUUX's host words, which the
-# host check itself must fail on, judged there too; and 11, 17, 18, 31, 39
-# and 61, QUUX's file and its memory timing, judged by
+# and the digest; 32 to 37, 49, 50, 54 to 58 and 62 to 68, the run state's,
+# QUUX's main memory's words, the halt's (`readout.c`'s `ro_found`), the
+# CADR's Chaosnet address, QUUX's host words, the sidecar's resume line and
+# the pack folder's names for its files (`bind_relative`),
+# which the host check itself must fail on, judged there too, 62 also by muir
+# refusing the Kria's file under its line in the pack folder; and 11, 17, 18,
+# 31, 39 and 61, QUUX's file and its memory timing, judged by
 # `build/checkpoint.quux.pass` on muir's round trip under each board's
 # resume line and the digest, and 40, 59 and 60, the resume line's video
 # size and memory timing, which the host check itself must fail on, judged
 # there, 59 and 60 by muir too.  The numbers of the mutants of QUUX's older
-# revisions are not reused.
+# revisions are not reused, nor is 51, the sidecar's line naming the
+# checkpoint by the path the capture gave, which is now the right line.
 # A mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 11 17 18 19 31 32 33 34 35 36 37 39 40 49 50 51 52 53 54 55 56 57 58 \
-           59 60 61
+MUTANTS := 1 2 3 4 5 6 7 8 11 17 18 19 31 32 33 34 35 36 37 39 40 49 50 52 53 54 55 56 57 58 \
+           59 60 61 62 63 64 65 66 67 68
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

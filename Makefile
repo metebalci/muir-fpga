@@ -4621,6 +4621,13 @@ CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
 # --- is never the one used here.  `tools/work_dir_check.py`, run by
 # `build/work_dirs.pass`, holds both halves.
 CHECKPOINT_WORK := $(abspath $(BUILD))/checkpoint-work
+# **QUUX's FILES ARE LAID OUT AS THE CARD HOLDS THEM**: the pack in the pack
+# folder, and each checkpoint and its sidecar in `checkpoints/` in it, where
+# `cadr-checkpoint -o /mnt/card/packs/checkpoints/<name>.chk` puts them.  The
+# sidecar's resume line names both from the pack folder, and
+# `build/checkpoint.quux.pass` runs it there.
+CHECKPOINT_QUUX_PACKS := $(CHECKPOINT_WORK)/packs
+CHECKPOINT_QUUX_CHKS := $(CHECKPOINT_QUUX_PACKS)/checkpoints
 # **QUUX'S DISKS (contract Q8)**: muir's `data/quux-disk*`, made by qemu, from
 # the pinned muir beside this repository, the one `golden/Cargo.toml` resolves
 # as `../../muir-sim`.  `cadr-disk-packs` holds its QUUX disk layer to them and
@@ -4814,13 +4821,37 @@ CHECKPOINT_MEMORY_MUTANTS := 35 36 37
 # must fail there: the counter alone taken as the halt, and revision 15's
 # halt read off SRUN, which follows RUN whether or not the drain ends.
 CHECKPOINT_HALT_MUTANTS := 49 50
-# **THE SIDECAR'S RESUME LINE, AND ITS MUTANT, 51.**  The sidecar travels
-# with the checkpoint, so its resume line names the checkpoint as `./<name>`,
-# beside it, as it names a pack (`pack_bind.c`'s `bind_write`).  The host
-# check writes a sidecar for a checkpoint in a directory and reads the line
-# back, and the mutant, the line naming the board's path again, must fail
-# there.
-CHECKPOINT_SIDECAR_MUTANTS := 51
+# **THE SIDECAR'S RESUME LINE, AND ITS MUTANTS, 62 TO 64.**  The sidecar's
+# line is the line `cadr-checkpoint` prints, one string made once
+# (`pack_bind.c`'s `bind_write`), and its paths are the pack folder's
+# (`bind_relative`, below), so the line runs from the pack folder.  The
+# host check writes a sidecar in the card's layout and holds the line written,
+# the line given back to print and the line read back to one line written out
+# by hand (`checkpoint_test.c`'s `sidecar_line_check`), and each mutant must
+# fail there on its own leg: the checkpoint named beside the sidecar again
+# (62, which `build/checkpoint.quux.pass` also has muir refuse), the printed
+# line built apart from the sidecar's (63), and the checkpoint made absolute
+# (64).  51 was the line naming the checkpoint by the capture's path, which is
+# now the right line, and its number is not reused.
+CHECKPOINT_SIDECAR_MUTANTS := 62 63 64
+CHECKPOINT_SIDECAR_LEG_62 := it does not run from the pack folder
+CHECKPOINT_SIDECAR_LEG_63 := the printed line is not the sidecar's
+CHECKPOINT_SIDECAR_LEG_64 := a path in it is absolute
+# **AND EVERY NAME IS THE PACK FOLDER's, AND ITS MUTANTS, 65 TO 68.**
+# `cadr-checkpoint` names the packs and the checkpoint from the pack folder
+# whatever form it was given (`pack_bind.c`'s `bind_relative`), so the bay's
+# default `--pack-dir`, absolute, writes the line `--pack-dir .` does, and a
+# checkpoint or a pack outside the pack folder is refused before the machine
+# is halted.  The host check holds it on folders of its own
+# (`checkpoint_test.c`'s `folder_check`), and each mutant must fail there on
+# its own leg: the packs named as given (65), a checkpoint outside the folder
+# taken (66), the checkpoint named as given (67), and a folder beside the pack
+# folder whose name begins with its name taken as in it (68).
+CHECKPOINT_FOLDER_MUTANTS := 65 66 67 68
+CHECKPOINT_FOLDER_LEG_65 := an absolute --pack-dir does not write a relative line
+CHECKPOINT_FOLDER_LEG_66 := a checkpoint outside the pack folder is taken
+CHECKPOINT_FOLDER_LEG_67 := an absolute --pack-dir does not write a relative line
+CHECKPOINT_FOLDER_LEG_68 := a folder beside the pack folder is taken as in it
 # **THE CADR's CHAOSNET ADDRESS, AND ITS MUTANTS, 54 AND 55.**  muir refuses
 # to resume a checkpoint at any address but the one its switches carry, so
 # the CADR's are the address the fabric's interface holds, read as
@@ -4870,7 +4901,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(CHECKPOINT_CHAOS_SRC)/chaos_face.c $(CHECKPOINT_CHAOS_SRC)/chaos_face.h \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
-	    QUUXCHK=$(CHECKPOINT_WORK)/quux.chk Q8_DISKS=$(Q8_DISKS)
+	    QUUXCHK=$(CHECKPOINT_QUUX_CHKS)/quux.chk Q8_DISKS=$(Q8_DISKS)
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host CHAOS=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
@@ -4946,10 +4977,25 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     echo "checkpoint: mutant $$m SURVIVED the sidecar's resume line --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	     exit 1; \
 	   fi; \
-	   grep -q "^the sidecar's resume line names the checkpoint as ./x.chk is " $$W/mut-$$m.out \
+	   case $$m in 62) leg="$(CHECKPOINT_SIDECAR_LEG_62)";; 63) leg="$(CHECKPOINT_SIDECAR_LEG_63)";; \
+	     64) leg="$(CHECKPOINT_SIDECAR_LEG_64)";; *) leg="no leg named for mutant $$m";; esac; \
+	   grep -qF "checkpoint: FAIL: the sidecar's resume line: $$leg: " $$W/mut-$$m.out \
 	     || { echo "checkpoint: mutant $$m failed, and not on the sidecar's resume line: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
-	   echo "checkpoint: mutant $$m caught by the sidecar's resume line --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	   echo "checkpoint: mutant $$m caught by the sidecar's resume line, $$leg --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_FOLDER_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the pack folder's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   case $$m in 65) leg="$(CHECKPOINT_FOLDER_LEG_65)";; 66) leg="$(CHECKPOINT_FOLDER_LEG_66)";; \
+	     67) leg="$(CHECKPOINT_FOLDER_LEG_67)";; 68) leg="$(CHECKPOINT_FOLDER_LEG_68)";; \
+	     *) leg="no leg named for mutant $$m";; esac; \
+	   grep -qF "checkpoint: FAIL: the pack folder: $$leg: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the pack folder's $$leg: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the pack folder's check, $$leg --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done; \
 	 for m in $(CHECKPOINT_CHAOS_MUTANTS); do \
 	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
@@ -4998,14 +5044,17 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # NOTHING ELSE.**  The package's check writes the same machine as each board
 # writes it, the port's timing that board's preset of muir's (`chk_rtl.h`):
 # `quux.chk`, the Kria's, and `quux-arty.chk` and `quux-de25.chk`, each with
-# its sidecar.  muir's `quux` resumes each under the sidecar's `resume:` line,
-# run as written in the work directory with `--stop-after 0` and the file to
-# save back added and no flag of this rule's, and saves it back BYTE FOR
-# BYTE, and its report names the microcycles, the nanoseconds and the main
-# memory the model gave.  So a timing the file and its line disagree on, a
-# line that names none on a board whose preset is not muir's default, or a
-# preset whose figures are not muir's, is refused here.  The disk is a copy
-# in the work directory, so a resume never writes muir's own.
+# its sidecar, in the card's layout: muir's QUUX disk copied into the pack
+# folder as `disk-pack-0.img`, and the files and their sidecars in
+# `checkpoints/` in it (`CHECKPOINT_QUUX_PACKS`).  muir's `quux` resumes each
+# under the sidecar's `resume:` line, run as written FROM THE PACK FOLDER with
+# `--stop-after 0` and the file to save back added and no flag of this
+# rule's, and saves it back BYTE FOR BYTE, and its report names the
+# microcycles, the nanoseconds and the main memory the model gave.  So a
+# timing the file and its line disagree on, a line that names none on a
+# board whose preset is not muir's default, a preset whose figures are not
+# muir's, or a line whose paths are not both relative to the pack folder, is
+# refused here.  The disk is a copy, so a resume never writes muir's own.
 #
 # **THE MUTANTS ARE 11, 17, 18, 31, 39 AND 61** (`chk_rtl.c`'s
 # `chk_rtl_mutation` names each), each caught when muir refuses a board's
@@ -5014,19 +5063,22 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # package's own check of the line; and 59 and 60, the resume line without
 # the board's memory timing and naming the Kria's on every board, by the
 # package's own check of the line and by muir refusing a board's file under
-# it.  It rides on `build/checkpoint.pass`, which builds the program, the
-# test's binaries in the one work directory and muir.
+# it.  And 62, the sidecar's line naming the checkpoint beside the sidecar
+# as it did, is caught by muir refusing the Kria's file under that line in
+# the pack folder, the board's own failure.  It rides on
+# `build/checkpoint.pass`, which builds the program, the test's binaries in
+# the one work directory and muir.
 CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 327410129160 ns, 1MW of main memory
 CHECKPOINT_QUUX_MUTANTS := 11 17 18 31 39 61
 CHECKPOINT_QUUX_LINE_MUTANTS := 59 60
 QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
 # `resume <file> <saved back> <log>`: the file resumed by muir's `quux` under
-# its sidecar's resume line, run in the work directory as written.
+# its sidecar's resume line, run as written in the pack folder.
 CHECKPOINT_QUUX_RESUME = resume() { \
 	   line=$$(sed -n 's/^resume: quux //p' $$1$(CHECKPOINT_BIND_SUFFIX)); \
 	   [ -n "$$line" ] || { echo "checkpoint.quux: $$1$(CHECKPOINT_BIND_SUFFIX) has no QUUX resume line"; return 1; }; \
-	   cp $(Q8_DISKS)/quux-disk.img $$W/quux-disk.img; \
-	   ( cd $$W && $$M $$line --stop-after 0 --checkpoint $$2 ) > $$3 2>&1; \
+	   cp $(Q8_DISKS)/quux-disk.img $$P/disk-pack-0.img; \
+	   ( cd $$P && $$M $$line --stop-after 0 --checkpoint $$2 ) > $$3 2>&1; \
 	 }
 CHECKPOINT_BIND_SUFFIX := .packs
 CHECKPOINT_QUUX_FILES := quux quux-arty quux-de25
@@ -5034,35 +5086,36 @@ CHECKPOINT_QUUX_FILES := quux quux-arty quux-de25
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux-muir.chk
 	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(abspath $(QUUX_BIN)); G=$(QUUX_CHECKPOINT_BIN); \
+	 P=$(CHECKPOINT_QUUX_PACKS); C=$(CHECKPOINT_QUUX_CHKS); \
 	 $(CHECKPOINT_QUUX_RESUME); \
-	 cmp $$W/quux.chk $$W/quux-muir.chk \
+	 cmp $$C/quux.chk $$W/quux-muir.chk \
 	   || { echo "checkpoint.quux: QUUX's file is not muir's own for the same machine"; \
-	        $$G --compare $$W/quux.chk $$W/quux-muir.chk || true; exit 1; }; \
+	        $$G --compare $$C/quux.chk $$W/quux-muir.chk || true; exit 1; }; \
 	 for f in $(CHECKPOINT_QUUX_FILES); do \
-	   resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f-muir.log \
-	     || { echo "checkpoint.quux: muir REFUSED $$f.chk under its resume line:"; \
-	          grep '^resume:' $$W/$$f.chk$(CHECKPOINT_BIND_SUFFIX); grep '^quux:' $$W/$$f-muir.log; exit 1; }; \
-	   cmp $$W/$$f.chk $$W/$$f-back.chk \
+	   resume $$C/$$f.chk $$W/$$f-back.chk $$W/$$f-muir.log \
+	     || { echo "checkpoint.quux: muir REFUSED $$f.chk under its resume line, run in the pack folder:"; \
+	          grep '^resume:' $$C/$$f.chk$(CHECKPOINT_BIND_SUFFIX); grep '^quux:' $$W/$$f-muir.log; exit 1; }; \
+	   cmp $$C/$$f.chk $$W/$$f-back.chk \
 	     || { echo "checkpoint.quux: muir loaded $$f.chk and saved DIFFERENT bytes"; exit 1; }; \
 	   grep -q "$(CHECKPOINT_QUUX_RESUMED)" $$W/$$f-muir.log \
 	     || { echo "checkpoint.quux: muir did not resume the machine the model wrote in $$f.chk:"; \
 	          grep '^resumed' $$W/$$f-muir.log; exit 1; }; \
-	   echo "checkpoint.quux: $$f.chk resumed by its own line --- $$(sed -n 's/^resume: quux //p' $$W/$$f.chk$(CHECKPOINT_BIND_SUFFIX) | grep -o -e '--memory-timing [a-z0-9]*')"; \
+	   echo "checkpoint.quux: $$f.chk resumed by its own line --- $$(sed -n 's/^resume: quux //p' $$C/$$f.chk$(CHECKPOINT_BIND_SUFFIX) | grep -o -e '--memory-timing [a-z0-9]*')"; \
 	 done; \
-	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, muir's own file for the same machine,"; \
-	 echo "checkpoint.quux: each board's loaded and saved back identically by muir's quux under its resume line,"; \
+	 echo "checkpoint.quux: $$(stat -c%s $$C/quux.chk) bytes, muir's own file for the same machine,"; \
+	 echo "checkpoint.quux: each board's loaded and saved back identically by muir's quux under its resume line, run in the pack folder,"; \
 	 echo "checkpoint.quux: resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
 	 for m in $(CHECKPOINT_QUUX_MUTANTS); do \
-	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$C/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/qmut-$$m.out; exit 1; }; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); caught=; \
 	   for f in qmut-$$m qmut-$$m-arty qmut-$$m-de25; do \
 	     [ -z "$$caught" ] || break; \
-	     if ! resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f.log; then caught="muir refused $$f.chk"; \
-	     elif ! cmp -s $$W/$$f.chk $$W/$$f-back.chk; then caught="muir saved other bytes of $$f.chk"; fi; \
+	     if ! resume $$C/$$f.chk $$W/$$f-back.chk $$W/$$f.log; then caught="muir refused $$f.chk"; \
+	     elif ! cmp -s $$C/$$f.chk $$W/$$f-back.chk; then caught="muir saved other bytes of $$f.chk"; fi; \
 	   done; \
-	   if [ -z "$$caught" ] && ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then caught="not muir's own file"; fi; \
+	   if [ -z "$$caught" ] && ! cmp -s $$C/qmut-$$m.chk $$W/quux-muir.chk; then caught="not muir's own file"; fi; \
 	   [ -n "$$caught" ] || { echo "checkpoint.quux: mutant $$m SURVIVED every leg --- $$what"; exit 1; }; \
 	   echo "checkpoint.quux: mutant $$m caught, $$caught --- $$what"; \
 	 done; \
@@ -5073,7 +5126,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	   || { echo "checkpoint.quux: mutant 40 failed, and not on the resume line: BROKEN"; cat $$W/mut-40.out; exit 1; }; \
 	 echo "checkpoint.quux: mutant 40 caught by the resume line's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-40.out)"; \
 	 for m in $(CHECKPOINT_QUUX_LINE_MUTANTS); do \
-	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1; then \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$C/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1; then \
 	     echo "checkpoint.quux: mutant $$m SURVIVED the resume line's check"; exit 1; \
 	   fi; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
@@ -5081,11 +5134,20 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	     || { echo "checkpoint.quux: mutant $$m failed, and not on the memory timing: BROKEN"; cat $$W/qmut-$$m.out; exit 1; }; \
 	   refused=; \
 	   for f in qmut-$$m qmut-$$m-arty qmut-$$m-de25; do \
-	     resume $$W/$$f.chk $$W/$$f-back.chk $$W/$$f.log || refused="$$refused $$f.chk"; \
+	     resume $$C/$$f.chk $$W/$$f-back.chk $$W/$$f.log || refused="$$refused $$f.chk"; \
 	   done; \
 	   [ -n "$$refused" ] || { echo "checkpoint.quux: mutant $$m: muir took every board's file under its line --- $$what"; exit 1; }; \
 	   echo "checkpoint.quux: mutant $$m caught by the resume line's check, and muir refused$$refused --- $$what"; \
-	 done
+	 done; \
+	 $$W/checkpoint_test-62 $$W $(Q8_DISKS) $$W/qmut-62-cadr.chk $$C/qmut-62.chk > $$W/qmut-62.out 2>&1 || true; \
+	 grep -q "^checkpoint: THIS IS A MUTANT" $$W/qmut-62.out && [ -f $$C/qmut-62.chk$(CHECKPOINT_BIND_SUFFIX) ] \
+	   || { echo "checkpoint.quux: mutant 62 did not build or did not write its sidecar: BROKEN"; cat $$W/qmut-62.out; exit 1; }; \
+	 if resume $$C/qmut-62.chk $$W/qmut-62-back.chk $$W/qmut-62.log; then \
+	   echo "checkpoint.quux: mutant 62 SURVIVED: muir took the Kria's file under its line in the pack folder"; exit 1; \
+	 fi; \
+	 grep -q "^quux: --resume ./qmut-62.chk: No such file" $$W/qmut-62.log \
+	   || { echo "checkpoint.quux: mutant 62 refused, and not for the checkpoint's path: BROKEN"; cat $$W/qmut-62.log; exit 1; }; \
+	 echo "checkpoint.quux: mutant 62 caught, muir refused qmut-62.chk under its line in the pack folder --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-62.out)"
 	@touch $@
 
 # **AND THE PRESETS ARE muir'S AT THE PIN** (`tools/memory_timing_pin.py`):

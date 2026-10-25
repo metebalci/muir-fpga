@@ -179,13 +179,30 @@ int bind_scan(struct binding *b, const char *dir, char *err, size_t errlen);
 // 0, or -1 with `err`.
 int bind_add(struct binding *b, const char *spec, char *err, size_t errlen);
 
+// **EVERY PATH THE SIDECAR NAMES IS THE PACK FOLDER's**, whatever form the
+// capture was given: each pack as `./<name>`, and the checkpoint `chk` as its
+// path from the pack folder, `checkpoints/<name>.chk` on the card, into
+// `b->checkpoint`.  A file's folder is resolved and its own name kept.  So the
+// sidecar's resume line, and the line printed, run from the pack folder
+// whether `--pack-dir` was `.` or `/mnt/card/packs`.  A pack or a checkpoint
+// outside the pack folder is refused: a line naming it cannot run from there.
+// The checkpoint need not exist yet, its folder must.  0, or -1 with `err`;
+// the binding's paths are changed only on 0, and are the pack folder's from
+// then on, so a caller digests the packs before and not after.
+int bind_relative(struct binding *b, const char *pack_dir, const char *chk, char *err,
+		  size_t errlen);
+
 // Read every present pack through and digest it.  Returns 0, or -1 with
 // `err` --- and **a caller must not write a checkpoint after -1**: a pack
 // that cannot be read is a pack nothing can be bound to.
 int bind_digest(struct binding *b, char *err, size_t errlen);
 
-// The sidecar.  `path` is the checkpoint's name with BIND_SUFFIX on it.
-int bind_write(const struct binding *b, const char *path, char *err, size_t errlen);
+// The sidecar.  `path` is the checkpoint's name with BIND_SUFFIX on it.  Its
+// `resume:` line is `bind_resume_command`'s, and the same string is given back
+// in `resume` (NULL for none), which is the line `cadr-checkpoint` prints: one
+// line, made once, so the printed one and the sidecar's cannot part.
+int bind_write(const struct binding *b, const char *path, char *resume, size_t rn, char *err,
+	       size_t errlen);
 // And back: a sidecar read into `b`.  Refuses a format line it does not know.
 int bind_read(struct binding *b, const char *path, char *err, size_t errlen);
 
@@ -251,8 +268,10 @@ unsigned bind_chaos_address(struct chaos_face *f, int asked, unsigned asked_addr
 // names everything muir needs to take the file as the board ran it: on the
 // CADR the timing model, the boards and the Chaosnet address; on QUUX the
 // clock's period, the video controller's size and the Ethernet device's
-// host words.
-void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);
+// host words.  The checkpoint is `b->checkpoint`, the name the sidecar's
+// `checkpoint:` line records, and the packs are their `file=` paths, both the
+// pack folder's after `bind_relative`: the line runs from the pack folder.
+void bind_resume_command(const struct binding *b, char *out, size_t n);
 
 // **QUUX's MEMORY TIMING IS THE BOARD'S PRESET**, from one name: its figures
 // into the checkpoint's declaration and its name into the binding, whose

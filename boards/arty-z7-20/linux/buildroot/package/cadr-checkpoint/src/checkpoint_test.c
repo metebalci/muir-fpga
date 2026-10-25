@@ -872,6 +872,17 @@ static void memory_fail(const char *what, const char *got, const char *want)
 
 // How many lines of the sidecar at `side` are `line` (`whole` 1) or begin
 // with it (`whole` 0).
+// The resume line of `b` with its checkpoint named `chk`: what the checks of
+// the line's flags compare, whatever the binding's own name for the file.
+// The name itself is held by `sidecar_line_check`, on the binding's own.
+static void resume_of(const struct binding *b, const char *chk, char *out, size_t n)
+{
+	static struct binding named;
+	named = *b;
+	snprintf(named.checkpoint, sizeof named.checkpoint, "%s", chk);
+	bind_resume_command(&named, out, n);
+}
+
 static int sidecar_has(const char *side, const char *line, int whole)
 {
 	FILE *f = fopen(side, "r");
@@ -964,7 +975,7 @@ static void memory_words_check(const char *side)
 			b.revision = t[i].quux ? 16u : 0u;
 			b.sync_k = t[i].quux ? 20u : 0u;
 			snprintf(b.checkpoint, sizeof b.checkpoint, "m.chk");
-			if (bind_write(&b, side, err, sizeof err) != 0) {
+			if (bind_write(&b, side, NULL, 0, err, sizeof err) != 0) {
 				memory_fail("a sidecar written", err, "written");
 				continue;
 			}
@@ -1055,6 +1066,202 @@ static unsigned chaos_resolve(uint32_t ident, uint32_t myaddr, int asked, unsign
 	return bind_chaos_address(&f, asked, asked_address, msg, n);
 }
 
+// **EVERY NAME IS THE PACK FOLDER's, WHATEVER FORM THE CAPTURE WAS GIVEN**
+// (`bind_relative`): the bay's default `--pack-dir`, absolute, and `--pack-dir
+// .` in the pack folder write one line, `./disk-pack-0.img` and
+// `checkpoints/x.chk`; a checkpoint or a pack outside the pack folder, a
+// folder beside it whose name begins with its name, and a checkpoint whose
+// folder is not there are refused, with the binding left as it was.  Every
+// failure prints one line under one prefix, naming its leg.
+static void folder_fail(const char *leg, const char *detail)
+{
+	fprintf(stderr, "checkpoint: FAIL: the pack folder: %s: [%s]\n", leg, detail);
+	++bad;
+}
+
+static void folder_binding(struct binding *b, const char *pack, const char *chk)
+{
+	bind_init(b);
+	b->quux = 1;
+	b->boards = 512;
+	b->revision = 16;
+	b->sync_k = 38;
+	b->u[0].present = 1;
+	snprintf(b->u[0].path, sizeof b->u[0].path, "%s", pack);
+	b->present = 1;
+	snprintf(b->checkpoint, sizeof b->checkpoint, "%s", chk);
+}
+
+// 1 when the binding of `pack` and `chk` under `dir` is refused and left as it
+// was, 0 when it is taken, -1 when it is refused and changed.
+static int folder_refused(const char *dir, const char *pack, const char *chk, char *err,
+			  size_t n)
+{
+	static struct binding b;
+	folder_binding(&b, pack, chk);
+	if (bind_relative(&b, dir, chk, err, n) == 0)
+		return 0;
+	return strcmp(b.u[0].path, pack) == 0 && strcmp(b.checkpoint, chk) == 0 ? 1 : -1;
+}
+
+static void folder_check(const char *work)
+{
+	static const char want[] = "quux --rtl --microcycle-ns 19 --disk-pack ./disk-pack-0.img,0 "
+		"--resume checkpoints/x.chk";
+	char top[300], packs[320], chks[340], beside[340], away[340];
+	char pack[400], chk[400], dir[400], line[4096], err[1024];
+	snprintf(top, sizeof top, "%s/folders", work);
+	snprintf(packs, sizeof packs, "%s/packs", top);
+	snprintf(chks, sizeof chks, "%s/checkpoints", packs);
+	snprintf(beside, sizeof beside, "%s/packs-beside", top);
+	snprintf(away, sizeof away, "%s/away", top);
+	mkdir(top, 0755);
+	mkdir(packs, 0755);
+	mkdir(chks, 0755);
+	mkdir(beside, 0755);
+	mkdir(away, 0755);
+	static struct binding b;
+
+	// The bay's default, absolute, and the same with a trailing slash and
+	// a `./` in the checkpoint's path: one relative line.
+	for (int form = 0; form < 2; ++form) {
+		snprintf(dir, sizeof dir, form ? "%s/" : "%s", packs);
+		snprintf(pack, sizeof pack, "%s/disk-pack-0.img", packs);
+		snprintf(chk, sizeof chk, form ? "%s/./checkpoints/x.chk" : "%s/checkpoints/x.chk",
+			 packs);
+		folder_binding(&b, pack, chk);
+		err[0] = '\0';
+		if (bind_relative(&b, dir, chk, err, sizeof err) != 0) {
+			folder_fail("an absolute --pack-dir does not write a relative line", err);
+			continue;
+		}
+		bind_resume_command(&b, line, sizeof line);
+		if (strcmp(line, want) != 0)
+			folder_fail("an absolute --pack-dir does not write a relative line", line);
+	}
+	// `--pack-dir .` in the pack folder, as the Kria's capture ran: the same.
+	{
+		char here[4096];
+		if (getcwd(here, sizeof here) && chdir(packs) == 0) {
+			folder_binding(&b, "./disk-pack-0.img", "checkpoints/x.chk");
+			err[0] = '\0';
+			if (bind_relative(&b, ".", "checkpoints/x.chk", err, sizeof err) != 0) {
+				folder_fail("--pack-dir . does not write the same line", err);
+			} else {
+				bind_resume_command(&b, line, sizeof line);
+				if (strcmp(line, want) != 0)
+					folder_fail("--pack-dir . does not write the same line", line);
+			}
+			if (chdir(here) != 0)
+				folder_fail("the test's own folder, not found again", here);
+		} else {
+			folder_fail("the pack folder, not entered", packs);
+		}
+	}
+	// Refused, and left as it was.
+	snprintf(pack, sizeof pack, "%s/disk-pack-0.img", packs);
+	snprintf(chk, sizeof chk, "%s/x.chk", top);
+	err[0] = '\0';
+	int r = folder_refused(packs, pack, chk, err, sizeof err);
+	if (r != 1 || !strstr(err, "is not in the pack folder"))
+		folder_fail("a checkpoint outside the pack folder is taken", r ? err : chk);
+	snprintf(chk, sizeof chk, "%s/x.chk", beside);
+	r = folder_refused(packs, pack, chk, err, sizeof err);
+	if (r != 1)
+		folder_fail("a folder beside the pack folder is taken as in it", r ? err : chk);
+	snprintf(chk, sizeof chk, "%s/checkpoints/x.chk", packs);
+	snprintf(pack, sizeof pack, "%s/disk-pack-0.img", away);
+	r = folder_refused(packs, pack, chk, err, sizeof err);
+	if (r != 1 || !strstr(err, "is not in the pack folder"))
+		folder_fail("a pack outside the pack folder is taken", r ? err : pack);
+	snprintf(pack, sizeof pack, "%s/disk-pack-0.img", packs);
+	snprintf(chk, sizeof chk, "%s/nowhere/x.chk", packs);
+	r = folder_refused(packs, pack, chk, err, sizeof err);
+	if (r != 1)
+		folder_fail("a checkpoint whose folder is not there is taken", r ? err : chk);
+	rmdir(chks);
+	rmdir(packs);
+	rmdir(beside);
+	rmdir(away);
+	rmdir(top);
+}
+
+// **THE SIDECAR'S RESUME LINE IS THE LINE `cadr-checkpoint` PRINTS, AND BOTH
+// RUN FROM THE PACK FOLDER.**  The card's layout: the program run in the pack
+// folder with `--pack-dir .` and `-o checkpoints/x.chk` names the pack
+// `./disk-pack-0.img` and the checkpoint `checkpoints/x.chk`, and writes the
+// sidecar beside the checkpoint.  The line written, the line given back to
+// print and the line `--verify` gives from the sidecar read back must be one
+// line, the one written out here by hand, with no path in it absolute.  It
+// once named the checkpoint `./x.chk`, beside the sidecar, while its pack
+// stayed relative to the pack folder, so no one folder ran it.  Every failure
+// prints one line under one prefix, naming its leg.
+static void line_fail(const char *leg, const char *line)
+{
+	fprintf(stderr, "checkpoint: FAIL: the sidecar's resume line: %s: [%s]\n", leg, line);
+	++bad;
+}
+
+static void sidecar_line_check(const char *work)
+{
+	static const char want[] = "quux --rtl --microcycle-ns 19 --disk-pack ./disk-pack-0.img,0 "
+		"--resume checkpoints/x.chk";
+	char card[300], chks[320], side[360], printed[4096] = "", written[8192] = "", line[8192];
+	char err[1024] = "";
+	snprintf(card, sizeof card, "%s/card", work);
+	snprintf(chks, sizeof chks, "%s/checkpoints", card);
+	snprintf(side, sizeof side, "%s/x.chk%s", chks, BIND_SUFFIX);
+	mkdir(card, 0755);
+	mkdir(chks, 0755);
+	struct binding xb, rd;
+	bind_init(&xb);
+	xb.quux = 1;
+	xb.boards = 512;
+	xb.revision = 16;
+	xb.sync_k = 38;
+	xb.u[0].present = 1;
+	snprintf(xb.u[0].path, sizeof xb.u[0].path, "./disk-pack-0.img");
+	xb.present = 1;
+	snprintf(xb.checkpoint, sizeof xb.checkpoint, "checkpoints/x.chk");
+	if (bind_write(&xb, side, printed, sizeof printed, err, sizeof err) != 0) {
+		line_fail("not written", err);
+		return;
+	}
+	int resumes = 0, kept = 0;
+	FILE *sf = fopen(side, "r");
+	while (sf && fgets(line, sizeof line, sf)) {
+		line[strcspn(line, "\n")] = '\0';
+		kept += strcmp(line, "checkpoint: checkpoints/x.chk") == 0;
+		if (strncmp(line, "resume: ", 8) == 0 && ++resumes == 1)
+			snprintf(written, sizeof written, "%s", line + 8);
+	}
+	if (sf)
+		fclose(sf);
+	if (resumes != 1)
+		line_fail("not one resume line in the sidecar", written);
+	if (kept != 1)
+		line_fail("the checkpoint line does not keep the name the capture gave", side);
+	if (strcmp(printed, written) != 0)
+		line_fail("the printed line is not the sidecar's", printed);
+	if (strcmp(written, want) != 0)
+		line_fail("it does not run from the pack folder", written);
+	if (strstr(written, " /") || strstr(written, ",/") || strstr(printed, " /") ||
+	    strstr(printed, ",/"))
+		line_fail("a path in it is absolute", written);
+	bind_init(&rd);
+	if (bind_read(&rd, side, err, sizeof err) != 0) {
+		line_fail("the sidecar not read back", err);
+	} else {
+		char verify[4096];
+		bind_resume_command(&rd, verify, sizeof verify);
+		if (strcmp(verify, written) != 0)
+			line_fail("the line --verify gives is not the sidecar's", verify);
+	}
+	remove(side);
+	rmdir(chks);
+	rmdir(card);
+}
+
 // ---- QUUX's 253-257, the host's flags --------------------------------------
 //
 // **muir REFUSES A RESUME UNDER OTHER `--ethernet-mac`, `--ip-address` OR
@@ -1082,7 +1289,7 @@ static void ethernet_host_check(const char *work)
 		"--ethernet-mac 02:5a:11:22:33:44 --ip-address 169.254.101.2/30 --ip-gateway 169.254.101.1 "
 		"--resume q.chk";
 	char cmd[4096], side[400];
-	bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+	resume_of(&b, "q.chk", cmd, sizeof cmd);
 	if (strcmp(cmd, want) != 0) {
 		fprintf(stderr, "checkpoint: FAIL: the host's flags: the resume line is [%s], wanting [%s]\n",
 			cmd, want);
@@ -1091,11 +1298,11 @@ static void ethernet_host_check(const char *work)
 	snprintf(side, sizeof side, "%s/eth.chk%s", work, BIND_SUFFIX);
 	char err[1024] = "";
 	bind_init(&rd);
-	if (bind_write(&b, side, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
+	if (bind_write(&b, side, NULL, 0, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
 		fprintf(stderr, "checkpoint: FAIL: the host's flags: the sidecar: %s\n", err);
 		++bad;
 	} else {
-		bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+		resume_of(&rd, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want) != 0) {
 			fprintf(stderr, "checkpoint: FAIL: the host's flags: the resume line from the sidecar read "
 				"back is [%s], wanting [%s]\n", cmd, want);
@@ -1111,7 +1318,7 @@ static void ethernet_host_check(const char *work)
 	remove(side);
 	// A sidecar written before the device's lines names none of them.
 	b.eth = 0;
-	bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+	resume_of(&b, "q.chk", cmd, sizeof cmd);
 	if (strstr(cmd, "--ethernet-mac") || strstr(cmd, "--ip-")) {
 		fprintf(stderr, "checkpoint: FAIL: the host's flags: a resume line without the device's "
 			"words is [%s]\n", cmd);
@@ -1159,7 +1366,7 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 		char cmd[4096], side[400];
 		static const char want[] = "cadr --rtl --timing-model fpga --main-memory-boards 32 "
 			"--chaos-address 177201 --resume c.chk";
-		bind_resume_command(&b, "c.chk", cmd, sizeof cmd);
+		resume_of(&b, "c.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want) != 0) {
 			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the resume line is [%s], "
 				"wanting [%s]\n", cmd, want);
@@ -1168,7 +1375,7 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 		snprintf(side, sizeof side, "%s/chaos.chk%s", work, BIND_SUFFIX);
 		char err[1024] = "";
 		bind_init(&rd);
-		if (bind_write(&b, side, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
+		if (bind_write(&b, side, NULL, 0, err, sizeof err) != 0 || bind_read(&rd, side, err, sizeof err) != 0) {
 			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the sidecar: %s\n", err);
 			++bad;
 		} else {
@@ -1178,7 +1385,7 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 #if CHK_MUTATE != 8
 			if (rd.chaos_address != 0177201u)
 				chaos_fail("the sidecar's address read back", rd.chaos_address, 0177201u);
-			bind_resume_command(&rd, "c.chk", cmd, sizeof cmd);
+			resume_of(&rd, "c.chk", cmd, sizeof cmd);
 			if (strcmp(cmd, want) != 0) {
 				fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: the resume line "
 					"from the sidecar read back is [%s], wanting [%s]\n", cmd, want);
@@ -1187,9 +1394,8 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 #endif
 			if (sidecar_has(side, "chaos-address: 177201", 1) != 1)
 				chaos_fail("the sidecar's chaos-address lines", 0, 1);
-			if (sidecar_has(side, "resume: ./c.chk", 0) != 0 ||
-			    sidecar_has(side, "resume: cadr --rtl --timing-model fpga --main-memory-boards 32 "
-					"--chaos-address 177201 --resume ./c.chk", 1) != 1)
+			if (sidecar_has(side, "resume: cadr --rtl --timing-model fpga --main-memory-boards 32 "
+					"--chaos-address 177201 --resume /mnt/card/c.chk", 1) != 1)
 				chaos_fail("the sidecar's resume line with the address", 0, 1);
 		}
 		remove(side);
@@ -1207,7 +1413,7 @@ static void chaos_address_check(const struct cadr_image *img, const struct chk_d
 		b.quux = 1;
 		b.revision = 16;
 		b.sync_k = 0;
-		bind_resume_command(&b, "q.chk", cmd, sizeof cmd);
+		resume_of(&b, "q.chk", cmd, sizeof cmd);
 		if (strstr(cmd, "--chaos-address")) {
 			fprintf(stderr, "checkpoint: FAIL: the Chaosnet address: QUUX's resume line "
 				"names one: [%s]\n", cmd);
@@ -1397,7 +1603,7 @@ int main(int argc, char **argv)
 		// against a binding that recorded one constant.
 		if (strcmp(w.u[0].sha256, w.u[3].sha256) == 0)
 			fail("two different packs digested the same", 1, 0);
-		if (bind_write(&w, side, err, sizeof err) != 0)
+		if (bind_write(&w, side, NULL, 0, err, sizeof err) != 0)
 			fail("the sidecar could not be written", 1, 0);
 
 		struct binding rd;
@@ -1487,7 +1693,7 @@ int main(int argc, char **argv)
 				char line[4096], want[64];
 				if (bind_memory_timing(&pb, &td, t->name) != 0)
 					fail("a preset of the table, refused", 1, 0);
-				bind_resume_command(&pb, "q.chk", line, sizeof line);
+				resume_of(&pb, "q.chk", line, sizeof line);
 				snprintf(want, sizeof want, " --memory-timing %s ", t->name);
 				if (!strstr(line, want)) {
 					fprintf(stderr, "the %s resume line is [%s]\n", t->name, line);
@@ -1503,12 +1709,12 @@ int main(int argc, char **argv)
 		char cmd[4096];
 		static const char want16[] = "quux --rtl --microcycle-ns 10 --memory-timing kria "
 			"--video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
-		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
+		resume_of(&qb, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want16) != 0) {
 			fprintf(stderr, "QUUX's resume line is [%s], wanting [%s]\n", cmd, want16);
 			fail("QUUX's resume line", 1, 0);
 		}
-		if (bind_write(&qb, side, err, sizeof err) != 0 ||
+		if (bind_write(&qb, side, NULL, 0, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || !rd.quux)
 			fail("the sidecar lost the machine", 0, 1);
 		else if (rd.video_width != 1920 || rd.video_height != 1080)
@@ -1522,7 +1728,7 @@ int main(int argc, char **argv)
 			fail("the sidecar lost the memory timing", 1, 0);
 		else {
 			// `--verify` prints the line from the sidecar it read.
-			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+			resume_of(&rd, "q.chk", cmd, sizeof cmd);
 			if (strcmp(cmd, want16) != 0)
 				fail("the resume line from the sidecar read back", 1, 0);
 		}
@@ -1564,19 +1770,19 @@ int main(int argc, char **argv)
 		qb.video_width = 1280;
 		qb.video_height = 1024;
 		qb.running = 0;
-		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
+		resume_of(&qb, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, "quux --rtl --microcycle-ns 9.5 --memory-timing kria --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
 			fail("QUUX's resume line at 9.5 ns", 1, 0);
 		// A sidecar of an older revision names no period: its file is
 		// not one muir's `quux` resumes.
 		qb.revision = 15;
-		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
+		resume_of(&qb, "q.chk", cmd, sizeof cmd);
 		if (strstr(cmd, "--microcycle-ns") || strstr(cmd, "--sync-cycle-ticks") ||
 		    strstr(cmd, "MUIR_QUUX_REVISION"))
 			fail("an older revision's resume line names a timing or a revision", 1, 0);
 		qb.revision = 16;
-		if (bind_write(&qb, side, err, sizeof err) != 0 ||
+		if (bind_write(&qb, side, NULL, 0, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.running != 0)
 			fail("a halted machine's sidecar read back as running", (unsigned)rd.running, 0);
 		// A sidecar written before the lines were names neither, and its
@@ -1590,7 +1796,7 @@ int main(int argc, char **argv)
 			if (bind_read(&rd, side, err, sizeof err) != 0 || rd.running != -1 ||
 			    rd.revision != 0 || rd.sync_k != 0 || rd.video_width != 0 || rd.memory_timing[0])
 				fail("an old sidecar's run state, revision or K", (unsigned)rd.running, 0);
-			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+			resume_of(&rd, "q.chk", cmd, sizeof cmd);
 			if (strcmp(cmd, "quux --rtl --resume q.chk") != 0)
 				fail("an old sidecar's resume line", 1, 0);
 		}
@@ -1599,74 +1805,21 @@ int main(int argc, char **argv)
 		qb.sync_k = 0;
 		qb.boards = 32;
 		qb.u[0].format[0] = '\0';
-		bind_resume_command(&qb, "c.chk", cmd, sizeof cmd);
+		resume_of(&qb, "c.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, "cadr --rtl --timing-model fpga --disk-pack "
 			   "/mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume c.chk") != 0) {
 			fprintf(stderr, "the CADR's resume line is [%s]\n", cmd);
 			fail("the CADR's resume command", 1, 0);
 		}
-		if (bind_write(&qb, side, err, sizeof err) != 0 ||
+		if (bind_write(&qb, side, NULL, 0, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.quux)
 			fail("a CADR sidecar read back as QUUX's", 1, 0);
 		remove(side);
 
-		// **THE SIDECAR'S RESUME LINE NAMES THE CHECKPOINT BESIDE IT.**  The
-		// sidecar travels with the checkpoint, so its line names the file
-		// as `./<name>`, as it names a pack, and never by the directory it
-		// had on the board.  A checkpoint whose path has a directory, read
-		// back from the file.
-		{
-			char sub[300], chk[340], sside[360], line[8192];
-			snprintf(sub, sizeof sub, "%s/sub", work);
-			mkdir(sub, 0755);
-			snprintf(chk, sizeof chk, "%s/x.chk", sub);
-			snprintf(sside, sizeof sside, "%s%s", chk, BIND_SUFFIX);
-			struct binding xb;
-			bind_init(&xb);
-			xb.quux = 1;
-			xb.boards = 512;
-			xb.revision = 16;
-			xb.sync_k = 38;
-			xb.u[0].present = 1;
-			snprintf(xb.u[0].path, sizeof xb.u[0].path, "./disk-pack-0.img");
-			xb.present = 1;
-			snprintf(xb.checkpoint, sizeof xb.checkpoint, "%s", chk);
-			int resumes = 0, right = 0, checkpoint_kept = 0;
-			if (bind_write(&xb, sside, err, sizeof err) != 0) {
-				fail("the sidecar of a checkpoint in a directory was not written", 1, 0);
-			} else {
-				FILE *sf = fopen(sside, "r");
-				while (sf && fgets(line, sizeof line, sf)) {
-					line[strcspn(line, "\n")] = '\0';
-					char want_chk[400];
-					snprintf(want_chk, sizeof want_chk, "checkpoint: %s", chk);
-					checkpoint_kept += strcmp(line, want_chk) == 0;
-					if (strncmp(line, "resume: ", 8) != 0)
-						continue;
-					++resumes;
-					static const char tail[] = " --resume ./x.chk";
-					const size_t ll = strlen(line), tl = strlen(tail);
-					const char *at = strstr(line, " --resume ");
-					// Ends in `--resume ./x.chk`, and the only `/` in
-					// the checkpoint's name is the one of `./`.
-					right = ll >= tl && strcmp(line + ll - tl, tail) == 0 && at &&
-						strchr(at + 10, '/') == at + 11 &&
-						strchr(at + 12, '/') == NULL;
-					if (!right)
-						fprintf(stderr, "the sidecar's resume line is [%s]\n", line);
-				}
-				if (sf)
-					fclose(sf);
-			}
-			if (resumes != 1 || !right)
-				fail("the sidecar's resume line names the checkpoint as ./x.chk",
-				     (uint64_t)resumes * 10 + (unsigned)right, 11);
-			if (checkpoint_kept != 1)
-				fail("the sidecar's checkpoint line keeps the checkpoint's path",
-				     (unsigned)checkpoint_kept, 1);
-			remove(sside);
-			rmdir(sub);
-		}
+		// **THE SIDECAR'S RESUME LINE IS THE PRINTED ONE, AND RUNS FROM THE
+		// PACK FOLDER.**
+		sidecar_line_check(work);
+		folder_check(work);
 
 		// **QUUX's MAIN MEMORY IS AN AMOUNT, NEVER BOARDS; THE CADR KEEPS
 		// ITS BOARDS.**  What the program says, what its flags take and what
@@ -1768,7 +1921,7 @@ int main(int argc, char **argv)
 			snprintf(side, sizeof side, "%s/q8.chk%s", work, BIND_SUFFIX);
 			snprintf(q.checkpoint, sizeof q.checkpoint, "%s/q8.chk", work);
 			struct binding rd;
-			if (bind_write(&q, side, err, sizeof err) != 0 ||
+			if (bind_write(&q, side, NULL, 0, err, sizeof err) != 0 ||
 			    bind_read(&rd, side, err, sizeof err) != 0) {
 				fprintf(stderr, "a QUUX sidecar: %s\n", err);
 				++bad;
@@ -1782,7 +1935,7 @@ int main(int argc, char **argv)
 				++bad;
 			}
 			remove(side);
-			bind_resume_command(&q, "q8.chk", cmd, sizeof cmd);
+			resume_of(&q, "q8.chk", cmd, sizeof cmd);
 			char want[400];
 			snprintf(want, sizeof want, " --disk-pack %s,0 ", pack0);
 			if (strncmp(cmd, "quux --rtl ", 11) != 0 || !strstr(cmd, want)) {
@@ -2247,9 +2400,14 @@ int main(int argc, char **argv)
 		// **AND ITS SIDECAR, AS THE BOARD WRITES IT**: the Kria KR260's,
 		// its memory timing that board's preset, the declaration's figures
 		// and the resume line's name from the one call `cadr-checkpoint`
-		// makes.  The pack is muir's own QUUX disk, named as the copy in
-		// the work directory that `build/checkpoint.quux.pass` resumes, so
-		// that a resume never writes muir's own.
+		// makes.  **AND IN THE CARD'S LAYOUT**: QUUX's file is written as
+		// `<pack folder>/checkpoints/<name>.chk`, and `bind_relative`, given
+		// the absolute paths the bay's default `--pack-dir` gives, names the
+		// pack `./disk-pack-0.img` and the checkpoint `checkpoints/<name>.chk`
+		// from the pack folder, as `cadr-checkpoint` does.  The pack is
+		// muir's own QUUX disk, bound from muir's copy and named as the
+		// copy in the pack folder that `build/checkpoint.quux.pass` resumes,
+		// so that a resume never writes muir's own.
 		struct binding fb;
 		bind_init(&fb);
 		fb.quux = 1;
@@ -2258,7 +2416,7 @@ int main(int argc, char **argv)
 			snprintf(spec, sizeof spec, "%s/quux-disk.img,0", q8);
 			if (bind_add(&fb, spec, err, sizeof err) != 0)
 				fail("QUUX's fixture's disk, bound", 0, 1);
-			snprintf(fb.u[0].path, sizeof fb.u[0].path, "%s/quux-disk.img", work);
+			snprintf(fb.u[0].path, sizeof fb.u[0].path, "./" BIND_NAME_FMT, 0u);
 		}
 		fb.boards = Q_UNITS;
 		fb.revision = 16;
@@ -2314,6 +2472,22 @@ int main(int argc, char **argv)
 				return 1;
 			}
 			stem[sl - 4] = '\0';
+			// `<pack folder>/checkpoints/<name>`, the card's layout, and the
+			// binding names the files from the pack folder by `bind_relative`,
+			// given them by their absolute paths as the bay's default
+			// `--pack-dir` gives them.
+			const char *base = strrchr(stem, '/');
+			static const char folder[] = "/checkpoints/";
+			const size_t fl = sizeof folder - 1;
+			if (!base || (size_t)(base + 1 - stem) <= fl ||
+			    strncmp(base + 1 - fl, folder, fl) != 0) {
+				fprintf(stderr, "%s: QUUX's file is written as the card's, "
+					"<pack folder>/checkpoints/<name>.chk\n", quux_out);
+				return 1;
+			}
+			char packs_dir[sizeof stem];
+			snprintf(packs_dir, sizeof packs_dir, "%.*s", (int)(base + 1 - fl - stem), stem);
+			++base;
 			for (const struct chk_memory_timing *t = chk_memory_timings; t->name; ++t) {
 				const int kria = strcmp(t->name, "kria") == 0;
 				char path[sizeof fb.checkpoint], side[sizeof path + sizeof BIND_SUFFIX];
@@ -2341,9 +2515,15 @@ int main(int argc, char **argv)
 						return 1;
 					}
 				}
+				snprintf(pb.u[0].path, sizeof pb.u[0].path, "%s/" BIND_NAME_FMT,
+					 packs_dir, 0u);
 				snprintf(pb.checkpoint, sizeof pb.checkpoint, "%s", path);
+				if (bind_relative(&pb, packs_dir, path, err, sizeof err) != 0) {
+					fprintf(stderr, "%s: %s\n", path, err);
+					return 1;
+				}
 				snprintf(side, sizeof side, "%s%s", path, BIND_SUFFIX);
-				if (bind_write(&pb, side, err, sizeof err) != 0) {
+				if (bind_write(&pb, side, NULL, 0, err, sizeof err) != 0) {
 					fprintf(stderr, "%s: %s\n", side, err);
 					return 1;
 				}

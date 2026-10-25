@@ -311,7 +311,7 @@ static int do_verify(const char *sidecar, char **override, unsigned overrides)
 		return 1;
 	}
 	char cmd[4096];
-	bind_resume_command(&b, b.checkpoint, cmd, sizeof cmd);
+	bind_resume_command(&b, cmd, sizeof cmd);
 	say("the binding holds.  To resume: %s", cmd);
 	return 0;
 }
@@ -537,6 +537,20 @@ int main(int argc, char **argv)
 		say("--no-packs, and the drive bay holds %u pack(s): the two "
 		    "disagree", bind.present);
 		return 1;
+	}
+	// **AND EVERY FILE NAMED FROM THE PACK FOLDER, ASKED NOW**, while the
+	// machine is still running: a pack or a checkpoint outside the pack
+	// folder is one the resume line cannot name from there, so it is
+	// refused before anything is halted or written.  The names are given
+	// to the binding after the packs are digested (`bind_relative`).
+	{
+		static struct binding named;
+		named = bind;
+		if (bind_relative(&named, pack_dir, out, err, sizeof err) != 0) {
+			say("%s", err);
+			say("nothing is halted and nothing is written");
+			return 1;
+		}
 	}
 
 	// **WHICH MACHINE THE BITSTREAM IS, ASKED BEFORE ANYTHING IS READ.**
@@ -928,9 +942,20 @@ int main(int argc, char **argv)
 		img_free(&img);
 		return 1;
 	}
+	// The packs digested and the checkpoint read back, every name is the
+	// pack folder's from here on.
+	if (bind_relative(&bind, pack_dir, out, err, sizeof err) != 0) {
+		say("the checkpoint is written and its binding is not: %s", err);
+		say("DO NOT RESUME %s: nothing says which packs it belongs to.", out);
+		img_free(&img);
+		return 1;
+	}
 	char sidecar[1024];
 	snprintf(sidecar, sizeof sidecar, "%s" BIND_SUFFIX, out);
-	if (bind_write(&bind, sidecar, err, sizeof err) != 0) {
+	// **THE LINE PRINTED IS THE SIDECAR's `resume:` LINE**, given back by
+	// the write that wrote it, so the two are one string.
+	char cmd[4096];
+	if (bind_write(&bind, sidecar, cmd, sizeof cmd, err, sizeof err) != 0) {
 		say("the checkpoint is written and its binding is not: %s", err);
 		say("DO NOT RESUME %s: nothing says which packs it belongs to.", out);
 		img_free(&img);
@@ -950,12 +975,11 @@ int main(int argc, char **argv)
 			say("  unit %u %s  %u,%u,%u  %s", u, bind.u[u].path,
 			    bind.u[u].cylinders, bind.u[u].heads,
 			    bind.u[u].blocks_per_track, bind.u[u].sha256);
-	char cmd[4096];
-	bind_resume_command(&bind, out, cmd, sizeof cmd);
+	say("  the names are the pack folder's, %s: run these from there", pack_dir);
 	say("  to open it: %s", cmd);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
-	say("  cadr-checkpoint --verify %s", sidecar);
+	say("  cadr-checkpoint --verify %s" BIND_SUFFIX, bind.checkpoint);
 	say("  or sha256sum on each pack, by hand.");
 	say("A pack written since this instant makes the resumed machine hold "
 	    "pages that no longer match its disk, and NEITHER muir NOR anything "
