@@ -320,12 +320,12 @@ muir's `quux` refuses a checkpoint of another revision, another period,
 another memory timing or another size, and runs the one revision:
 
     revision: 16
-    sync-cycle-ticks: 40
+    sync-cycle-ticks: 50
     memory-timing: kria
     video-size: 1920x1080
     running: yes
     ...
-    resume: quux --rtl --microcycle-ns 20 --memory-timing kria --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: quux --rtl --microcycle-ns 25 --memory-timing kria --video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
 
 A sidecar written before the size was named carries no `video-size`, and its
 line names none: its checkpoint is 1280 by 1024, muir's default.
