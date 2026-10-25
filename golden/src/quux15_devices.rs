@@ -11,7 +11,13 @@
 //!             grid; one-shot, a clear that starts nothing, off and on again;
 //!             a period written while on; word 100 under each enable; the
 //!             microsecond clock (source 15) and the real-time clock (word
-//!             103); RESET-DEVICES (word 104).  Traced at A15b.12's periods
+//!             103); RESET-DEVICES (word 104); and timer 1 as the scheduler
+//!             arms it, one-shot with its interrupt enable (muir's four
+//!             sequences in `tests/interval_timers.rs`): a period write
+//!             arming it again once risen and cleared, a re-arm while it
+//!             counts to an earlier and to a later rise, the old deadline
+//!             rising nothing, and period 0 while it counts disarming it
+//!             until a later period arms it.  Traced at A15b.12's periods
 //!   interrupt conditions 5 and 6 with a timer's flag up under its enable,
 //!             the flag rising at every clock across a run of checks, plain
 //!             and with the first check held on `MD`, its delay slot run or
@@ -124,6 +130,140 @@ impl Preset {
     fn quiet_md(&mut self) -> &mut Self {
         self.read(reg(0), 0o37)
     }
+
+    /// M `m` <- the microsecond clock (source 15).
+    fn now(&mut self, m: u64) -> &mut Self {
+        self.op(ALU | SETM | src(0o15) | m_dest(m))
+    }
+
+    /// Waits until the microsecond clock reads M `base` + `us` or more:
+    /// the instant is the clock's on every engine, where a count of words
+    /// is not.  A 1711 holds the due time and M 31 the clock as read.
+    fn until(&mut self, base: u64, us: u64) -> &mut Self {
+        let k = self.k(us);
+        self.op(ALU | ADD | a_src(k) | m_src(base) | a_dest(DUE));
+        let top = self.at();
+        self.now(NOW_M);
+        self.op(jcond(1) | a_src(DUE) | m_src(NOW_M) | target(top) | N);
+        self.fill(1)
+    }
+
+    /// The times read cleared before the stop: M 30 to 33 and A 1711.
+    fn clear_times(&mut self) -> &mut Self {
+        for m in 0o30..=0o33 {
+            self.clear(m);
+        }
+        self.op(ALU | SETA | a_src(ZERO) | a_dest(DUE))
+    }
+}
+
+/// The A word [`Preset::until`] holds its due time in.
+const DUE: u64 = 0o1711;
+/// The M word [`Preset::until`] reads the clock into.
+const NOW_M: u64 = 0o31;
+
+/// Timer 1's control and period words, the scheduler's timer (contract
+/// Q11, amendment A1).
+const T1_CONTROL: u64 = 0o112;
+const T1_PERIOD: u64 = 0o113;
+/// On, one-shot, its interrupt enable: the scheduler's arming.
+const T1_ARM: Word = 1 | 4 | 1 << 8;
+/// The handler's write: on, the flag cleared, the interrupt enable.
+const T1_HANDLER_CLEAR: Word = 0o403;
+
+/// **Timer 1 as the scheduler arms it** (muir's four sequences at the end of
+/// `tests/interval_timers.rs`, at about a tenth of their microseconds): a
+/// period write arms a risen and cleared one-shot again; a period write while
+/// it counts re-arms it to an earlier and to a later rise, the old deadline
+/// rising nothing; and period 0 while it counts disarms it until a later
+/// period arms it again.  Its control word is read into M 20 at each instant
+/// the test asks about, a microsecond or more from any deadline; M 30 is the
+/// microsecond clock at the arming, M 32 at the period write and M 33 at the
+/// rise.
+fn scheduler_timer(v: &mut Vec<(String, Preset)>) {
+    let status = |p: &mut Preset| {
+        p.read(reg(T1_CONTROL), 0o20);
+    };
+    let arm = |p: &mut Preset, us: Word| {
+        p.write(us, reg(T1_PERIOD)).write(T1_ARM, reg(T1_CONTROL)).now(0o30);
+    };
+    let rise = |p: &mut Preset| {
+        p.poll(T1_CONTROL, 2).now(0o33);
+        p.read(reg(T1_CONTROL), 0o20);
+        p.write(T1_HANDLER_CLEAR, reg(T1_CONTROL));
+    };
+    let end = |mut p: Preset, v: &mut Vec<(String, Preset)>, name: &str| {
+        p.write(0, reg(T1_CONTROL)).clear_times().quiet_md();
+        p.stop();
+        v.push((name.to_string(), p));
+    };
+    // A risen and cleared one-shot, armed again: armed for 4 us, it rises
+    // and the handler's 403 clears it; down at 2, 3 and 10 periods; a period
+    // of 3 us written then rises once, 3 us after the write, and is down at
+    // 2, 3 and 10 of its periods after its clear.
+    let mut p = run();
+    arm(&mut p, 4);
+    rise(&mut p);
+    status(&mut p);
+    for n in [2, 3, 10] {
+        p.until(0o30, 4 * n + 1);
+        status(&mut p);
+    }
+    p.write(3, reg(T1_PERIOD)).now(0o32);
+    status(&mut p);
+    p.until(0o32, 1);
+    status(&mut p);
+    rise(&mut p);
+    for n in [2, 3, 10] {
+        p.until(0o32, 3 * n + 1);
+        status(&mut p);
+    }
+    end(p, v, "one-shot-armed-again");
+    // A re-arm while it counts, to an earlier rise: armed for 10 us, a
+    // period of 3 us written 2 us later rises 3 us after the write; cleared
+    // there, down before the old deadline, after it, and long after.
+    let mut p = run();
+    arm(&mut p, 10);
+    p.until(0o30, 2).write(3, reg(T1_PERIOD)).now(0o32);
+    p.until(0o32, 1);
+    status(&mut p);
+    rise(&mut p);
+    for us in [8, 12, 20, 50] {
+        p.until(0o30, us);
+        status(&mut p);
+    }
+    end(p, v, "re-arm-earlier");
+    // A re-arm while it counts, to a later rise: armed for 3 us, a period of
+    // 10 us written 1 us later is down after the old deadline and before
+    // the new, rises 10 us after the write, once.
+    let mut p = run();
+    arm(&mut p, 3);
+    p.until(0o30, 1).write(10, reg(T1_PERIOD)).now(0o32);
+    p.until(0o30, 5);
+    status(&mut p);
+    p.until(0o32, 8);
+    status(&mut p);
+    rise(&mut p);
+    for n in [2, 3, 10] {
+        p.until(0o32, 10 * n + 1);
+        status(&mut p);
+    }
+    end(p, v, "re-arm-later");
+    // Period 0 while it counts, the idle disarm: armed for 5 us, a period of
+    // 0 written 1 us later leaves it on and one-shot with its flag down
+    // before the old deadline, after it and long after; a period of 2 us
+    // written then rises 2 us after its write.
+    let mut p = run();
+    arm(&mut p, 5);
+    p.until(0o30, 1).write(0, reg(T1_PERIOD));
+    for us in [4, 7, 15, 60] {
+        p.until(0o30, us);
+        status(&mut p);
+    }
+    p.write(2, reg(T1_PERIOD)).now(0o32);
+    status(&mut p);
+    rise(&mut p);
+    end(p, v, "period-0-disarms");
 }
 
 /// **The interval timers, the microsecond clock and the real-time clock.**
@@ -207,6 +347,7 @@ pub fn timers() -> Vec<(String, Preset)> {
     p.quiet_md();
     p.stop();
     v.push(("reset-devices".to_string(), p));
+    scheduler_timer(&mut v);
     v
 }
 

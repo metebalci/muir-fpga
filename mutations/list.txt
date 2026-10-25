@@ -24687,6 +24687,53 @@ set prom build/boot_prom.quux15.hex
         r.rem   = t.rem;
 @end
 
+# Timer 1 as the scheduler arms it, one-shot with its interrupt enable: the
+# timers group's `one-shot-armed-again`, `re-arm-earlier`, `re-arm-later` and
+# `period-0-disarms` (muir's four sequences in `tests/interval_timers.rs`).
+# None of the group's earlier runs writes a period to a one-shot that is on.
+
+@mutation quux15-one-shot-period-write-skipped-once-risen
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A period written to a one-shot that has risen and been cleared, or that
+@note period 0 disarmed, arms nothing, where it counts the new period from
+@note the write.
+@old
+      if (r.on) begin
+        r.armed = v[23:0] != 24'd0;
+@new
+      if (r.on && (t.armed || !t.one_shot)) begin
+        r.armed = v[23:0] != 24'd0;
+@end
+
+@mutation quux15-one-shot-period-write-keeps-the-deadline
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A period written to a one-shot while it counts leaves its deadline,
+@note earlier or later, where the new period counts from the write.
+@old
+        r.rem   = units_of(v[23:0]);
+@new
+        r.rem   = (t.one_shot && t.armed) ? t.rem : units_of(v[23:0]);
+@end
+
+@mutation quux15-one-shot-period-0-keeps-the-deadline
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A period of 0 written while the timer is on leaves it counting to its
+@note deadline, where it disarms it.
+@old
+        r.armed = v[23:0] != 24'd0;
+        r.up    = 1'b0;
+        r.rem   = units_of(v[23:0]);
+@new
+        if (v[23:0] != 24'd0) begin
+        r.armed = v[23:0] != 24'd0;
+        r.up    = 1'b0;
+        r.rem   = units_of(v[23:0]);
+        end
+@end
+
 @mutation quux15-word-100-not-under-the-enable
 @check quux15_timers_quux
 @file rtl/machine/quux15_devices.sv
