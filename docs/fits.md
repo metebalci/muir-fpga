@@ -26,13 +26,17 @@ reports none.
 
 ## From a clean tree
 
-These fits are QUUX revisions 15 and 16's, with PROM 2002 in the boot PROM:
-20 ns on the Kria KR260 and 25 ns on the DE25-Nano at both revisions, and on
-the Arty Z7-20 50 ns at revision 15 and 60 ns at revision 16. Revision 15's
-three were built from `653e575`, their stamps reading `653e5750`, with muir
-pinned at `692ba52`. Revision 16's were built with muir pinned at `86bc217`: the Kria KR260's and the DE25-Nano's from
-`488dcd6`, their stamps reading `488dcd60`, and the Arty Z7-20's from
-`ca132e6`, its stamp reading `ca132e60`. Every tree was clean. The caches and pictures are those of the fits below: 64K words
+These fits are QUUX revisions 15 and 16's, with PROM 2002 in the boot PROM.
+Revision 15 is 20 ns on the Kria KR260, 25 ns on the DE25-Nano and 50 ns on
+the Arty Z7-20; revision 16 is 25 ns on the Kria KR260 and the DE25-Nano and
+60 ns on the Arty Z7-20. Revision 15's three were built from `653e575`,
+their stamps reading `653e5750`, with muir pinned at `692ba52`. Revision 16's
+were built from three commits. The Kria KR260's is from `d1df52e`, its stamp
+reading `d1df52e0`, with muir pinned at `f637bc6`. The DE25-Nano's is from
+`488dcd6`, its stamp reading `488dcd60`, and the Arty Z7-20's from `ca132e6`,
+its stamp reading `ca132e60`, both with muir pinned at `86bc217`. The Kria
+KR260's row at revision 16 and 20 ns, from `488dcd6` with muir pinned at
+`86bc217`, is its earlier fit, kept as a record. Every tree was clean. The caches and pictures are those of the fits below: 64K words
 and 1920 by 1080 on the Kria KR260, 16K words on the DE25-Nano and 4K on the
 Arty Z7-20, both 1280 by 1024. The DE25-Nano's logic is its ALMs used in
 final placement, with its ALMs needed in brackets, as below.
@@ -45,9 +49,11 @@ final placement, with its ALMs needed in brackets, as below.
 | DE25-Nano | QUUX revision 16, 25 ns | +1.395 ns | +0.006 ns | 35,496 of 46,800 ALMs used in placement, 76% (39,526 needed) | 162 of 358 M20K | --- | `488dcd6` | clean | 2026-10-23 |
 | Kria KR260 | QUUX revision 15, 20 ns | +0.280 ns | +0.014 ns | 31,770 of 117,120 LUTs, 27.13% | 44 of 144 BRAM tiles, 14 of 64 URAM | 6,276 of 14,640 CLBs | `653e575` | clean | 2026-10-18 |
 | Kria KR260 | QUUX revision 16, 20 ns | +0.155 ns | +0.010 ns | 32,983 of 117,120 LUTs, 28.16% | 43.5 of 144 BRAM tiles, 14 of 64 URAM | 6,458 of 14,640 CLBs | `488dcd6` | clean | 2026-10-23 |
+| Kria KR260 | QUUX revision 16, 25 ns | +2.144 ns | +0.013 ns | 31,767 of 117,120 LUTs, 27.12% | 43.5 of 144 BRAM tiles, 14 of 64 URAM | 6,314 of 14,640 CLBs | `d1df52e` | clean | 2026-10-25 |
 
-The Kria KR260's revision 16 runs at 25 ns. Once a fused return that
-writes its own base gives its handler the new one, its fit at 20 ns misses
+The Kria KR260's revision 16 fit from `d1df52e` runs at 25 ns, with a
+setup slack of +2.144 ns on the machine clock. Once a fused return that
+writes its own base gives its handler the new one, a fit at 20 ns misses
 by 0.054 ns, on a path from the interrupt through the jump condition to the
 PDL buffer's write enable; a trial at 21 ns met.
 
