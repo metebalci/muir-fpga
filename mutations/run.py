@@ -17,7 +17,8 @@
 # THE WORKING TREE IS NEVER MUTATED.  Each mutation gets a copy of rtl/ and
 # tb/ under --work and is applied, built and run there.  The tree is shared
 # with other sessions; a runner that edited it in place and then crashed would
-# leave corrupted source behind.
+# leave corrupted source behind.  Once a record's result is in, its copy is
+# removed but for the record's log, result and diff (`trim`).
 #
 # THREE THINGS ARE FAILURES OF THE RUN, NOT CAUGHT MUTATIONS, and each exits
 # non-zero with the mutation named:
@@ -59,12 +60,15 @@
 
 import argparse
 import concurrent.futures
+import difflib
 import filecmp
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -3128,20 +3132,111 @@ def apply(work, m, listing):
     if n != 1:
         return ("%s:%d: `%s` matches %s %d times, want exactly once"
                 % (listing, m.line, m.name, m.path, n))
+    mutated = src.replace(m.old, m.new)
     with open(path, "w") as f:
-        f.write(src.replace(m.old, m.new))
+        f.write(mutated)
+    # What the record changed, kept beside its log: the copy it was made in
+    # is removed once the result is in (`trim`).
+    with open(os.path.join(work, DIFF), "w") as f:
+        f.writelines(difflib.unified_diff(
+            src.splitlines(True), mutated.splitlines(True),
+            "a/" + m.path, "b/" + m.path))
     return None
 
 
+# **WHAT A COPY KEEPS ONCE ITS RESULT IS IN.**  A mutant's copy is about
+# 12 MB of sources and, built, up to about 500 MB of Verilator objects: 196
+# of QUUX's took 34 GB, the CADR's 1,181 took 50 GB, and a whole QUUX run
+# needed more disk than there was.  Everything in a copy is rebuilt from the
+# commit and the record, so once a record's verdict is final the copy goes
+# and three files stay: every command the record ran with its output and
+# exit status, the verdict, and the mutation as a diff.  That is what says
+# why it was caught or why it survived.  `--keep-trees` keeps copies whole.
+LOG = "log.txt"
+RESULT = "result.txt"
+DIFF = "mutation.diff"
+KEPT = (LOG, RESULT, DIFF)
+
+# The log a command's output goes to, per thread: the jobs run at once, and
+# the baseline's checks share one copy, so a log is named by the thread that
+# is running the record or the check rather than by the directory.
+_log = threading.local()
+
+
+def logging_to(path):
+    """Send this thread's commands' output to `path` from now on (None: nowhere)."""
+    _log.path = path
+
+
+# **A COMMAND'S OUTPUT IS LOGGED UP TO 1 MiB, ITS HEAD AND ITS TAIL.**  A
+# testbench that reports every tick it disagrees on wrote 1.1 GB for one
+# record (`pack-offers-the-write-address-twice`, 13 million lines of one
+# finding).  The verdict's line comes from the head, where `first_problem`
+# finds it, and the run's last words are in the tail; the runner itself
+# still reads the whole output.
+LOG_HEAD = 768 * 1024
+LOG_TAIL = 256 * 1024
+
+
+def logged(out):
+    """`out` as the log keeps it: whole, or its head and tail at line ends."""
+    if len(out) <= LOG_HEAD + LOG_TAIL:
+        return out
+    head = out[:out.rfind("\n", 0, LOG_HEAD) + 1 or LOG_HEAD]
+    start = out.find("\n", len(out) - LOG_TAIL) + 1 or len(out) - LOG_TAIL
+    gap = out[len(head):start]
+    return "%s[... %d bytes in %d lines left out of the log here ...]\n%s" % (
+        head, len(gap), gap.count("\n"), out[start:])
+
+
 def run(cmd, cwd, env=None):
+    log = getattr(_log, "path", None)
+    shown = env
     if env is not None:
         merged = os.environ.copy()
         merged.update(env)
         env = merged
+    start = time.time()
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, env=env)
     out = p.communicate()[0].decode("utf-8", "replace")
+    if log:
+        with open(log, "a") as f:
+            f.write("$ %s\n  in %s%s\n%s%s"
+                    % (" ".join(shlex.quote(c) for c in cmd), cwd,
+                       "".join(", %s=%s" % kv for kv in sorted((shown or {}).items())),
+                       logged(out), "" if not out or out.endswith("\n") else "\n"))
+            f.write("exit %d, %.1f s\n\n" % (p.returncode, time.time() - start))
     return p.returncode, out
+
+
+def write_result(path, rows):
+    """A result file: one `name  value` line a field, in the order given."""
+    with open(path, "w") as f:
+        for k, v in rows:
+            if v not in (None, ""):
+                f.write("%-8s %s\n" % (k, v))
+
+
+def trim(work, keep):
+    """Remove everything in a finished copy but the files named in `keep`.
+
+    Called only after the record's verdict is final, `also` and all.  A
+    failure to remove is reported and does not stop the run: the verdicts
+    are already in, and a disk that fills will say so on its own.
+    """
+    for name in os.listdir(work):
+        if name in keep:
+            continue
+        path = os.path.join(work, name)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.unlink(path)
+        except OSError as e:
+            sys.stderr.write("mutations: warning: could not remove %s: %s\n"
+                             % (path, e))
 
 
 def build_env(args):
@@ -4187,6 +4282,98 @@ def self_test(args):
                                  for s in out.strip().split("\n")[-12:]))
         bad += 1
 
+    # **A FINISHED COPY KEEPS ITS LOG, ITS RESULT AND ITS DIFF, AND NOTHING
+    # ELSE --- AND ONLY ONCE ITS RESULT IS FINAL.**  Read off the two runs
+    # above rather than paid for again: the caught record of the relative
+    # run, and the hole that is still open, which has run every other check
+    # that builds its file in its own copy.  A copy removed before that was
+    # read would have made those checks BROKEN and left `also` short; a log
+    # removed with the copy would leave the catch unexplained.
+    def leftovers(tree, verdict):
+        """What is wrong with a finished copy, and its result's fields."""
+        if not os.path.isdir(tree):
+            return ["%s is not there" % tree], {}
+        stray = sorted(set(os.listdir(tree)) - set(KEPT))
+        problems = ["left in the copy: %s" % ", ".join(stray[:6])] if stray else []
+        fields = {}
+        for name in KEPT:
+            if not os.path.isfile(os.path.join(tree, name)):
+                problems.append("no %s" % name)
+        if problems:
+            return problems, fields
+        with open(os.path.join(tree, RESULT)) as f:
+            for line in f:
+                k, _, v = line.rstrip("\n").partition(" ")
+                fields[k] = v.strip()
+        with open(os.path.join(tree, LOG)) as f:
+            log = f.read()
+        if fields.get("verdict") != verdict:
+            problems.append("verdict %r, want %r" % (fields.get("verdict"), verdict))
+        if fields.get("detail", "") not in log:
+            problems.append("the log does not show %r" % fields.get("detail"))
+        return problems, fields
+
+    case_dirs = dict((what, os.path.join(root, "case%d" % i))
+                     for i, (what, _, _, _) in enumerate(cases))
+    problems, _ = leftovers(os.path.join(here, "work", cheap.name), CAUGHT)
+    base_left = os.path.join(here, "work", "baseline")
+    stray = sorted(f for f in os.listdir(base_left)
+                   if f != RESULT and not (f.startswith("log-") and f.endswith(".txt"))) \
+        if os.path.isdir(base_left) else ["(no baseline)"]
+    if stray:
+        problems.append("left in the baseline: %s" % ", ".join(stray[:6]))
+    sys.stdout.write("  %-34s %s\n" % ("a caught copy keeps its log",
+                                       "FAILED" if problems else "ok"))
+    sys.stdout.write("".join("      %s\n" % p for p in problems))
+    bad += bool(problems)
+
+    others = sorted(c for c in CHECKS
+                    if c != cheap.check and cheap.path in CHECKS[c]["sources"]
+                    and all(os.path.exists(os.path.join(args.goldens, g))
+                            for g in goldens_of(c)))
+    problems, fields = leftovers(os.path.join(case_dirs["a hole that is still open"],
+                                              "self-test-a-comment-changed"), HOLE)
+    want = "not caught by %s either" % ", ".join(others) if others else ""
+    if not problems and fields.get("also", "") != want:
+        problems.append("also %r, want every other check that builds %s"
+                        % (fields.get("also"), cheap.path))
+    sys.stdout.write("  %-34s %s\n" % ("a survivor's copy goes last",
+                                       "FAILED" if problems else "ok"))
+    sys.stdout.write("".join("      %s\n" % p for p in problems))
+    bad += bool(problems)
+
+    # A long output is logged by its head and its tail, at line ends, with
+    # the gap counted, and a short one whole.
+    long_out = "".join("tick %d: the same finding\n" % i for i in range(100000)) + "the end\n"
+    kept = logged(long_out)
+    gap = kept.find("[... ")
+    head, tail = kept[:gap], kept[kept.find(" ...]\n", gap) + 6:]
+    ok = (logged("one\ntwo\n") == "one\ntwo\n" and gap > 0
+          and len(kept) < LOG_HEAD + LOG_TAIL + 100
+          and long_out.startswith(head) and head.endswith("\n")
+          and long_out.endswith(tail) and tail.startswith("tick ")
+          and int(kept[gap:].split()[1]) == len(long_out) - len(head) - len(tail))
+    sys.stdout.write("  %-34s %s\n" % ("a long output is logged in part",
+                                       "ok" if ok else "FAILED"))
+    bad += not ok
+
+    # And `--keep-trees` keeps the copies whole, the baseline's too.
+    cmd = [sys.executable, os.path.abspath(__file__),
+           "--goldens", args.goldens, "--work", os.path.join(root, "kept"),
+           "--only", cheap.name, "--jobs", "2", "--keep-trees",
+           "--verilator", args.verilator, "--cargo", args.cargo,
+           "--tclsh", args.tclsh] + cached
+    rc, out = run(cmd, REPO)
+    obj = "obj_" + cheap.check
+    ok = rc == 0 and all(os.path.isdir(os.path.join(root, "kept", d, obj))
+                         for d in (cheap.name, "baseline"))
+    sys.stdout.write("  %-34s %s\n" % ("--keep-trees keeps the copies",
+                                       "ok" if ok else "FAILED"))
+    if not ok:
+        sys.stdout.write("".join("      | %s\n" % s
+                                 for s in out.strip().split("\n")[-12:]))
+        bad += 1
+
     if bad:
         sys.stdout.write("\n%d of the runner's own guarantees do not hold\n"
                          % bad)
@@ -4230,6 +4417,9 @@ def main():
                          "its cache in DIR")
     ap.add_argument("--ccache-size", default="10G",
                     help="the most the ccache directory may hold")
+    ap.add_argument("--keep-trees", action="store_true",
+                    help="keep each copy whole once its result is in, rather "
+                         "than only its log, result and diff")
     args = ap.parse_args()
 
     # Every check is built and run with its working directory set to the
@@ -4335,14 +4525,21 @@ def main():
         muir_beside(args.work)
     copy_tree(base, with_golden=any(needs_golden(c) for c in wanted), rev=args.rev)
     baseline_bad = False
+    baseline_rows = []
     # How long each check took here, which is what the records are ordered by.
     took = {}
 
+    # Each check's commands logged to a file of its own: they run at once in
+    # the one copy.
     def timed(check):
-        start = time.time()
-        result = build_and_run(args, base, check)
-        took[check] = time.time() - start
-        return result
+        logging_to(os.path.join(base, "log-%s.txt" % check))
+        try:
+            start = time.time()
+            result = build_and_run(args, base, check)
+            took[check] = time.time() - start
+            return result
+        finally:
+            logging_to(None)
 
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = dict((pool.submit(timed, c), c) for c in wanted)
@@ -4355,6 +4552,8 @@ def main():
             sys.stdout.write("  %-14s %s\n"
                              % (check, "ok" if ok else "FAILED: " + detail))
             baseline_bad = baseline_bad or not ok
+            baseline_rows.append((check, detail if ok else "FAILED: " + detail))
+    write_result(os.path.join(base, RESULT), sorted(baseline_rows))
     if baseline_bad:
         sys.stderr.write(
             "\nmutations: the baseline does not pass, so nothing was run.\n"
@@ -4362,10 +4561,35 @@ def main():
             "  already failing is caught by nothing.\n")
         return 2
     sys.stdout.write("\n")
+    # **THE BASELINE'S COPY GOES ONCE IT HAS PASSED, AND STAYS WHOLE WHEN IT
+    # HAS NOT.**  Nothing after this reads it: each record's copy comes from
+    # the commit (or the working tree), never from this one, and its builds
+    # are its own.  A baseline that failed stops the run above with its copy
+    # untouched, which is where its failure is looked at.
+    if not args.keep_trees:
+        trim(base, KEPT + tuple("log-%s.txt" % c for c in wanted))
 
     def one(m):
         work = os.path.join(args.work, m.name)
+        try:
+            judged(m, work)
+        finally:
+            logging_to(None)
+        # Only now is the verdict final: a survivor has run every other check
+        # that builds its file, in this copy.
+        write_result(os.path.join(work, RESULT),
+                     [("record", m.name), ("check", m.check), ("file", m.path),
+                      ("verdict", m.verdict), ("detail", m.detail),
+                      ("hole", m.hole),
+                      ("also", "not caught by %s either" % ", ".join(m.also)
+                       if m.also else None)])
+        if not args.keep_trees:
+            trim(work, KEPT)
+        return m
+
+    def judged(m, work):
         copy_tree(work, with_golden=needs_golden(m.check), rev=args.rev)
+        logging_to(os.path.join(work, LOG))
         problem = apply(work, m, args.list)
         if problem:
             m.verdict, m.detail = UNAPPLIED, problem
@@ -4434,10 +4658,24 @@ def main():
             def before(m):
                 work = os.path.join(args.work, "since", m.name)
                 copy_tree(work, with_golden=needs_golden(m.check), rev=args.since)
-                if apply(work, m, args.list) is None:
-                    verdict, _ = build_and_run(args, work, m.check)
-                    if verdict == CAUGHT:
-                        m.was_caught_at = args.since
+                logging_to(os.path.join(work, LOG))
+                verdict = detail = None
+                try:
+                    problem = apply(work, m, args.list)
+                    if problem is None:
+                        verdict, detail = build_and_run(args, work, m.check)
+                        if verdict == CAUGHT:
+                            m.was_caught_at = args.since
+                    else:
+                        detail = problem
+                finally:
+                    logging_to(None)
+                write_result(os.path.join(work, RESULT),
+                             [("record", m.name), ("check", m.check),
+                              ("file", m.path), ("at", args.since),
+                              ("verdict", verdict or UNAPPLIED), ("detail", detail)])
+                if not args.keep_trees:
+                    trim(work, KEPT)
                 return m
 
             with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:

@@ -107,6 +107,18 @@ word. The runner also has a `--self-test` that plants faults in itself: a
 build that fails must be broken and never caught, and two generator mutations
 must report two different failures.
 
+The copies go under `--work`, one directory a record. A built copy is up to
+about 500 MB, almost all of it Verilator's objects, and a whole run's copies
+would not fit on the disk. So once a record's verdict is final, after a
+survivor has run every other check that builds its file, the runner removes
+the copy and keeps three files in its directory. `log.txt` has every command
+the record ran, with its output and exit status; an output longer than 1 MiB
+is kept as its first 768 KiB and its last 256 KiB. `result.txt` has the
+verdict and the line the report gives for it. `mutation.diff` is the change
+the record made. The baseline keeps `log-<check>.txt` for each check and a
+`result.txt`, and stays whole when it fails. `--keep-trees` keeps every copy
+as it was built.
+
 ## Why this project uses it
 
 Every check here compares the fabric against a reference, muir, tick for tick.
