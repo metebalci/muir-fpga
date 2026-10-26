@@ -3590,12 +3590,20 @@ mutrev:
 # QUUX's traces and PROM images, both machines' programs among them: `make
 # mutants` runs the records aimed at the CADR's checks, the CADR's side of
 # QUUX's programs included, and `make mutants MACHINE=quux` those aimed at
-# QUUX's.  `mutations/run.py` without `--machine` runs both.
+# QUUX's.  `mutations/run.py` without `--machine` runs both.  **EVERY TRACE
+# THE RUNNER'S QUUX CHECKS READ**, not only those `make check` builds: the
+# runner refuses to start while one is missing, and `make check` does not
+# take the two-bubble traces (`quux15_<program>.quux.p<P>.b2.golden`, the
+# runner's `quux15_<program>_quux_b2`, which `make quux15-b2` runs), the
+# walk's scripts (`quux13_block_disk*.quux.golden`) or `videosize`'s.
 MUTANT_QUUX = $(BUILD)/muldiv.quux.golden $(BUILD)/quux_input.quux.golden \
               $(patsubst %,$(BUILD)/quux_%_prom.hex,$(QUUX_PROGRAMS)) \
               $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.golden) \
-              $(foreach p,$(QUUX15_CORE) mainsize,$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+              $(foreach p,$(QUUX15_CORE) mainsize videosize,$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                 $(BUILD)/quux15_$(p).quux.p$(q).golden)) \
+              $(foreach p,$(QUUX15_CORE),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+                $(BUILD)/quux15_$(p).quux.p$(q).b2.golden)) \
+              $(BUILD)/quux13_block_disk.quux.golden $(BUILD)/quux13_block_disk_whole.quux.golden \
               $(QUUX15_BOARD_TRACES) \
               $(BUILD)/quux16_ethernet_rules.golden $(BUILD)/quux16_ethernet_random.golden
 
