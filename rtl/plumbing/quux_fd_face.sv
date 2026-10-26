@@ -36,8 +36,8 @@
 // write a value nobody chose.
 //
 // **THIS MODULE IS A MAP AND NOTHING ELSE.**  The registers, their rules and
-// both orderings with the machine's memory are `rtl/machine/quux_file_device.sv`
-// and `rtl/machine/quux_rtc.sv`, inside the machine, which this face reaches
+// both orderings with the machine's memory are `rtl/machine/quux15_devices.sv`'s
+// file device and real-time clock, inside the machine, which this face reaches
 // through the machine's host side by index (0x010 is index 0, 0x014 index 1,
 // 0x100 + 4k index k + 2).  The AXI protocol is `cadr_gp_regs.sv`'s, which
 // reads two ticks after the address settles; the machine's host side answers

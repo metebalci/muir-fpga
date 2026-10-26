@@ -56,8 +56,8 @@
 //! `# image <memory> <address> <word>` lines, which the testbench writes into
 //! the core before its reset ends, as a bitstream would hold them.
 //!
-//! **NOTHING IS PRESET** in this file's programs, as in
-//! `golden/src/quux14.rs`: every constant is made by the program from the
+//! **NOTHING IS PRESET** in this file's programs, as in revision 14's:
+//! every constant is made by the program from the
 //! dispatch constant, and every data word is written by the program.  The
 //! preset programs are muir's tests', presets and all.  **EACH PROGRAM SAYS
 //! WHAT IT REACHED**: its
@@ -199,7 +199,7 @@ const M_THREE: u64 = 0o32;
 const TESTED: u64 = 0o76;
 /// **THE DISPATCH CONSTANT IS LOADED BY A DISPATCH THAT FALLS THROUGH**,
 /// this dispatch-memory entry's, R and P (`DFALL`, page CONTRL), and not by
-/// a dispatch-memory write as `golden/src/quux14.rs` loads it: muir's `micro`
+/// a dispatch-memory write as revision 14's programs loaded it: muir's `micro`
 /// and its pipeline leave the dispatch constant on a write, where its `rtl`
 /// loads it (page DSPCTL), so a constant made by a write would read 0 in the
 /// reference this trace is taken from.

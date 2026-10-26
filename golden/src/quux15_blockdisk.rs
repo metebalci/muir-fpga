@@ -101,7 +101,7 @@ pub struct DiskRun {
 }
 
 /// A block's word at first: a function of the block and the word, so that
-/// no wrong block and no wrong offset reads right (`tb/quux13_block_disk_tb.cpp`'s
+/// no wrong block and no wrong offset reads right (`tb/quux15_block_walk_tb.cpp`'s
 /// rule, which `tb/quux15_core_tb.cpp` keeps).
 pub fn pack_word(lba: u32, w: u32) -> u32 {
     let rot = (lba << 23) | (lba >> 9);

@@ -342,7 +342,9 @@ module cadr_io_board (
 
     // --- **QUUX'S REGISTER PAGE, WORDS 140-147** (contract Q4): the Chaosnet
     // interface's registers reached off the Unibus, word 140 + k being
-    // `0o764140` + 2k, from `rtl/machine/quux_feature_page.sv`.  One tick,
+    // `0o764140` + 2k, from revision 13's register page.  QUUX has no
+    // Chaosnet interface now and revision 15 no I/O board, so nothing drives
+    // these and `rtl/machine/cadr_memory_path.sv` ties them off.  One tick,
     // `qp_land`, at the instant the page answers its cycle, with `A<3:1>` as
     // `qp_which`; the page decides which of the eight `ioboard::answers`
     // takes, so a word it refuses never arrives.  What the access does to the
@@ -352,7 +354,8 @@ module cadr_io_board (
     // Unibus cycle of the same group lands waits one tick, so neither is
     // lost; only a console could make that happen.  The request itself,
     // `chaos_ireq`, is word 100's `<6>` (contract Q13).  The switches, `mouse_buttons`, are
-    // what QUUX's mouse word shows in `<14:12>` (`quux_input.sv`).  Tied off
+    // what revision 13's mouse word showed in `<14:12>` (`quux15_input.sv`
+    // takes them from the cables now).  Tied off
     // and unread on the CADR.
     input  var logic        qp_land,
     input  var logic        qp_wr,
@@ -1043,8 +1046,8 @@ module cadr_io_board (
   // **QUUX'S WORD 100 `<6>` AS THIS TICK LEAVES IT** for the processor's
   // interrupt: a write of the CSR's enables or clears, or of the transmit
   // buffer, that lands on the edge `SINTR` is taken at is in it, as muir
-  // counts a change on an edge as before it (`quux_input.sv` says the same
-  // of the keyboard's).  What the cable does on that tick is not in it: no
+  // counts a change on an edge as before it (`quux15_input.sv` says the
+  // same of the keyboard's, in its rule 2).  What the cable does on that tick is not in it: no
   // trace here has a cable.
   logic csr_w, buf_w, n_rdone, n_tdone;
   logic [5:4] n_wbits;

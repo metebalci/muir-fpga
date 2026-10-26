@@ -51,7 +51,7 @@
 
 namespace {
 
-// The period, in units of 0.5 ns: 18 ns, the Kria's.
+// The period, in units of 0.5 ns: 18 ns, the Kria's when this was written.
 constexpr unsigned kPeriod = 36;
 // Main memory's words, the harness's.
 constexpr uint32_t kMainWords = 0x200000u;

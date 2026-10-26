@@ -64,7 +64,7 @@
 
 #define QUUX_SECTOR 512u
 #define QUUX_BLOCK_BYTES 1024u
-// Block-disk's disk address is `<27:0>` (`rtl/machine/quux_block_disk.sv`), so
+// Block-disk's disk address is `<27:0>` (`rtl/machine/quux15_block_walk.sv`), so
 // this many blocks are all it can reach, and a disk of more is refused as
 // muir's `disk_image::MAX_BLOCKS` refuses it.
 #define QUUX_MAX_BLOCKS (1ull << 28)

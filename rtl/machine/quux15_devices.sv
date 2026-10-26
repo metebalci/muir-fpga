@@ -198,7 +198,7 @@ module quux15_devices #(
   logic [31:0] us_cnt, rtc_sec;
   logic [10:0] us_frac;
   logic [30:0] rtc_frac;
-  // **THE REAL-TIME CLOCK IS THE HOST'S** (`quux_rtc.sv`'s rule): the host
+  // **THE REAL-TIME CLOCK IS THE HOST'S** (revision 13's rule, kept): the host
   // writes the seconds, and the fraction they start at, through the host's
   // side, at boot and at every second after.  A machine reset starts it at
   // `rtc_start`, muir's `--rtc`, only until the host first sets it; after
@@ -455,10 +455,9 @@ module quux15_devices #(
   logic [15:0] fd_cprod, fd_ccons, fd_rcons;
   logic [7:0]  fd_hopen;
 
-  // **THE HOST'S SIDE** (contract Q9; `quux_file_device.sv`'s, revision
-  // 14's, whose header has it for the server's author, and `docs/
-  // file-device.md`).  Registers by index, `quux_fd_face.sv` multiplying by
-  // four:
+  // **THE HOST'S SIDE** (contract Q9, revision 14's; `docs/file-device.md`
+  // and `rtl/plumbing/quux_fd_face.sv`'s header have it for the server's
+  // author).  Registers by index, `quux_fd_face.sv` multiplying by four:
   //
   //     0, 1 the real-time clock's seconds and fraction (above)
   //     2    STATE, read: <0> enabled, <1> the interrupt enable, <2> busy,

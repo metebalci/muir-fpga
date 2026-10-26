@@ -544,9 +544,10 @@ resume line, run from the pack folder, and nothing else.
 over each run, ends each run there with muir's checkpoint of the halted
 machine, and `tb/quux15_core_tb.cpp` reads the core through its window with
 the board's own reader and writes the file with the board's own writer, both
-linked into it. The two files must be the same bytes, at 10 ns and at the
-Kria's 17 ns. muir's file is taken with the cache empty, the I/O board fresh
-and the stack's word at 19 bits, the three differences above, and with the
+linked into it. The two files must be the same bytes, at 10 ns and at 17 ns,
+the Kria's period when the check was made; the Kria's is 25 ns now. muir's
+file is taken with the cache empty, the I/O board fresh and the stack's word
+at 19 bits, the three differences above, and with the
 control store under the PROM zero, as muir's own machine holds it and the
 board's writer writes it (the traces' machine comes up all ones there, the
 fabric's power-on convention, which nothing fetches); every other byte is

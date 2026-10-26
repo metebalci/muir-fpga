@@ -26,7 +26,7 @@
 // caller looks its address up again.  Neither of revision 14's longer
 // holds is here: port B looks up in every clock it waits, and starts a walk
 // only when that clock's lookup misses; no walk of port B waits behind port
-// A's (`quux_mmu.sv`'s `w_b_queued`).
+// A's (revision 14's `w_b_queued`).
 //
 // **THE TLB**: 4,096 entries, direct-mapped, an entry `VA<31:22>` and the
 // page entry's `<29:0>` in two RAMs of one write and one read, one read by

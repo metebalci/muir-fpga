@@ -1917,7 +1917,7 @@ CHECKS = {
                   "-GSPREAD=1"],
         "golden": None,
     },
-    # And as revision 15's Kria builds it: the memory side at 25 ns, and the
+    # And as the Kria builds QUUX: the memory side at 25 ns, and the
     # configurations of `bow` and `err_clear` (the Makefile's
     # `display_out_kr260.quux15.pass`).
     "display_out_kr260_quux15": {

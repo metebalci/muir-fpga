@@ -358,7 +358,7 @@ static int answer(struct feeder *f, uint32_t tag, char *err, size_t errlen)
 	ps_tag_split(tag, &unit, &c, &h, &b);
 	++f->requests;
 	// **QUUX'S BLOCK-DISK ASKS BY BLOCK NUMBER**, `{3'b0, lba<27:0>}`, one
-	// pack on unit 0 (`rtl/machine/quux_block_disk.sv`): a block past the
+	// pack on unit 0 (`rtl/machine/quux15_block_walk.sv`): a block past the
 	// pack's end is denied, which is how the controller learns it is past
 	// the end.
 	if (f->linear) {

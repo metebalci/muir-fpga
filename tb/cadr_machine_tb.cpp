@@ -293,7 +293,8 @@ int main(int argc, char **argv) {
   // against the cycle that owes it.  The programs read no byte they did not
   // write.
   bool rev13 = false;
-  // **REVISION 14** (`golden/src/quux14.rs`, contract G3 revision 14): its
+  // **REVISION 14** (contract G3 revision 14, whose programs are gone with
+  // it, so no trace made now sets this): its
   // main memory is revision 13's packed storage, its frame buffer is at the
   // device window's bus address `1 << 28`, and two more things write and
   // fill it besides the processor's own cycles: the walk's reads, which
@@ -313,11 +314,11 @@ int main(int argc, char **argv) {
   bool have_ms = false, have_copies = false;
   uint64_t ms_dir_end = 0, ms_types_end = 0, ms_refused_end = 0, copies_base_end = 0, copies_head_end = 0;
   // **BLOCK-DISK'S PACK AND ITS TRANSFERS ON THE WHOLE MACHINE** (revision
-  // 13's `disk` program, `golden/src/quux13.rs`): the pack's blocks
+  // 13's `disk` program, gone with revision 13's programs): the pack's blocks
   // (`# disk`), those holding the rule's words (`# pack`), and the pages the
   // transfers reach (`# dma`), which the channel reads and writes through the
   // port beside the processor.  This program is the pack side, as
-  // `tb/quux13_block_disk_tb.cpp`'s is, serving the block store on the
+  // `tb/quux15_block_walk_tb.cpp`'s is, serving the block store on the
   // machine's seam.
   bool have_disk = false;
   uint32_t disk_blocks = 0;
@@ -413,15 +414,9 @@ int main(int argc, char **argv) {
           fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint64_t>(h1));
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
-        // Revision 13's programs (`golden/src/quux13.rs`) are scripts too,
-        // and their dispatches and location counter are compared row for
-        // row like the fused return's.
-        if (std::strstr(line, "golden/src/quux13.rs") || std::strstr(line, "golden/src/quux14.rs")) {
-          script_trace = true;
-          dispatch_trace = true;
-        }
-        // `returns` is `fused` at revision 13, where `golden/src/quux13.rs`
-        // has a `fused` of its own.
+        // `golden/src/quux.rs`'s `fused`, `operand`, `prefetch` and
+        // `returns` have their dispatches and location counter compared row
+        // for row.
         if (std::strstr(line, "golden/src/quux.rs") &&
             (std::strstr(line, "program fused,") || std::strstr(line, "program operand,") ||
              std::strstr(line, "program prefetch,") || std::strstr(line, "program returns,")))
@@ -754,7 +749,7 @@ int main(int argc, char **argv) {
   // The pack side, when the trace has a pack: one move at a time, a dirty
   // slot written back before its fill, some ticks after the request, and a
   // block past the pack's end denied.  The block store's 24 slots of 256
-  // words, as `tb/quux13_block_disk_tb.cpp`'s pack side keeps them.
+  // words, as `tb/quux15_block_walk_tb.cpp`'s pack side keeps them.
   constexpr int kPackSlots = 24, kPackLatency = 40;
   uint32_t pk_tag[kPackSlots] = {};
   bool pk_valid[kPackSlots] = {}, pk_dirty[kPackSlots] = {};
@@ -1296,7 +1291,7 @@ int main(int argc, char **argv) {
       if (prev.sintr) ++sintr_raised;
       // The disk's status with nothing on the cable and no command: the
       // CADR controller's 0x2321, or on QUUX block-disk's 0x201, not-active
-      // and no pack (`quux_block_disk.sv`).
+      // and no pack (`quux15_devices.sv`'s word 200).
       if (r.v[kMd] == (quux_prom ? 0x201u : 0x2321u)) ++status_rows;
 
       // The microcycle's own length.  muir charges the stall before the

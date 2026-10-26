@@ -211,16 +211,17 @@ CADR_LAT = $(BUILD)/machine.lat.pass $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.lat.pass)
 # words and moves handed to muir's `QuuxInput` at clocks across a polling
 # loop and an interrupt-driven one, the FIFO's overflow, a move between two
 # reads, the boot word, and checkpoints with input waiting, at 10 ns,
-# 8.5 ns and the Kria's 18 ns.  And the network (`golden/src/
-# quux15_network.rs`, `network`): two runs that hold 140-157 reserved and
-# word 100 `<6>` never set, QUUX having no Chaosnet interface (QUUX's
-# Ethernet contract, section 8 R4), at 10 ns, 8.5 ns and 18 ns.
+# 8.5 ns and 18 ns, the Kria's period when they were chosen.  And the
+# network (`golden/src/quux15_network.rs`, `network`): two runs that hold
+# 140-157 reserved and word 100 `<6>` never set, QUUX having no Chaosnet
+# interface (QUUX's Ethernet contract, section 8 R4), at 10 ns, 8.5 ns and
+# 18 ns.
 # And a register read's side effect and the halt (`golden/src/
 # quux15_regread.rs`, `regread`): a read of 121 and of 122 lowering an
 # interrupt level, held for the word right after its start however late
 # that word reaches EX (a mispredicted slot's target, the OA hold), and a
-# write of 200 raising one, each halted at every clock, at 10 ns and the
-# Kria's 18 ns.
+# write of 200 raising one, each halted at every clock, at 10 ns and at
+# 18 ns, the Kria's period when they were chosen.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
 QUUX15_GROUPS += input network
@@ -242,10 +243,11 @@ QUUX15_PERIODS_matrixmem := 20
 QUUX15_PERIODS_randmem := 20
 QUUX15_PERIODS_timers := 14 16 17 20 22 38
 QUUX15_PERIODS_halts := 20
-# The checkpoints at 10 ns and at the Kria's 17 ns, its build's period.
+# The checkpoints at 10 ns and at 17 ns, the Kria's build's period when they
+# were chosen.
 QUUX15_PERIODS_checkpoints := 20 34
 # **MAIN MEMORY AT THE KRIA'S 32M WORDS** (`quux15_mainsize.quux.pass`,
-# below): at 10 ns and at the board's 18 ns.
+# below): at 10 ns and at 18 ns, the board's period when it was chosen.
 QUUX15_PERIODS_mainsize := 20 36
 # **BLOCK-DISK WITH A PACK** (`golden/src/quux15_blockdisk.rs`): clock for
 # clock but the transfer's window at 8.5 ns and 18 ns, where 200,000 / P is
@@ -269,18 +271,19 @@ QUUX15_PERIODS_regread := 20 36
 QUUX15_GROUPS += ethernet lineclear
 QUUX15_PERIODS_ethernet := 20 17 36
 QUUX15_PERIODS_lineclear := 20 17 36
-# The store before a fused return at the board's 18 ns and at 10 ns.
+# The store before a fused return at 18 ns, the board's period when it was
+# chosen, and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
-# The PDL buffer's redirect inside the buffer at the board's 18 ns and at
-# 10 ns.
+# The PDL buffer's redirect inside the buffer at 18 ns, the board's period
+# when it was chosen, and at 10 ns.
 QUUX15_PERIODS_redirect := 36 20
 # **AND ON EACH BOARD** (`quux15_<group>.quux.<board>.pass`, below): the
 # memory side's groups at each board's cache, memory timing and period,
 # `golden/src/quux15.rs`'s `--board`, on the core built with the board's
 # `CACHE_WORDS`.  The Kria KR260's are muir's defaults, so its traces carry
 # no board in their names; another board's do, `.p<P>.<board>.golden`.
-# The periods are in units of 0.5 ns, the boards' periods for revisions 15
-# and 16: the Kria's 25 ns, the Arty Z7-20's 50 ns and the DE25-Nano's 25 ns.
+# The periods are in units of 0.5 ns, the boards' periods: the Kria's
+# 25 ns, the Arty Z7-20's 50 ns and the DE25-Nano's 25 ns.
 # A board's period moves here and nowhere else.
 # `boardcache` is the board's cache at its own
 # size (`golden/src/quux15_memside.rs`): the valid bits' group edges, lines
@@ -4036,7 +4039,7 @@ $(BUILD)/display_out_kr260.quux.pass: $(BUILD)/obj_display_out_kr260_quux/Vcadr_
 	$(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out
 	@touch $@
 
-# **AND AS REVISION 15'S KRIA BUILDS IT** (`boards/kria-kr260/quux15_kr260.sv`):
+# **AND AS THE KRIA BUILDS QUUX** (`boards/kria-kr260/quux15_kr260.sv`):
 # the same picture and raster, the memory side at the machine's period,
 # 25 ns, the board's and the slowest its fits have been asked for, where the fetch
 # has the fewest clocks a line to keep up in; and its configurations W, U

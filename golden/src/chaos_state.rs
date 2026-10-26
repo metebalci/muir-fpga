@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! The Chaosnet interface as muir's checkpoint writes it, and what its line
-//! offers the receiver before the receiver's own gate: shared by
-//! `golden/src/iob.rs` (the CADR's card) and `golden/src/quux15_chaos.rs`
-//! (revision 15's interface).
+//! offers the receiver before the receiver's own gate, for
+//! `golden/src/iob.rs` (the CADR's card).
 //!
 //! **The state is read as `Interface::load` reads it** (`Interface::save`,
 //! checkpoint versions 54 to 57): the registers, both buffers, the frames

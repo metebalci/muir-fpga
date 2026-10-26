@@ -21073,10 +21073,10 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 # ------------------------------------------------------------------ QUUX
 #
 # QUUX, the evolved CADR: what `cadr_machine` builds under `MACHINE ==
-# "quux"`, held by the checks that build it so, at revision 13 --- each
-# `quux13_<program>_quux` on a program of `golden/src/quux13.rs` or of
-# `golden/src/quux.rs` --- and, for the gate that keeps it out of the CADR,
-# by the CADR's side of `golden/src/quux.rs`'s programs, `quux_<program>`.
+# "quux"`, held by the checks that build it so (revision 13's
+# `quux13_<program>_quux` went with revision 13's programs) and, for the
+# gate that keeps it out of the CADR, by the CADR's side of
+# `golden/src/quux.rs`'s programs, `quux_<program>`.
 
 @mutation quux-level-2-is-written-as-the-cadrs-1024
 @check microcycle_sys
@@ -21283,7 +21283,8 @@ set prom build/boot_prom.quux15.hex
 
 # ------------------------------------------------ QUUX at muir's bcb6242
 #
-# The clocks in the processor (contract Q1, `rtl/machine/quux_clocks.sv`),
+# Revision 13's records, gone with its sources: the clocks in the processor
+# (contract Q1, revision 13's clocks module),
 # which replaced revision 4's tick and its records, and since revision 10
 # the three interval timers on the register page and `RESET-DEVICES`
 # (contract Q11), which replaced Q1's tick, interval timer and source 17 and
@@ -21291,9 +21292,8 @@ set prom build/boot_prom.quux15.hex
 # alias and its records; the window between a
 # flag's rise and the edge `SINTR` is taken at (muir's `ef015eb`); the
 # boot PROM at 36000 and the register page (Q2); the keyboard and the mouse
-# (Q3, `quux_input.sv`); the network on the page (Q4); block-disk
-# (`quux_block_disk.sv`); and no Unibus (Q5).  Each is aimed at the check
-# whose program reaches it.
+# (Q3); the network on the page (Q4); block-disk; and no Unibus (Q5).
+# Revision 15's are with its core's, below.
 
 # ------------------------------------------------ destination 3 writes only M
 #
@@ -21318,11 +21318,12 @@ set prom build/boot_prom.quux15.hex
 # ------------------------------------------------ QUUX's memory port, Q6
 #
 # Contract Q6, revision 7: main memory off the Xbus, through the cache to
-# the memory controller at the nominal timing, a floor.  `quux13_port_quux`
-# holds `quux_mem_port.sv` and `quux_cache.sv` to muir's `MemoryPort` tick for
-# tick and then to coherence with a transfer beside the processor;
-# `quux13_axi_master_quux` holds the line fill on the port; the
-# `quux13_<program>_quux` checks the port in the machine.
+# the memory controller at the nominal timing, a floor.  Revision 13's
+# checks, gone with it, held it: `quux13_port_quux` revision 13's memory
+# port and cache to muir's `MemoryPort` tick for tick and then to coherence
+# with a transfer beside the processor; `quux13_axi_master_quux` the line
+# fill on the port; the `quux13_<program>_quux` checks the port in the
+# machine.
 
 # ----------------------------------- QUUX's device registers, Q7, and Q8a
 #
@@ -21857,13 +21858,16 @@ FAULT_SH=/usr/share/cadr/faults.sh
 
 # THE WORD'S WIDTH.  `WORD_BITS` is 32 in every build the other checks make,
 # where a word that dropped it is the same design, so none of them can see
-# it.  `tools/word_width_check.py` lints the machine at 40 and reads each
-# word's width back out of Verilator's elaborated tree.
+# it.  Revision 13's lint of the machine at 40, which read each word's
+# width back out of Verilator's elaborated tree, went with revision 13, and
+# its records with it.
 
 # ----------------------------------------------- revision 13's processor
 #
 # QUUX revision 13 (contract G2, appendix A1), the processor at `WORD_BITS`
-# 40, against `golden/src/quux13.rs`'s programs on muir's `Geometry::QUUX`:
+# 40, once held against revision 13's programs on muir's `Geometry::QUUX`,
+# which went with revision 13; each record left below is aimed at the check
+# it names:
 # the misc decode, the ring of 40 and its masker, LC byte mode's add, the
 # conditions and the overflow flag, the dispatch memory at 4,096, the
 # location counter at 30 bits, and the map at 8,192 x 7 and 4,096 x 28 with
@@ -21930,13 +21934,14 @@ FAULT_SH=/usr/share/cadr/faults.sh
 
 # ------------------------------------------- revision 13's memory port
 #
-# QUUX revision 13's memory port and cache (contract G2 §3, G1 §3.2-§4.2):
-# `quux13_port_quux` holds `quux_mem_port.sv` and `quux_cache.sv` at
+# QUUX revision 13's memory port and cache (contract G2 §3, G1 §3.2-§4.2),
+# whose checks and records went with revision 13: `quux13_port_quux` held
+# the memory port and the cache at
 # `WORD_BITS` 40 to muir's `MemoryPort` on `Geometry::QUUX` tick for tick,
 # the testbench's main memory packed storage in bytes; `quux13_axi_master_quux`
-# holds the five-beat lines, the five-byte writes and the split at 4 KiB;
-# `xbus_decode_quux13` the 28-bit space at every address; the programs of
-# `golden/src/quux13.rs` the port in the whole machine; and
+# held the five-beat lines, the five-byte writes and the split at 4 KiB;
+# `xbus_decode_quux13` the 28-bit space at every address; revision 13's
+# programs the port in the whole machine; and
 # `rdw_poison_quux13_mem_quux` and `rdw_poison_quux13_pf_quux` the cache's
 # block RAMs' read-during-write tick.
 
@@ -22670,15 +22675,14 @@ set prom build/boot_prom.quux15.hex
 
 # ----------------------------------------------------- QUUX revision 14
 #
-# Contract G3 revision 14, appendix A14: the TLB (`quux_tlb.sv`), the walk,
-# the write-back, the windows, the redirect, the operations and the memory
-# system's words (`quux_mmu.sv`), the write-back's seam to the memory port
-# and the cache (`quux_mem_port.sv`, `quux_cache.sv`), LC at 34 bits and
-# condition 12 (`cadr_microcycle.sv`) and feature word 2
-# (`quux_feature_page.sv`), each held by a program of `golden/src/quux14.rs`
-# that muir at the pin matches; `redirectam` and `fiddleam` hold the redirect
-# and the fiddles without a write-back, and `inflight` the walks behind a
-# cycle in flight (clarification 74).
+# Contract G3 revision 14, appendix A14, whose records went with revision
+# 14's sources and programs: the TLB, the walk, the write-back, the
+# windows, the redirect, the operations and the memory system's words, the
+# write-back's seam to the memory port and the cache, LC at 34 bits and
+# condition 12 (`cadr_microcycle.sv`) and feature word 2, each held by a
+# program of revision 14's that muir at its pin matched; `redirectam` and
+# `fiddleam` held the redirect and the fiddles without a write-back, and
+# `inflight` the walks behind a cycle in flight (clarification 74).
 
 @mutation bridge-takes-the-word-a-tick-before-mem-done
 @check machine_lat
@@ -26270,16 +26274,18 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 20}]
 
 # ---------------------------------------------------------------------------
 # **REVISION 15'S NETWORK** (contracts Q4 and Q13; G3 revision 15, A15b.3;
-# MP2b rulings Q4 and Q19): `rtl/machine/quux15_chaos.sv`, the Chaosnet
+# MP2b rulings Q4 and Q19), whose records went with the Chaosnet interface
+# QUUX dropped: revision 15's interface module, the Chaosnet
 # interface's words 140-147 on the register page through
-# `quux15_devices.sv`.  `quux15_network_quux` holds the core clock for clock
+# `quux15_devices.sv`.  `quux15_network_quux` held the core clock for clock
 # to muir's pipeline with frames put on muir's cable and the testbench as
 # the far end (`golden/src/quux15_network.rs`): frames landing across
 # polling loops on the CSR and on word 100 and an interrupt-driven one,
 # frames sent, Transmit Done and its interrupt, the lost count and its wrap,
 # Loop Back, the words that take no write, the resets.
-# `quux15_chaos_module_quux` holds the module alone to muir's
-# `chaos::board::Interface` over a script.
+# `quux15_chaos_module_quux` held the module alone to muir's
+# `chaos::board::Interface` over a script.  The network group now holds
+# 140-157 reserved (`golden/src/quux15_network.rs`; the R4 records).
 
 # ---------------------------------------------------------------------------
 # **A REGISTER READ'S SIDE EFFECT AND THE HALT** (G3 revision 15, A15b.3's

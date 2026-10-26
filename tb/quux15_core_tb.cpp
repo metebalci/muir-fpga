@@ -107,7 +107,7 @@
 // **A RUN WITH A PACK** (`# pack <blocks> <latency>`; `golden/src/
 // quux15_blockdisk.rs`): block-disk's unit 0 holds a pack of that many
 // blocks, each word `pack_word(block, word)` at first, and this testbench is
-// its pack side, as `tb/quux13_block_disk_tb.cpp`'s is: a block the walk asks
+// its pack side, as `tb/quux15_block_walk_tb.cpp`'s is: a block the walk asks
 // for is in a slot of the store `latency` clocks later, a dirty slot written
 // back first, a block past the pack denied.  **WHILE THE TRANSFER IS IN
 // FLIGHT** (the core's `obs_transfer`, its walk running or its words on the
@@ -1053,7 +1053,7 @@ class Bench {
 
 
 #ifdef QUUX15_CORE
-// **BLOCK-DISK'S PACK SIDE** (`# pack`), `tb/quux13_block_disk_tb.cpp`'s:
+// **BLOCK-DISK'S PACK SIDE** (`# pack`), `tb/quux15_block_walk_tb.cpp`'s:
 // the pack's blocks `pack_word(block, word)` at first and those written back
 // since; a block the walk asks for is put in a slot `latency` clocks later,
 // the tag written last, a dirty slot written back first through the seam's

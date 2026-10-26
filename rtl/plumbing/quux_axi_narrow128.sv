@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's 64-bit memory master on a 128-bit port: `quux_axi_master.sv` on the
+// QUUX's 64-bit memory master on a 128-bit port: `quux15_axi_master.sv` on the
 // Kria KR260's `S_AXI_HP0_FPD`.
 //
 // **THE PORT IS 128 BITS WIDE AND QUUX'S MASTER IS 64**, for the reason
 // `cadr_axi_widen128.sv` gives: the part comes up at 128 and the fabric is
-// built for what it comes up at.  `quux_axi_master.sv` keeps its 64-bit
+// built for what it comes up at.  `quux15_axi_master.sv` keeps its 64-bit
 // beats, its packed storage and its 4 KiB splits, which its own check holds;
 // this puts its bursts on the wider port.
 //
@@ -40,7 +40,7 @@
 // The handshakes pass through but for those two holds: every valid, ready,
 // last and response is the master's or the port's.  The length widens from
 // AXI3's four bits to AXI4's eight with zeros, which means the same length.
-// `tb/quux_axi_narrow128_tb.cpp` holds the pair, QUUX's master behind this,
+// `tb/quux15_axi_narrow128_tb.cpp` holds the pair, QUUX's master behind this,
 // against a port that keeps AXI's narrow rule, beat by beat.
 
 `default_nettype none
@@ -51,7 +51,7 @@ module quux_axi_narrow128 (
     // port is live for.
     input  var logic         rst,
 
-    // The master's side, as `quux_axi_master.sv` drives it.
+    // The master's side, as `quux15_axi_master.sv` drives it.
     input  var logic [31:0]  s_awaddr,
     input  var logic [3:0]   s_awlen,
     input  var logic [1:0]   s_awsize,

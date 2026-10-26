@@ -37,7 +37,7 @@
 //! **THE READS ARE TAKEN WHERE THE FABRIC CAN ANSWER THEM.**  muir moves the
 //! words at START and knows the disk address, the last memory address and
 //! the errors then; the fabric walks the command list over the blocks' time
-//! (`rtl/machine/quux_block_disk.sv` says why), so a register is read here
+//! (`rtl/machine/quux15_devices.sv`'s block-disk says why), so a register is read here
 //! once the walk has had `WALK_NS` a page, and the status's not-active bit
 //! and the interrupt on either side of muir's instant.  Every page of main
 //! memory and every block the script names is compared at the end, whole.
