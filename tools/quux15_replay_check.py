@@ -20,12 +20,18 @@ the design, which plays a trace back, it must:
   address, an empty stage's nop bit;
   fail a trace played against a reference it is not (`--as`): one taken
   with a fault planted in muir's pipeline that moves clocks and no result,
-  or one taken at another period.
+  or one taken at another period;
+  fail a run judged by its results (`# results-only`) that names no page or
+  block, and a trace that compares no clock with muir's pipeline and finds
+  no page or block equal to muir's: the first trace with `# results-only`
+  added, and the same as a results-only run of no rows naming one page,
+  which the stand-in, holding no memory, cannot find equal.
 
 Every column must be caught in at least one trace.  The rules for what is
 compared are the testbench's, written again here to choose where to plant;
 if the two disagree a plant is not caught, or a control is, and this fails.
 """
+import os
 import re
 import subprocess
 import sys
@@ -144,6 +150,32 @@ def check_trace(tb, path, caught, fails):
     return names
 
 
+def judged(tb, path, fails):
+    """The guards on what a trace judges: two planted traces must fail."""
+    with open(path) as f:
+        lines = f.readlines()
+    at = next(i for i, l in enumerate(lines) if l.startswith("#") and l[1:].split()[:1] == ["clock"])
+    rows = next((i for i, l in enumerate(lines) if i > at and not l.startswith("#") and l.strip()), len(lines))
+    out_dir = os.path.dirname(os.path.abspath(tb))
+    plants = (
+        ("a run judged by its results that names no page or block", "results-no-page",
+         lines[:at + 1] + ["# results-only 0 40\n"] + lines[at + 1:],
+         "is judged by its results and names no page or block"),
+        ("a trace that compares no clock and judges no page or block", "judges-nothing",
+         lines[:at + 1] + ["# results-only 0 40\n", "# endpage 0 0\n"] + lines[at + 1:rows],
+         "compares no clock with muir's pipeline and judges no page or block"),
+    )
+    for why, name, text, says in plants:
+        planted = os.path.join(out_dir, "planted-%s.trace" % name)
+        with open(planted, "w") as f:
+            f.writelines(text)
+        rc, first, out = run(tb, planted, ["+replay=" + planted])
+        if rc != 1 or says not in out or "ok:" in out:
+            fails.append("%s (%s) is not failed (exit %d):\n%s" % (why, planted, rc, out.strip()))
+        else:
+            print("quux15_replay: %s: failed, \"%s\"" % (why, says))
+
+
 def main():
     args = sys.argv[1:]
     if len(args) < 2:
@@ -170,6 +202,8 @@ def main():
         else:
             print("quux15_replay: %s played against %s: failed, the first difference at clock "
                   "%d, %s" % (planted, reference, first[0], first[1]))
+    if traces:
+        judged(tb, traces[0], fails)
     for f in fails:
         print("quux15_replay: FAILED " + f)
     if fails:

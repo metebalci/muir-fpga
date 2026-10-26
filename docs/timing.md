@@ -612,6 +612,15 @@ transfer is in flight, with the processor off the port in that window, at
 uses the port while the walk runs, its fills held, its writes answered late
 and its queue slow.
 
+Such a run compares no clock with muir's pipeline, since muir has no walk on
+the port and its processor's clocks in that window are not the fabric's. Its
+line in the check's output says so: "ok: N runs of <trace> judged by their
+results, not by muir's clocks", with the clocks the core ran and the pages
+and blocks found equal to muir's at the end. The line "ok: N clocks ...
+agree with muir's pipeline" is printed only for runs that compared clocks.
+A run judged by its results that names no page or block fails, and so does a
+trace that compares no clock and finds no page or block equal to muir's.
+
 ## What is not MIT's timing at all
 
 Some tick counts in the tree name no nanosecond figure and must not be given

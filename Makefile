@@ -252,7 +252,9 @@ QUUX15_PERIODS_mainsize := 20 36
 # **BLOCK-DISK WITH A PACK** (`golden/src/quux15_blockdisk.rs`): clock for
 # clock but the transfer's window at 8.5 ns and 18 ns, where 200,000 / P is
 # not whole and DONE rounded per block shows; and the runs judged by their
-# results at 18 ns.
+# results at 18 ns, which compare no clock: their line in the output is
+# "ok: N runs of <trace> judged by their results", with the clocks run and
+# the pages and blocks found equal to muir's at the end.
 QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
 QUUX15_PERIODS_input := 20 17 36
@@ -1530,7 +1532,9 @@ $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb
 # column, at the last clock it is compared, is named by clock and column; a
 # change where nothing is compared passes; and two traces played against a
 # reference fail: `transfer` with the planted fault, and `memory` at 8.5 ns
-# against 10 ns.
+# against 10 ns.  And what a trace judges: a run judged by its results that
+# names no page or block fails, and so does a trace that compares no clock
+# with muir's pipeline and finds no page or block equal to muir's.
 $(BUILD)/quux15_replay.quux.pass: $(BUILD)/obj_quux15_replay/Vquux15_replay tools/quux15_replay_check.py \
                                   $(QUUX15_TRACES) $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace
 	python3 tools/quux15_replay_check.py $(BUILD)/obj_quux15_replay/Vquux15_replay $(QUUX15_TRACES) \

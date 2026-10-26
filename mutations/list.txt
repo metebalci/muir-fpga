@@ -27077,6 +27077,25 @@ set period  [expr {[info exists ::env(PERIOD_NS)] ? $::env(PERIOD_NS) : 20}]
       if (run_.write < d->axi_write_clocks + 2) {
 @end
 
+# **WHAT A TRACE JUDGES** (`tb/quux15_core_tb.cpp`): a trace that compares
+# no clock with muir's pipeline and finds no page or block equal to muir's
+# fails.  bdmix's runs are all judged by their results, so with the end's
+# pages left unjudged it compares nothing and would print ok.  A run judged
+# by its results that names no page or block is refused before it runs; no
+# check of traces carries one, so its record is the replay check's own
+# planted trace (`tools/quux15_replay_check.py`), not a record here.
+
+@mutation quux15-tb-results-runs-judge-no-page
+@check quux15_bdmix_quux
+@file tb/quux15_core_tb.cpp
+@note The end's pages and blocks are not held to muir's in a run judged by
+@note its results: bdmix's five runs judge nothing.
+@old
+  if (bad == 0 && (!run.end_pages.empty() || !run.end_blocks.empty())) {
+@new
+  if (bad == 0 && !run.results_only && (!run.end_pages.empty() || !run.end_blocks.empty())) {
+@end
+
 # ---------------------------------------------------------------------------
 # **REVISION 15 ON THE DE25-NANO** (MP8 step 2): the machine's master on the
 # FPGA-to-SDRAM bridge's share through `rtl/plumbing/quux15_f2sdram_port.sv`,

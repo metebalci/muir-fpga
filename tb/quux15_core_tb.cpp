@@ -122,7 +122,12 @@
 // quiet, and the pages and blocks are held to muir's, and the Ethernet
 // device's 244 and 250 are not held to muir's clocks; `# read-at-ar`, its
 // memory answers a read with the words as they stood when the read's
-// address was taken.
+// address was taken.  Such a run must name a page or a block, and its
+// trace's line says what it judged: "ok: N runs of <trace> judged by their
+// results", the clocks run and the pages and blocks equal to muir's.  The
+// line "ok: N clocks ... agree with muir's pipeline" counts the runs that
+// compared clocks and is printed only when there are some; a trace that
+// compares no clock and finds no page or block equal to muir's fails.
 //
 // A design that stops the simulation (`$finish`, the core's "not built")
 // fails at that clock.  Nothing here computes what a core should do: every
@@ -182,6 +187,9 @@ struct Totals {
   // side's blocks served, written back and denied.
   size_t results_clocks = 0, windowed = 0, pages = 0, blocks = 0;
   long served = 0, written_back = 0, denied = 0;
+  // The runs judged by their results, and the pages and blocks found equal
+  // to muir's at their ends: what a trace that compares no clock judged.
+  size_t results_runs = 0, results_pages = 0, results_blocks = 0;
 } totals;
 
 // Main memory's words: QUUX's 32 boards, 2M words, five bytes each, or the
@@ -648,6 +656,13 @@ int read_trace(const char *path, std::vector<Run> &runs) {
     if (!header || (runs[k].rows.size() < 2 && !runs[k].results_only)) {
       std::fprintf(stderr, "FAIL: %s run %s carries %s%zu rows\n", path, runs[k].name.c_str(),
                    header ? "" : "no header and ", runs[k].rows.size());
+      result = 1;
+    }
+    // A run judged by its results is judged by the pages and blocks it
+    // names; one that names none would judge only that it parked.
+    if (result == 0 && runs[k].results_only && runs[k].end_pages.empty() && runs[k].end_blocks.empty()) {
+      std::fprintf(stderr, "FAIL: %s run %s is judged by its results and names no page or block\n", path,
+                   runs[k].name.c_str());
       result = 1;
     }
   }
@@ -1821,6 +1836,7 @@ int run_trace(const char *path, const Run &run, int seed) {
   }
   // **THE END**: each page named held to muir's, five bytes a word, and
   // each block, the store's dirty slots written back first.
+  size_t judged_pages = 0, judged_blocks = 0;
   if (bad == 0 && (!run.end_pages.empty() || !run.end_blocks.empty())) {
     if (run.pack) {
       for (int k = 0; k < 4096 && !pack.idle(); ++k) edge();
@@ -1828,7 +1844,10 @@ int run_trace(const char *path, const Run &run, int seed) {
     }
     for (const auto &p : run.end_pages) {
       const uint32_t h = fnv(bench.main_bytes().data() + 5 * p.first, 5 * 1024);
-      if (h == p.second) continue;
+      if (h == p.second) {
+        ++judged_pages;
+        continue;
+      }
       std::fprintf(stderr, "at the end: main memory's page %" PRIo64 " hashes to %x, muir's to %" PRIx64 "\n",
                    p.first, h, p.second);
       if (bad == 0) first_column = "page";
@@ -1840,7 +1859,10 @@ int run_trace(const char *path, const Run &run, int seed) {
       for (uint32_t x : w)
         for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<uint8_t>(x >> (8 * i)));
       const uint32_t h = fnv(bytes.data(), bytes.size());
-      if (h == b.second) continue;
+      if (h == b.second) {
+        ++judged_blocks;
+        continue;
+      }
       std::fprintf(stderr, "at the end: the pack's block %" PRIu64 " hashes to %x, muir's to %" PRIx64 "\n",
                    b.first, h, b.second);
       if (bad == 0) first_column = "block";
@@ -1917,7 +1939,12 @@ int run_trace(const char *path, const Run &run, int seed) {
   totals.served += pack.served_;
   totals.written_back += pack.written_back_;
   totals.denied += pack.denied_;
+  if (run.results_only) {
+    totals.results_pages += judged_pages;
+    totals.results_blocks += judged_blocks;
+  }
 #endif
+  if (run.results_only) ++totals.results_runs;
   totals.commits += commits;
   totals.operands += operands;
   totals.grants += grants;
@@ -1955,11 +1982,30 @@ int main(int argc, char **argv) {
       result = 1;
       continue;
     }
-    std::printf("ok: %zu clocks of %s%s agree with muir's pipeline: %zu commits, %zu ALU and BYTE "
-                "words' operands, %zu grants, %zu words landed in MD, %zu registers taken\n",
-                totals.clocks, path,
-                runs.size() > 1 ? (" in " + std::to_string(runs.size()) + " runs").c_str() : "",
-                totals.commits, totals.operands, totals.grants, totals.landed, totals.registers);
+    // **A TRACE THAT JUDGES NOTHING FAILS.**  Its runs compared no clock
+    // with muir's pipeline, and no page or block of a run judged by its
+    // results was found equal to muir's: an "ok" here would say nothing.
+    if (totals.clocks == 0 && totals.results_pages == 0 && totals.results_blocks == 0) {
+      std::fprintf(stderr, "FAIL: %s compares no clock with muir's pipeline and judges no page or block "
+                   "(%zu runs, %zu judged by their results)\n", path, runs.size(), totals.results_runs);
+      result = 1;
+      continue;
+    }
+    const size_t compared = runs.size() - totals.results_runs;
+    if (totals.clocks > 0)
+      std::printf("ok: %zu clocks of %s%s agree with muir's pipeline: %zu commits, %zu ALU and BYTE "
+                  "words' operands, %zu grants, %zu words landed in MD, %zu registers taken\n",
+                  totals.clocks, path,
+                  compared > 1 ? (" in " + std::to_string(compared) + " runs").c_str() : "",
+                  totals.commits, totals.operands, totals.grants, totals.landed, totals.registers);
+    // **AND A TRACE'S RUNS JUDGED BY THEIR RESULTS**, which compare no
+    // clock: what they judged.
+    if (totals.results_runs > 0)
+      std::printf("ok: %zu run%s of %s judged by %s results, not by muir's clocks: %zu clocks run; "
+                  "%zu pages and %zu blocks equal to muir's at the end\n",
+                  totals.results_runs, totals.results_runs > 1 ? "s" : "", path,
+                  totals.results_runs > 1 ? "their" : "its", totals.results_clocks, totals.results_pages,
+                  totals.results_blocks);
 #ifdef QUUX15_CORE
     if (std::getenv("QUUX15_HALT_PROBE")) {
       std::printf("halt-probe: %ld runs probed, %ld of them stuck with the port shut\n", probe_totals.runs,
