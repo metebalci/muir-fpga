@@ -158,10 +158,11 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # The list and the loops in the repository's own Makefile are two statements
 # of one set, and each check runs whatever its loop names: 1 to 8, 19, 52 and
 # 53 are the CADR's, judged by `build/checkpoint.pass` on muir's round trip
-# and the digest; 32 to 37, 49, 50, 54 to 58 and 62 to 68, the run state's,
+# and the digest; 32 to 37, 49, 50, 54 to 58 and 62 to 73, the run state's,
 # QUUX's main memory's words, the halt's (`readout.c`'s `ro_found`), the
 # CADR's Chaosnet address, QUUX's host words, the sidecar's resume line and
-# the pack folder's names for its files (`bind_relative`),
+# the pack folder's names for its files (`bind_relative`), and 69 to 73,
+# the machine taken from the fabric before the packs (`bind_machine_bay`),
 # which the host check itself must fail on, judged there too, 62 also by muir
 # refusing the Kria's file under its line in the pack folder; and 11, 17, 18,
 # 31, 39 and 61, QUUX's file and its memory timing, judged by
@@ -173,7 +174,7 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # checkpoint by the path the capture gave, which is now the right line.
 # A mutant added here and not there is built and never judged.
 MUTANTS := 1 2 3 4 5 6 7 8 11 17 18 19 31 32 33 34 35 36 37 39 40 49 50 52 53 54 55 56 57 58 \
-           59 60 61 62 63 64 65 66 67 68
+           59 60 61 62 63 64 65 66 67 68 69 70 71 72 73
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

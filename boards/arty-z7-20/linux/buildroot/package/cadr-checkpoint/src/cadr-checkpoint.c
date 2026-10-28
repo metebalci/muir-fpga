@@ -14,13 +14,19 @@
 //     cadr-checkpoint --what-it-cannot-read [--machine cadr|quux]
 //
 // **WHICH MACHINE, `--machine cadr|quux`**, muir's own flag and the one
-// `cadr-terminal` and `cadr-disk-packs` take: the CADR by default, or QUUX,
-// whose checkpoint carries its clocks, its register page's keyboard and
-// mouse, block-disk, the video controller and its K and L (`chk_rtl.c`).
-// **THE FABRIC IS ASKED AND THE FLAG MUST AGREE**: the readout's register table says which
-// machine the bitstream is, and a checkpoint of the other machine is refused
-// before anything is read, since it would be a file of one machine's fields
-// filled from the other's.
+// `cadr-terminal` and `cadr-disk-packs` take: the CADR, or QUUX, whose
+// checkpoint carries its clocks, its register page's keyboard and mouse,
+// block-disk, the video controller and its K and L (`chk_rtl.c`).
+// **THE FABRIC IS ASKED, AND WITHOUT THE FLAG ITS ANSWER IS THE MACHINE**: the
+// readout's register table says which machine the bitstream is, as
+// `cadr-console machine` reads it, before a pack is looked at, since what a
+// pack is follows the machine.  A flag that names the other machine is
+// refused, naming both, since it would be a file of one machine's fields
+// filled from the other's; and an identity that cannot be read is refused,
+// with no machine assumed (`bind_machine_bay`).  The CADR was the default,
+// and the bay was held to it first: on a QUUX board without `--machine quux`
+// the QUUX disk was refused for its size, and the refusal that names the two
+// machines was never reached.
 //
 // **MAIN MEMORY IN EACH MACHINE'S OWN WORDS.**  The CADR's is its memory
 // boards, `--boards N`; QUUX has no memory boards, and its main memory is an
@@ -333,7 +339,8 @@ int main(int argc, char **argv)
 	int want_display = 1, leave_halted = 0, guard = 1;
 	int already_halted = 0, no_packs = 0, halt_only = 0, start_only = 0;
 	int packs_stopped = 0;
-	int quux = 0, want_missing = 0;
+	// `--machine`'s, or the fabric's when it is not given.
+	int machine = BIND_MACHINE_FABRIC, want_missing = 0;
 	char *packs[BIND_UNITS];
 	unsigned npacks = 0;
 
@@ -345,9 +352,9 @@ int main(int argc, char **argv)
 			// muir's own two words, as `cadr-terminal` takes them.
 			const char *v = argv[++i];
 			if (!strcmp(v, "quux")) {
-				quux = 1;
+				machine = 1;
 			} else if (!strcmp(v, "cadr")) {
-				quux = 0;
+				machine = 0;
 			} else {
 				say("--machine %s: wants cadr or quux", v);
 				return 2;
@@ -400,23 +407,24 @@ int main(int argc, char **argv)
 			usage();
 		}
 	}
+	// Needs no board, so with no machine named both lists are given.
 	if (want_missing) {
-		print_missing(quux);
+		if (machine == BIND_MACHINE_FABRIC) {
+			say("no --machine, and this needs no board: the CADR's list, then QUUX's");
+			print_missing(0);
+			print_missing(1);
+		} else {
+			print_missing(machine);
+		}
 		return 0;
 	}
 	if (verify)
 		return do_verify(verify, packs, npacks);
 	if (halt_only && start_only)
 		usage();
-	{
-		char err[256] = "";
-		const int rc = bind_memory_asked(quux, boards_arg, size_arg, MAX_BOARDS_13,
-						 &boards, err, sizeof err);
-		if (rc != 0) {
-			say("%s", err);
-			return rc;
-		}
-	}
+	// The main memory flags are held to the machine, which is not known
+	// until the fabric is asked (`bind_machine_bay`).
+	int quux = 0;
 
 	struct readout r;
 	struct mem_face face;
@@ -428,6 +436,9 @@ int main(int argc, char **argv)
 	// --- `cadr-disk-packs` to bed BETWEEN the halt and the capture, which
 	// --- is the only order in which the packs are certainly whole; the
 	// --- board procedure in `docs/checkpoint.md` is those five commands.
+	// --- **THE CADR's ONLY**: on QUUX a stopped `cadr-disk-packs` marks the
+	// --- drive absent, and the capture then refuses block-disk's empty
+	// --- unit 0 against the bay's pack (below), as it must.
 	if (halt_only) {
 		// QUUX's halt is its drain's end, which `ro_found` asks for by
 		// the machine.  A QUUX this program does not read is refused by
@@ -495,48 +506,29 @@ int main(int argc, char **argv)
 	if (!out)
 		out = timestamped();
 
-	// --- the drive bay, BEFORE the machine is touched, so that a pack that
-	// --- is not there is found out while the machine is still running.
+	// --- **WHICH MACHINE THE BITSTREAM IS, ASKED BEFORE ANYTHING IS READ**,
+	// --- and then the drive bay held to that machine's rule, BEFORE the
+	// --- machine is touched, so that a pack that is not there is found out
+	// --- while the machine is still running (`bind_machine_bay`).
 	struct binding bind;
-	bind_init(&bind);
-	// Before a pack is looked at: which machine's rule says what a pack is.
-	bind.quux = quux;
 	char err[1024] = "";
-	for (unsigned i = 0; i < npacks; ++i) {
-		if (bind_add(&bind, packs[i], err, sizeof err) != 0) {
+	unsigned sync_k = 0;
+	{
+		const struct bind_ask ask = { machine, boards_arg, size_arg, MAX_BOARDS_13,
+					      packs, npacks, pack_dir, no_packs };
+		char said[1100] = "";
+		const int rc = bind_machine_bay(&bind, &r, &ask, &boards, &sync_k, said,
+						sizeof said, err, sizeof err);
+		if (said[0])
+			say("%s", said);
+		if (rc != 0) {
 			say("%s", err);
-			return 1;
+			return rc;
 		}
-	}
-	if (!npacks && !no_packs) {
-		err[0] = '\0';
-		bind_scan(&bind, pack_dir, err, sizeof err);
-		if (err[0])
-			say("looking at the drive bay: %s", err);
-	}
-	// QUUX's disk is block-disk, whose one pack is unit 0 (muir's
-	// `attach`: "block-disk has one pack, unit 0").
-	if (quux) {
-		for (unsigned u = 1; u < BIND_UNITS; ++u) {
-			if (bind.u[u].present) {
-				say("unit %u %s: QUUX's disk is block-disk, which has one "
-				    "pack, unit 0", u, bind.u[u].path);
-				return 1;
-			}
-		}
-	}
-	if (!bind.present && !no_packs) {
-		say("no pack in %s and none named with --pack.  A checkpoint of a "
-		    "machine with a disk and no binding to that disk is the thing "
-		    "this program exists to prevent, so nothing is written.  Name "
-		    "the packs, or say --no-packs if the machine really has no "
-		    "drive.", pack_dir);
-		return 1;
-	}
-	if (no_packs && bind.present) {
-		say("--no-packs, and the drive bay holds %u pack(s): the two "
-		    "disagree", bind.present);
-		return 1;
+		quux = bind.quux;
+		if (machine == BIND_MACHINE_FABRIC)
+			say("no --machine: the fabric is %s, and the checkpoint is its",
+			    quux ? "QUUX" : "the CADR");
 	}
 	// **AND EVERY FILE NAMED FROM THE PACK FOLDER, ASKED NOW**, while the
 	// machine is still running: a pack or a checkpoint outside the pack
@@ -553,26 +545,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// **WHICH MACHINE THE BITSTREAM IS, ASKED BEFORE ANYTHING IS READ.**
-	unsigned sync_k = 0;
-	{
-		unsigned k = 0, l = 0;
-		const int is = ro_machine_is_quux(&r, &k, &l);
-		if (is < 0) {
-			say("the readout's register table entry %u is neither QUUX's "
-			    "signature nor the CADR's RO_NO_MEMORY, or its echo is "
-			    "stale: the window is not answering", IMG_RG_QUUX_ID);
-			return 1;
-		}
-		if (is != quux) {
-			say("this bitstream is %s and --machine says %s: a checkpoint "
-			    "of one machine filled from the other's fields is refused",
-			    is ? "QUUX" : "the CADR", quux ? "quux" : "cadr");
-			return 1;
-		}
-		sync_k = k;
-		(void)l;
-	}
 	// **THE CADR's CHAOSNET ADDRESS IS THE INTERFACE's OWN**, read as
 	// `cadr-chaosnet` reads it: the guard, the interface's face at
 	// `CHAOS_REG_BASE`, "CHAO", then the switches.  muir refuses to resume a

@@ -27,9 +27,15 @@ a daemon and has no init script, because it halts the machine while it reads.
    A read on a GP port that nothing in the fabric answers hangs both Arm
    cores, measured on the board, and no software guard can catch it
    afterwards.
-2. Looks at the drive bay and refuses to go on if it finds no pack and was
+2. Asks the fabric which machine it is, the CADR or QUUX, as
+   `cadr-console machine` asks it. Without `--machine` that is the machine
+   the checkpoint is of; a `--machine` that names the other one is refused,
+   naming both, and so is a fabric that does not say which it is. Nothing is
+   assumed for it. This comes before the packs, because what a pack is
+   follows the machine.
+3. Looks at the drive bay and refuses to go on if it finds no pack and was
    not told there is none.
-3. Halts the machine, by writing the clock control register with RUN clear.
+4. Halts the machine, by writing the clock control register with RUN clear.
    A read taken while the datapath moves is torn. The file records the run
    state the machine had before that halt: a machine found running is
    written with RUN and SRUN set, as they stood, and muir resumes it running
@@ -53,7 +59,7 @@ a daemon and has no init script, because it halts the machine while it reads.
    same way, and is refused too: it has not drained either. So is a
    QUUX machine held in reset, whose halted bit is down. `--halt`
    refuses the same machines and marks no halt.
-4. Reads the processor's memories and its register table through the
+5. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
    DDR through `/dev/mem`. Main memory is read at the machine's own amount,
    the console's page 2 word 37, which the card sets: the CADR's memory
@@ -68,11 +74,11 @@ a daemon and has no init script, because it halts the machine while it reads.
    `Tv::save` writes. A bitstream older than that word is 1280 by 1024. The
    sidecar's resume line names the size as muir's `--video-size`, which muir
    refuses a checkpoint of another size under.
-5. Reads every disk pack through and digests it, still halted.
-6. Writes the checkpoint, then the sidecar that binds it to those packs.
-7. Starts the machine again, unless told to leave it halted.
+6. Reads every disk pack through and digests it, still halted.
+7. Writes the checkpoint, then the sidecar that binds it to those packs.
+8. Starts the machine again, unless told to leave it halted.
 
-The refusal at step 5 comes before anything is written. A checkpoint that
+The refusal at step 6 comes before anything is written. A checkpoint that
 cannot name the disk it was taken on is the thing this program exists to
 prevent, so a pack that cannot be read costs the run and not the evidence.
 
@@ -426,14 +432,23 @@ written at the value the fabric behaves as.
 
 ## A QUUX checkpoint
 
-`cadr-checkpoint --machine quux` takes a checkpoint of a QUUX bitstream,
-`--machine` being muir's own flag and the one `cadr-terminal` and
-`cadr-disk-packs` take. The program asks the fabric which machine it is before
-it reads anything. The readout's register table has QUUX's signature,
-`0x5155`, at entry 21, with MACHINE-ID's revision, and the CADR answers
-`RO_NO_MEMORY` there. A checkpoint of the other machine is refused, because it
-would be one machine's fields filled from the other's, and so is a QUUX of an
-older revision than the program writes, named by the revision entry 21 reads.
+`cadr-checkpoint` takes a checkpoint of a QUUX bitstream when the fabric says
+it is QUUX. The program asks the fabric which machine it is before it looks at
+a pack or reads anything, the way `cadr-console machine` asks. The readout's
+register table has QUUX's signature, `0x5155`, at entry 21, with MACHINE-ID's
+revision, and the CADR answers `RO_NO_MEMORY` there. Without `--machine` the
+checkpoint is of the machine the fabric names. `--machine cadr|quux`, muir's
+own flag and the one `cadr-terminal` and `cadr-disk-packs` take, asserts the
+machine: one that is not the fabric's is refused before any pack is looked
+at, naming both, because the checkpoint would be one machine's fields filled
+from the other's. An entry 21 that names neither machine, or whose echo is
+stale twice, is refused, saying so, and no machine is assumed for it. A QUUX
+of an older revision than the program writes is refused too, named by the
+revision entry 21 reads. `--main-memory-size` and `--boards` are held to the
+machine once it is known.
+
+`checkpoint_test.c`'s `machine_check` holds the order on a model of entry 21,
+and mutants 69 to 73 of `pack_bind.c` are caught there.
 
 What the file holds is the pipeline's checkpoint and the Ethernet device's
 (the two sections below). Two checks hold the board's writer to muir. The core's
@@ -658,9 +673,14 @@ recorded, and the commit says what moved.
 `fdatasync` as soon as the channel is not using its slot. With the CADR
 halted the channel is idle, so within about a millisecond of the halt every
 block the machine has written is on its pack. That is what makes the normal
-capture one command.
+capture one command, on either machine.
 
     cadr-checkpoint -o /mnt/card/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
+
+The checkpoint is of the machine the fabric says it is. To have it refuse any
+other machine, name it; on a QUUX board that is:
+
+    cadr-checkpoint --machine quux -o /mnt/card/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
 
 It halts the machine, reads it, digests the packs it finds in the pack
 folder, `/mnt/card/packs`, writes the checkpoint and the sidecar into its
@@ -673,11 +693,28 @@ invisible to it. Digesting a T-300 is 269 MB read off the card and hashed, so
 it takes a while, and the machine is halted throughout, which is the point.
 
 If you want the packs held still by something stronger than the halt — no
-program that writes packs running at all — there is a longer way, and it has
-one trap in it: **the init script's `stop` unmounts the card**, so it has to be
-mounted again before the packs can be digested. That `stop` also writes the
-board's clock to `clock` at the root of the card before it unmounts it, which
-is one small write and is not a pack.
+program that writes packs running at all — there is a longer way, **on the
+CADR only**, and it has one trap in it: **the init script's `stop` unmounts
+the card**, so it has to be mounted again before the packs can be digested.
+That `stop` also writes the board's clock to `clock` at the root of the card
+before it unmounts it, which is one small write and is not a pack.
+
+The longer way does not work on QUUX. Stopping `cadr-disk-packs` marks QUUX's
+drive absent, so block-disk has no pack on unit 0 while the bay holds one, and
+`cadr-checkpoint` refuses the capture for that disagreement. Nothing is
+written, and `--start` runs the machine on. On QUUX, take the one command
+above.
+
+The card's device, which the `mount` below names, is each board's own:
+
+| board | the card |
+|---|---|
+| Arty Z7-20 | `/dev/mmcblk0p1`, the processing system's SD card |
+| DE25-Nano | `/dev/mmcblk0p1`, the processing system's SD card |
+| Kria KR260 | `/dev/sda1`, the first partition of the carrier's USB card reader; another USB disk plugged in can move the letter, and the boot's line `cadr-disk-packs: the card is ...` names it |
+
+The commands are the Arty's and the DE25-Nano's; on the Kria KR260 the
+`mount` names its device instead.
 
     cadr-checkpoint --halt
     /etc/init.d/S80cadr-disk-packs stop
@@ -699,7 +736,7 @@ is `/dev/mmcblk0p2`, and the bay is that partition's own root rather than
 
 `--already-halted` refuses to read a machine that is still retiring
 microcycles, so the order cannot be got wrong silently, and both it and
-`--halt` refuse a machine that has stopped retiring without halting (step 3
+`--halt` refuse a machine that has stopped retiring without halting (step 4
 above). `--halt` writes down
 the microcycle count it halted the machine at, in
 `/var/run/cadr-checkpoint-halted`, and `--already-halted` records the

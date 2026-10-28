@@ -1517,6 +1517,16 @@ const char *chk_rtl_mutation(void)
 	return "the checkpoint named as the capture gave it, not from the pack folder";
 #elif CHK_MUTATE == 68
 	return "a folder whose name begins with the pack folder's taken as in it";
+#elif CHK_MUTATE == 69
+	return "no --machine taken as the CADR, whatever the fabric is";
+#elif CHK_MUTATE == 70
+	return "the packs held to --machine's machine before the fabric is asked";
+#elif CHK_MUTATE == 71
+	return "a --machine that is not the fabric's taken";
+#elif CHK_MUTATE == 72
+	return "an identity that cannot be read taken as the CADR, or as --machine's";
+#elif CHK_MUTATE == 73
+	return "the main memory flags held to --machine's machine before the fabric is asked";
 #else
 	return NULL;
 #endif

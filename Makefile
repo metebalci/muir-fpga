@@ -4867,6 +4867,25 @@ CHECKPOINT_FOLDER_LEG_65 := an absolute --pack-dir does not write a relative lin
 CHECKPOINT_FOLDER_LEG_66 := a checkpoint outside the pack folder is taken
 CHECKPOINT_FOLDER_LEG_67 := an absolute --pack-dir does not write a relative line
 CHECKPOINT_FOLDER_LEG_68 := a folder beside the pack folder is taken as in it
+# **THE MACHINE IS THE FABRIC'S, SETTLED BEFORE THE PACKS, AND ITS MUTANTS, 69
+# TO 73.**  What a pack is and which main memory flag is the machine's both
+# follow the machine, so `cadr-checkpoint` asks the fabric first, as
+# `cadr-console machine` does (`pack_bind.c`'s `bind_machine_bay`): with no
+# `--machine` the machine is the fabric's, a `--machine` that is not the
+# fabric's is refused naming both before a pack is looked at, and an identity
+# that cannot be read is refused with no machine assumed.  The host check holds
+# it on a model of entry 21 and two bays, QUUX's disk and a CADR's pack
+# (`checkpoint_test.c`'s `machine_check`), and each mutant must fail there on
+# its own leg: no `--machine` taken as the CADR (69), the packs held to the
+# flag's machine before the fabric is asked (70), a `--machine` that is not
+# the fabric's taken (71), an identity that cannot be read taken (72), and
+# the main memory flags held to the flag's machine first (73).
+CHECKPOINT_MACHINE_MUTANTS := 69 70 71 72 73
+CHECKPOINT_MACHINE_LEG_69 := no --machine on QUUX's fabric is not QUUX
+CHECKPOINT_MACHINE_LEG_70 := a machine that disagrees is not refused before the packs
+CHECKPOINT_MACHINE_LEG_71 := a machine that disagrees is taken
+CHECKPOINT_MACHINE_LEG_72 := an identity that cannot be read is taken
+CHECKPOINT_MACHINE_LEG_73 := no --machine on QUUX's fabric refuses QUUX's memory flag
 # **THE CADR's CHAOSNET ADDRESS, AND ITS MUTANTS, 54 AND 55.**  muir refuses
 # to resume a checkpoint at any address but the one its switches carry, so
 # the CADR's are the address the fabric's interface holds, read as
@@ -5011,6 +5030,19 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the pack folder's $$leg: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the pack folder's check, $$leg --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_MACHINE_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the machine's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   case $$m in 69) leg="$(CHECKPOINT_MACHINE_LEG_69)";; 70) leg="$(CHECKPOINT_MACHINE_LEG_70)";; \
+	     71) leg="$(CHECKPOINT_MACHINE_LEG_71)";; 72) leg="$(CHECKPOINT_MACHINE_LEG_72)";; \
+	     73) leg="$(CHECKPOINT_MACHINE_LEG_73)";; *) leg="no leg named for mutant $$m";; esac; \
+	   grep -qF "checkpoint: FAIL: the machine: $$leg: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the machine's $$leg: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the machine's check, $$leg --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done; \
 	 for m in $(CHECKPOINT_CHAOS_MUTANTS); do \
 	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \

@@ -750,6 +750,129 @@ int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
 	return 0;
 }
 
+// **THE MACHINE BEFORE THE PACKS, AND THE FABRIC'S WHEN NONE IS GIVEN.**  It
+// was the flag's, the CADR by default, and the bay was held to it before the
+// fabric was asked: on a QUUX board without `--machine quux` the QUUX disk
+// was refused for its size, "no drive's pack", and the refusal that names the
+// two machines was never reached.  `pack_bind.h` has the order.
+static const char *machine_name(int quux)
+{
+	return quux ? "QUUX" : "the CADR";
+}
+
+int bind_machine_bay(struct binding *b, struct readout *r, const struct bind_ask *a,
+		     unsigned *units, unsigned *k, char *msg, size_t nn, char *err, size_t en)
+{
+	bind_init(b);
+	*units = 0;
+	*k = 0;
+	note(msg, nn, "%s", "");
+	int rc = 0;
+#if CHK_MUTATE == 73
+	// The main memory flags held to the flag's machine, the CADR by
+	// default, before the fabric is asked.
+	rc = bind_memory_asked(a->machine == 1, a->boards_arg, a->size_arg, a->most_units, units,
+			       err, en);
+	if (rc != 0)
+		return rc;
+#endif
+	// **THE FABRIC'S IDENTITY, ENTRY 21**, as `cadr-console machine` reads
+	// it: asked again once on a stale echo, the window being shared with
+	// `cadr-readout` and `cadr-console`.
+	unsigned l = 0;
+	int is = ro_machine_is_quux(r, k, &l);
+	if (is < 0)
+		is = ro_machine_is_quux(r, k, &l);
+	(void)l;
+	int quux = 0;
+#if CHK_MUTATE == 72
+	if (is < 0)
+		is = a->machine == 1;
+#endif
+	if (is < 0) {
+		uint64_t w = 0;
+		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_ID, &w) != 0)
+			note(err, en, "the fabric does not say which machine it is: the readout's "
+			     "register table entry %u came back with a stale echo twice, so the "
+			     "window is not answering; no machine is assumed and nothing is "
+			     "halted or written", IMG_RG_QUUX_ID);
+		else
+			note(err, en, "the fabric does not say which machine it is: the readout's "
+			     "register table entry %u reads %012llx, neither QUUX's signature nor "
+			     "the CADR's answer; no machine is assumed and nothing is halted or "
+			     "written", IMG_RG_QUUX_ID, (unsigned long long)w);
+		return 1;
+	}
+#if CHK_MUTATE == 69
+	// The default the CADR, whatever the fabric is.
+	quux = a->machine == 1;
+#elif CHK_MUTATE == 70 || CHK_MUTATE == 71
+	// The flag's machine when given: 70 refuses the other after the bay,
+	// 71 not at all.
+	quux = a->machine == BIND_MACHINE_FABRIC ? is : a->machine;
+#else
+	quux = is;
+#endif
+#if CHK_MUTATE != 70 && CHK_MUTATE != 71
+	if (a->machine != BIND_MACHINE_FABRIC && a->machine != is) {
+		note(err, en, "this bitstream is %s, and --machine %s asks for %s: a checkpoint "
+		     "of one machine filled from the other's fields is refused, before any "
+		     "pack is looked at", machine_name(is), a->machine ? "quux" : "cadr",
+		     machine_name(a->machine));
+		return 1;
+	}
+#endif
+	b->quux = quux;
+#if CHK_MUTATE != 73
+	rc = bind_memory_asked(quux, a->boards_arg, a->size_arg, a->most_units, units, err, en);
+	if (rc != 0)
+		return rc;
+#endif
+
+	// --- the drive bay, held to the machine's rule.
+	for (unsigned i = 0; i < a->npacks; ++i)
+		if (bind_add(b, a->packs[i], err, en) != 0)
+			return 1;
+	if (!a->npacks && !a->no_packs) {
+		char e[1024] = "";
+		bind_scan(b, a->pack_dir, e, sizeof e);
+		if (e[0])
+			note(msg, nn, "looking at the drive bay: %s", e);
+	}
+	// QUUX's disk is block-disk, whose one pack is unit 0 (muir's
+	// `attach`: "block-disk has one pack, unit 0").
+	if (quux) {
+		for (unsigned u = 1; u < BIND_UNITS; ++u) {
+			if (b->u[u].present) {
+				note(err, en, "unit %u %s: QUUX's disk is block-disk, which has one "
+				     "pack, unit 0", u, b->u[u].path);
+				return 1;
+			}
+		}
+	}
+	if (!b->present && !a->no_packs) {
+		note(err, en, "no pack in %s and none named with --pack.  A checkpoint of a "
+		     "machine with a disk and no binding to that disk is the thing this "
+		     "program exists to prevent, so nothing is written.  Name the packs, or "
+		     "say --no-packs if the machine really has no drive.", a->pack_dir);
+		return 1;
+	}
+	if (a->no_packs && b->present) {
+		note(err, en, "--no-packs, and the drive bay holds %u pack(s): the two disagree",
+		     b->present);
+		return 1;
+	}
+#if CHK_MUTATE == 70
+	// The machine's refusal after the bay, as it stood.
+	if (a->machine != BIND_MACHINE_FABRIC && a->machine != is) {
+		note(err, en, "this bitstream is %s, and --machine %s asks for %s",
+		     machine_name(is), a->machine ? "quux" : "cadr", machine_name(a->machine));
+		return 1;
+	}
+#endif
+	return 0;
+}
+
 int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 {
 	FILE *f = fopen(path, "r");

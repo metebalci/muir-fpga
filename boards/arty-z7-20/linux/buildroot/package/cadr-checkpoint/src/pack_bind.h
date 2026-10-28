@@ -244,6 +244,38 @@ void bind_ipv4_text(uint32_t a, char out[16]);
 int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
 		      unsigned most_units, unsigned *units, char *err, size_t errlen);
 
+// **WHICH MACHINE, ASKED OF THE FABRIC, AND ONLY THEN THE DRIVE BAY.**  What
+// a pack is, and which main memory flag is the machine's, both follow the
+// machine, so the machine is settled first: the readout's register table's
+// entry 21, read as `cadr-console machine` reads it (`ro_machine_is_quux`).
+// `machine` is `--machine`'s, 0 the CADR and 1 QUUX, or `BIND_MACHINE_FABRIC`
+// when it was not given, and the machine is then the fabric's.  A machine
+// given that is not the fabric's is refused, naming both, before a pack is
+// looked at; an identity that cannot be read is refused, saying so, and no
+// machine is assumed for it.  Then the main memory flags are held to the
+// machine (`bind_memory_asked`), and then the bay: the packs named, or the
+// bay `pack_dir` scanned, each held to the machine's rule, QUUX's one pack
+// unit 0, and `no_packs` against what was found.
+#define BIND_MACHINE_FABRIC (-1)
+struct readout;
+struct bind_ask {
+	int machine;			/* 0, 1, or BIND_MACHINE_FABRIC */
+	const char *boards_arg;		/* the CADR's --boards, or NULL */
+	const char *size_arg;		/* QUUX's --main-memory-size, or NULL */
+	unsigned most_units;		/* QUUX's most main memory, 64K-word units */
+	char *const *packs;		/* --pack's, `npacks` of them */
+	unsigned npacks;
+	const char *pack_dir;
+	int no_packs;
+};
+// `b` is initialised here, `b->quux` set to the machine and the bay bound
+// into it.  `*units` is the main memory asked (0 for the machine's own), `*k`
+// entry 21's <31:24>, QUUX's clock's period.  `note` gets one line to say
+// about the bay that is not a refusal, or is empty.  Returns 0; 1 refused,
+// with `err`; or 2, a main memory flag that is not the machine's, with `err`.
+int bind_machine_bay(struct binding *b, struct readout *r, const struct bind_ask *a,
+		     unsigned *units, unsigned *k, char *note, size_t nn, char *err, size_t en);
+
 // muir's own default Chaosnet address, `chaos::Config::default()`.
 #define BIND_CHAOS_DEFAULT 0177001u
 

@@ -1186,6 +1186,155 @@ static void folder_check(const char *work)
 	rmdir(top);
 }
 
+// **THE MACHINE IS THE FABRIC'S, AND IT IS SETTLED BEFORE THE PACKS.**  With
+// no `--machine` the capture takes the machine entry 21 names, so the Kria's
+// QUUX disk is a pack without the flag; a `--machine` that is not the
+// fabric's is refused naming both, before a pack is looked at; and an entry
+// that names no machine is refused, saying so, with no machine assumed.  It
+// was the flag's machine, the CADR by default, and the packs were held to it
+// first: on the Kria the QUUX disk was refused as "no drive's pack" and the
+// machine's own refusal was never reached.  The window is a model of entry 21
+// alone, read as `cadr-console machine` reads it.  Every failure prints one
+// line under one prefix, naming its leg.
+struct imodel {
+	uint32_t addr;
+	uint64_t entry;		/* entry 21, 48 bits */
+	int stale;		/* every echo names another address */
+};
+
+static uint32_t imodel_read(struct readout *r, unsigned word)
+{
+	struct imodel *m = r->ctx;
+	const int at21 = m->addr == ((IMG_SEL_REGS << 14) | IMG_RG_QUUX_ID);
+	const uint64_t w = at21 ? m->entry : RO_NO_MEMORY;
+	switch (word) {
+	case RO_IDENT: return RO_IDENT_WORD;
+	case RO_ADDR: return m->stale ? (m->addr ^ 1u) : m->addr;
+	case RO_DATA_LO: return (uint32_t)w;
+	case RO_DATA_HI: return (uint32_t)(w >> 32) & 0xFFFFu;
+	default: return RO_UNMAPPED;
+	}
+}
+
+static void imodel_write(struct readout *r, unsigned word, uint32_t v)
+{
+	struct imodel *m = r->ctx;
+	if (word == RO_ADDR)
+		m->addr = v & 0x3FFFFu;
+}
+
+static void machine_fail(const char *leg, const char *detail)
+{
+	fprintf(stderr, "checkpoint: FAIL: the machine: %s: [%s]\n", leg, detail);
+	++bad;
+}
+
+// One capture's first step against `entry`: the machine `machine`, the bay
+// `bay`, and QUUX's `--main-memory-size` `size` or none.
+static int machine_try(uint64_t entry, int stale, int machine, const char *bay,
+		       const char *size, struct binding *b, unsigned *units, char *err, size_t n)
+{
+	struct imodel im = { 0, entry, stale };
+	struct readout r;
+	memset(&r, 0, sizeof r);
+	r.read = imodel_read;
+	r.write = imodel_write;
+	r.ctx = &im;
+	const struct bind_ask a = { machine, NULL, size, 512u, NULL, 0, bay, 0 };
+	unsigned k = 0;
+	char said[1024] = "";
+	err[0] = '\0';
+	*units = 99;
+	return bind_machine_bay(b, &r, &a, units, &k, said, sizeof said, err, n);
+}
+
+static void machine_check(const char *work, const char *q8)
+{
+	const uint64_t quux = (uint64_t)IMG_QUUX_MARK << 32 | (uint64_t)Q_PERIOD << 24 |
+			      IMG_QUUX_ID_16;
+	const uint64_t cadr = RO_NO_MEMORY;
+	char qbay[300], cbay[300], qpack[340], cpack[340], src[512], err[1024];
+	snprintf(qbay, sizeof qbay, "%s/machine-quux-bay", work);
+	snprintf(cbay, sizeof cbay, "%s/machine-cadr-bay", work);
+	snprintf(qpack, sizeof qpack, "%s/disk-pack-0.img", qbay);
+	snprintf(cpack, sizeof cpack, "%s/disk-pack-0.img", cbay);
+	snprintf(src, sizeof src, "%s/quux-disk.img", q8);
+	mkdir(qbay, 0755);
+	mkdir(cbay, 0755);
+	remove(qpack);
+	remove(cpack);
+	// QUUX's disk, muir's, as the Kria's bay holds one; and a T-80's size,
+	// a CADR's pack, which no QUUX rule takes (no footer).
+	if (symlink(src, qpack) != 0)
+		machine_fail("the QUUX bay, not made", strerror(errno));
+	if (truncate(cpack, 0) != 0) {
+		FILE *f = fopen(cpack, "wb");
+		if (f)
+			fclose(f);
+	}
+	if (truncate(cpack, 70937600) != 0)
+		machine_fail("the CADR bay, not made", strerror(errno));
+	static struct binding b;
+	unsigned units = 0;
+
+	// No --machine on QUUX's fabric: QUUX, and its disk a pack.
+	int rc = machine_try(quux, 0, BIND_MACHINE_FABRIC, qbay, NULL, &b, &units, err, sizeof err);
+	if (rc != 0 || !b.quux || b.present != 1 || !b.u[0].present)
+		machine_fail("no --machine on QUUX's fabric is not QUUX", rc ? err : "taken as the CADR");
+	// And QUUX's main memory flag is QUUX's without --machine too.
+	rc = machine_try(quux, 0, BIND_MACHINE_FABRIC, qbay, "32MW", &b, &units, err, sizeof err);
+	if (rc != 0 || !b.quux || units != 512)
+		machine_fail("no --machine on QUUX's fabric refuses QUUX's memory flag",
+			     rc ? err : "taken");
+	// No --machine on the CADR's fabric: the CADR, and its pack.
+	rc = machine_try(cadr, 0, BIND_MACHINE_FABRIC, cbay, NULL, &b, &units, err, sizeof err);
+	if (rc != 0 || b.quux || b.present != 1)
+		machine_fail("no --machine on the CADR's fabric is not the CADR",
+			     rc ? err : "taken as QUUX");
+	// --machine cadr on QUUX's fabric, a bay of QUUX's disk: refused for the
+	// machine, naming both, and no pack bound.
+	rc = machine_try(quux, 0, 0, qbay, NULL, &b, &units, err, sizeof err);
+	if (rc != 1 || !strstr(err, "QUUX") || !strstr(err, "--machine cadr"))
+		machine_fail("a machine that disagrees is not refused before the packs",
+			     rc ? err : "taken");
+	else if (strstr(err, "no pack in") || b.present)
+		machine_fail("a machine that disagrees is not refused before the packs", err);
+	// And --machine quux on the CADR's fabric, a bay QUUX's rule takes: the
+	// same, the other way.
+	rc = machine_try(cadr, 0, 1, qbay, NULL, &b, &units, err, sizeof err);
+	if (rc == 0)
+		machine_fail("a machine that disagrees is taken", "--machine quux on the CADR");
+	else if (!strstr(err, "the CADR") || !strstr(err, "--machine quux"))
+		machine_fail("a machine that disagrees is not refused before the packs", err);
+	// --machine cadr on QUUX's fabric with a CADR's pack in the bay, which
+	// the flag's machine takes: refused all the same.
+	rc = machine_try(quux, 0, 0, cbay, NULL, &b, &units, err, sizeof err);
+	if (rc == 0)
+		machine_fail("a machine that disagrees is taken", "--machine cadr on QUUX");
+	// An identity that cannot be read: refused, saying why, with a bay
+	// the CADR's rule would take, with and without --machine.
+	for (int asked = BIND_MACHINE_FABRIC; asked <= 0; ++asked) {
+		static const struct { uint64_t entry; int stale; const char *why; } t[] = {
+			{ RO_NO_MEMORY, 1, "stale" },
+			{ 0x123456789ABCull, 0, "neither" },
+		};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+			rc = machine_try(t[i].entry, t[i].stale, asked, cbay, NULL, &b, &units, err,
+					 sizeof err);
+			if (rc == 0)
+				machine_fail("an identity that cannot be read is taken",
+					     t[i].why);
+			else if (!strstr(err, "which machine") || !strstr(err, t[i].why) ||
+				 b.present)
+				machine_fail("an identity that cannot be read is not said", err);
+		}
+	}
+	remove(qpack);
+	remove(cpack);
+	rmdir(qbay);
+	rmdir(cbay);
+}
+
 // **THE SIDECAR'S RESUME LINE IS THE LINE `cadr-checkpoint` PRINTS, AND BOTH
 // RUN FROM THE PACK FOLDER.**  The card's layout: the program run in the pack
 // folder with `--pack-dir .` and `-o checkpoints/x.chk` names the pack
@@ -1820,6 +1969,8 @@ int main(int argc, char **argv)
 		// PACK FOLDER.**
 		sidecar_line_check(work);
 		folder_check(work);
+		// **THE MACHINE IS THE FABRIC'S, SETTLED BEFORE THE PACKS.**
+		machine_check(work, q8);
 
 		// **QUUX's MAIN MEMORY IS AN AMOUNT, NEVER BOARDS; THE CADR KEEPS
 		// ITS BOARDS.**  What the program says, what its flags take and what
