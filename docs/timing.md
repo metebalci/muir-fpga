@@ -621,6 +621,15 @@ agree with muir's pipeline" is printed only for runs that compared clocks.
 A run judged by its results that names no page or block fails, and so does a
 trace that compares no clock and finds no page or block equal to muir's.
 
+The results-only checks have a known limit. The runs of bdmix and lineclear
+are judged by their results, the pages and blocks at their ends, and muir has
+no reference for the processor's clocks while a transfer shares the port. A
+fault that changes only the processor's timing in that window and leaves the
+pages and blocks the same is caught by no check: with the processor's reads
+granted only on even clocks during the walk, nothing failed. A fault that
+changes the data is caught: a bit flipped in MD during the transfer fails
+bdmix's page check. The limit is accepted.
+
 ## What is not MIT's timing at all
 
 Some tick counts in the tree name no nanosecond figure and must not be given
